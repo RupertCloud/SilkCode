@@ -20,12 +20,11 @@ from ..agent import Agent
 from ..config import Config, ConfigError
 from ..permissions import PermissionManager
 from ..providers import ProviderError, build_provider
+from ..repomap import IGNORED_DIRS, repo_map
 from ..sessions import SessionStore, new_session
 from ..tools.git import git_diff, git_status
 from ..workspace import ToolError, Workspace
 
-IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".silkcode",
-                "dist", "build", ".pytest_cache", ".mypy_cache"}
 MAX_TREE_ENTRIES = 2000
 PERMISSION_TIMEOUT = 600  # seconds; deny if the browser never answers
 
@@ -41,7 +40,8 @@ class GuiState:
         self.model = model
         provider = build_provider(provider_name, provider_cfg, api_key=self.config.api_key_for(provider_cfg))
         self.permissions = PermissionManager(mode=mode, asker=self._ask_via_gui)
-        self.agent = Agent(provider, model, self.workspace, self.permissions, on_event=self._on_agent_event)
+        self.agent = Agent(provider, model, self.workspace, self.permissions,
+                           on_event=self._on_agent_event, context=repo_map(self.workspace))
         self.session = new_session(self.store.new_id(), title="", model=self.spec,
                                    cwd=str(self.workspace.root), mode=mode)
 

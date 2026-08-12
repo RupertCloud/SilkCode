@@ -33,6 +33,7 @@ def main(argv: list[str] | None = None) -> int:
         "resume": cmd_resume,
         "gui": cmd_gui,
         "test": cmd_test,
+        "review": cmd_review,
     }
     if argv and argv[0] in commands:
         try:
@@ -52,9 +53,25 @@ def _repl_parser(prog: str) -> argparse.ArgumentParser:
 
 
 def cmd_repl(argv: list[str]) -> int:
-    args = _repl_parser("silkcode").parse_args(argv)
+    parser = _repl_parser("silkcode")
+    parser.add_argument("--prompt", "-p", help="run a single request non-interactively and exit")
+    args = parser.parse_args(argv)
     from .repl import run_repl
-    return run_repl(args.path, args.model, args.mode)
+    return run_repl(args.path, args.model, args.mode, prompt=args.prompt)
+
+
+REVIEW_PROMPT = (
+    "Review the current uncommitted changes in this repository. "
+    "Use git_status and git_diff to see them, and read any files you need for context. "
+    "Report correctness bugs, risky patterns, and clear improvements, referencing files "
+    "and lines. Do not modify anything. If there are no changes, say so."
+)
+
+
+def cmd_review(argv: list[str]) -> int:
+    args = _repl_parser("silkcode review").parse_args(argv)
+    from .repl import run_repl
+    return run_repl(args.path, args.model, args.mode, prompt=REVIEW_PROMPT)
 
 
 def cmd_gui(argv: list[str]) -> int:

@@ -38,6 +38,21 @@ def git_diff(ws: Workspace, staged: bool = False) -> str:
     return out.strip() or "(no changes)"
 
 
+def git_commit(ws: Workspace, message: str, add_all: bool = True) -> str:
+    """Stage and commit changes (SRS section 32; V0.2)."""
+    if not message.strip():
+        return "git error: commit message must not be empty"
+    if add_all:
+        staged = _git(ws, "add", "-A")
+        if staged.startswith("git error"):
+            return staged
+    out = _git(ws, "commit", "-m", message)
+    if out.startswith("git error"):
+        return out
+    head = _git(ws, "log", "-1", "--oneline")
+    return f"Committed: {head.strip() or out.strip()}"
+
+
 def git_log(ws: Workspace, limit: int = 10) -> str:
     limit = min(max(int(limit), 1), 100)
     out = _git(ws, "log", f"-{limit}", "--oneline", "--decorate")

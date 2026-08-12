@@ -72,7 +72,9 @@ Configuration lives at `~/.silkcode/config.json` (override the directory with
 
 ```bash
 silkcode [path] [--model M] [--mode ask|edit|agent]   # interactive REPL
+silkcode -p "add input validation to the API" .       # one-shot, non-interactive
 silkcode gui [path] [--port N]                        # local GUI
+silkcode review [path]                                # AI review of uncommitted changes
 silkcode models [add|pull|default]                    # provider/model management
 silkcode sessions                                     # list saved sessions
 silkcode resume <id>                                  # continue a session (GUI or CLI)
@@ -110,7 +112,8 @@ or **Revert** (GUI) restores the last turn's changes (SRS section 28).
 ```
 silkcode/
 ├── providers/       ModelProvider abstraction: OpenAI-compatible + Ollama
-├── tools/           read/write/edit, glob/grep, run_command, run_tests, git status/diff/log
+├── repomap.py       compact repository map injected into the model's context
+├── tools/           read/write/edit, glob/grep, run_command, run_tests, git status/diff/log/commit
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
 ├── permissions.py   risk classification + ask/edit/agent modes
 ├── checkpoints.py   snapshot-before-modify, revert per turn

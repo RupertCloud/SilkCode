@@ -15,6 +15,9 @@ class Tool:
     parameters: dict
     func: Callable
     kind: str  # "read" | "write" | "command"
+    # For kind == "command": resolves the effective shell command used for
+    # risk classification and permission checks. Defaults to args["command"].
+    command_of: Callable | None = None
 
 
 def _params(properties: dict, required: list[str]) -> dict:
@@ -106,6 +109,19 @@ _register(Tool(
     }, []),
     func=testing.run_tests,
     kind="command",
+    command_of=lambda args, ws: args.get("command") or testing.detect_test_command(ws) or "",
+))
+
+_register(Tool(
+    name="git_commit",
+    description="Stage all changes and create a git commit with the given message.",
+    parameters=_params({
+        "message": {"type": "string", "description": "Commit message"},
+        "add_all": {"type": "boolean", "description": "Stage all changes first (default true)"},
+    }, ["message"]),
+    func=git.git_commit,
+    kind="command",
+    command_of=lambda args, ws: "git commit",
 ))
 
 _register(Tool(

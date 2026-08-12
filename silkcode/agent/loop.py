@@ -28,6 +28,7 @@ class Agent:
         permissions: PermissionManager,
         checkpoints: Checkpoints | None = None,
         on_event: EventHandler | None = None,
+        context: str | None = None,
     ):
         self.provider = provider
         self.model = model
@@ -37,10 +38,10 @@ class Agent:
         self.on_event: EventHandler = on_event or (lambda kind, data: None)
         self.usage = Usage()
         self.stop_requested = False
-        self.messages: list[dict] = [{
-            "role": "system",
-            "content": SYSTEM_PROMPT.format(root=workspace.root, platform=platform.platform()),
-        }]
+        system = SYSTEM_PROMPT.format(root=workspace.root, platform=platform.platform())
+        if context:
+            system += "\n" + context
+        self.messages: list[dict] = [{"role": "system", "content": system}]
 
     def run_turn(self, user_input: str) -> str:
         self.stop_requested = False
@@ -137,10 +138,10 @@ class Agent:
                 return "User denied permission to modify this file."
             self.checkpoints.snapshot(resolved)
         elif tool.kind == "command":
-            command = str(args.get("command") or "")
-            if not command and tool.name == "run_tests":
-                from ..tools.testing import detect_test_command
-                command = detect_test_command(self.workspace) or ""
+            if tool.command_of is not None:
+                command = str(tool.command_of(args, self.workspace) or "")
+            else:
+                command = str(args.get("command") or "")
             if command and not self.permissions.check_command(command):
                 return "User denied permission to run this command."
         return tool.func(self.workspace, **args)

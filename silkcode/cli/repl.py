@@ -9,6 +9,7 @@ from .. import __version__
 from ..agent import Agent
 from ..config import Config, ConfigError
 from ..providers import ProviderError, build_provider
+from ..repomap import repo_map
 from ..sessions import SessionStore, new_session
 from ..permissions import PermissionManager
 from ..tools.git import git_diff
@@ -73,7 +74,8 @@ def _on_event(kind: str, data) -> None:
         print(f"{DIM}  → {first[:160]}{RESET}")
 
 
-def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None = None) -> int:
+def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None = None,
+             prompt: str | None = None) -> int:
     try:
         workspace = Workspace(path)
     except ToolError as exc:
@@ -96,7 +98,8 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
     provider = build_provider(provider_name, provider_cfg, api_key=api_key)
 
     permissions = PermissionManager(mode=(resume or {}).get("mode", mode), asker=_ask_user)
-    agent = Agent(provider, model, workspace, permissions, on_event=_on_event)
+    agent = Agent(provider, model, workspace, permissions, on_event=_on_event,
+                  context=repo_map(workspace))
 
     if resume:
         session = resume
@@ -107,6 +110,23 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         print(f"Resumed session #{session['id']}: {session.get('title', '')}")
     else:
         session = new_session(store.new_id(), title="", model=spec, cwd=str(workspace.root), mode=permissions.mode)
+
+    if prompt is not None:
+        # one-shot mode: run a single turn and exit
+        session["title"] = prompt[:60]
+        try:
+            agent.run_turn(prompt)
+            print()
+        except ProviderError as exc:
+            print(f"\n{RED}provider error: {exc}{RESET}", file=sys.stderr)
+            return 1
+        session["messages"] = agent.messages
+        session["usage"] = {
+            "prompt_tokens": agent.usage.prompt_tokens,
+            "completion_tokens": agent.usage.completion_tokens,
+        }
+        store.save(session)
+        return 0
 
     print(f"{BOLD}Silk Code{RESET} v{__version__}  {DIM}|{RESET}  model: {CYAN}{provider_name}/{model}{RESET}  "
           f"{DIM}|{RESET}  mode: {permissions.mode}  {DIM}|{RESET}  {workspace.root}")
