@@ -39,9 +39,15 @@ class GuiState:
         self.provider_name = provider_name
         self.model = model
         provider = build_provider(provider_name, provider_cfg, api_key=self.config.api_key_for(provider_cfg))
+        mcp = None
+        mcp_servers = self.config.data.get("mcp_servers") or {}
+        if mcp_servers:
+            from ..mcp import McpManager
+            mcp = McpManager(mcp_servers)
         self.permissions = PermissionManager(mode=mode, asker=self._ask_via_gui)
         self.agent = Agent(provider, model, self.workspace, self.permissions,
-                           on_event=self._on_agent_event, context=repo_map(self.workspace))
+                           on_event=self._on_agent_event, context=repo_map(self.workspace),
+                           mcp=mcp)
         self.session = new_session(self.store.new_id(), title="", model=self.spec,
                                    cwd=str(self.workspace.root), mode=mode)
 

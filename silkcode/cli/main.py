@@ -34,6 +34,7 @@ def main(argv: list[str] | None = None) -> int:
         "gui": cmd_gui,
         "test": cmd_test,
         "review": cmd_review,
+        "mcp": cmd_mcp,
     }
     if argv and argv[0] in commands:
         try:
@@ -216,6 +217,50 @@ def cmd_test(argv: list[str]) -> int:
         return 1
     print(output)
     return 0 if "exit code: 0" in output else 1
+
+
+def cmd_mcp(argv: list[str]) -> int:
+    if argv and argv[0] == "add":
+        parser = argparse.ArgumentParser(prog="silkcode mcp add")
+        parser.add_argument("name")
+        parser.add_argument("--command", required=True, help="command line to launch the server, e.g. 'uvx mcp-server-fetch'")
+        parser.add_argument("--env", action="append", default=[], help="KEY=VALUE environment for the server (repeatable)")
+        args = parser.parse_args(argv[1:])
+        env = {}
+        for pair in args.env:
+            key, _, value = pair.partition("=")
+            env[key] = value
+        config = Config.load()
+        servers = config.data.setdefault("mcp_servers", {})
+        servers[args.name] = {"command": args.command, **({"env": env} if env else {})}
+        config.save()
+        print(f"Added MCP server '{args.name}'. It will be available in new sessions.")
+        return 0
+    if argv and argv[0] == "remove":
+        config = Config.load()
+        servers = config.data.get("mcp_servers") or {}
+        if len(argv) < 2 or argv[1] not in servers:
+            print(f"error: unknown MCP server; configured: {', '.join(servers) or '(none)'}", file=sys.stderr)
+            return 1
+        del servers[argv[1]]
+        config.save()
+        print(f"Removed MCP server '{argv[1]}'.")
+        return 0
+    # list (default): start each configured server and show its tools
+    config = Config.load()
+    servers = config.data.get("mcp_servers") or {}
+    if not servers:
+        print("No MCP servers configured.")
+        print("Add one with: silkcode mcp add fetch --command 'uvx mcp-server-fetch'")
+        return 0
+    from ..mcp import McpManager
+    manager = McpManager(servers)
+    for name, server in manager.servers.items():
+        print(f"{name}: {', '.join(t['name'] for t in server.tools) or '(no tools)'}")
+    for name, error in manager.errors.items():
+        print(f"{name}: FAILED - {error}")
+    manager.close()
+    return 0
 
 
 def cmd_config(argv: list[str]) -> int:

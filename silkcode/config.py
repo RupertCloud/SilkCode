@@ -106,8 +106,10 @@ class Config:
         self.providers[name] = merged
 
     def resolve_model(self, spec: str | None = None) -> tuple[str, dict, str]:
-        """Resolve 'deepseek' or 'ollama/qwen2.5-coder' to (provider, cfg, model)."""
+        """Resolve 'deepseek', 'ollama/qwen2.5-coder', or 'auto' to (provider, cfg, model)."""
         spec = spec or self.default_model
+        if spec == "auto":
+            return self._resolve_auto()
         if "/" in spec:
             prefix, rest = spec.split("/", 1)
             if prefix in self.providers:
@@ -124,6 +126,40 @@ class Config:
         raise ConfigError(
             f"Unknown model '{spec}'. Known providers: {', '.join(sorted(self.providers))}. "
             "Use '<provider>' or '<provider>/<model>'."
+        )
+
+    def _resolve_auto(self) -> tuple[str, dict, str]:
+        """Pick the first available model (SRS section 17, basic router):
+        local servers that are actually running, then cloud providers with a
+        configured API key. Order is configurable via 'auto_order'."""
+        from .providers.ollama import OllamaProvider
+        from .providers.openai_compat import OpenAICompatProvider
+
+        order = self.data.get("auto_order") or [
+            "ollama", "deepseek", "qwen", "kimi", "openrouter", "vllm", "lmstudio",
+        ]
+        for name in order:
+            cfg = self.providers.get(name)
+            if not cfg:
+                continue
+            if cfg.get("type") == "ollama":
+                probe = OllamaProvider(name, base_url=cfg["base_url"], timeout=2.0)
+                models = probe.list_models()
+                if models:
+                    model = next((m for m in models if "coder" in m), models[0])
+                    return name, cfg, model
+            elif cfg.get("api_key_env") or cfg.get("api_key"):
+                model = cfg.get("default_model")
+                if model and self.api_key_for(cfg):
+                    return name, cfg, model
+            else:
+                probe = OpenAICompatProvider(name, cfg["base_url"], timeout=2.0)
+                models = probe.list_models()
+                if models:
+                    return name, cfg, cfg.get("default_model") or models[0]
+        raise ConfigError(
+            "auto: no available model found. Set an API key (e.g. DEEPSEEK_API_KEY), "
+            "start a local server (Ollama/vLLM/LM Studio), or pass --model explicitly."
         )
 
     def api_key_for(self, cfg: dict) -> str | None:

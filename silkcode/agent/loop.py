@@ -29,6 +29,7 @@ class Agent:
         checkpoints: Checkpoints | None = None,
         on_event: EventHandler | None = None,
         context: str | None = None,
+        mcp=None,
     ):
         self.provider = provider
         self.model = model
@@ -36,6 +37,7 @@ class Agent:
         self.permissions = permissions
         self.checkpoints = checkpoints or Checkpoints()
         self.on_event: EventHandler = on_event or (lambda kind, data: None)
+        self.mcp = mcp
         self.usage = Usage()
         self.stop_requested = False
         system = SYSTEM_PROMPT.format(root=workspace.root, platform=platform.platform())
@@ -86,8 +88,11 @@ class Agent:
                 })
 
     def _call_model(self) -> ChatResult:
+        schemas = openai_schemas()
+        if self.mcp is not None:
+            schemas = schemas + self.mcp.tool_schemas()
         result = None
-        for kind, data in self.provider.stream(self.model, self.messages, tools=openai_schemas()):
+        for kind, data in self.provider.stream(self.model, self.messages, tools=schemas):
             if kind == "text":
                 self.on_event("text", data)
             elif kind == "result":
@@ -111,7 +116,7 @@ class Agent:
 
     def _execute_tool(self, call: ToolCall) -> str:
         tool = TOOLS.get(call.name)
-        if tool is None:
+        if tool is None and not (self.mcp is not None and self.mcp.has_tool(call.name)):
             return f"Error: unknown tool '{call.name}'"
         try:
             args = json.loads(call.arguments or "{}")
@@ -120,6 +125,10 @@ class Agent:
         if not isinstance(args, dict):
             return "Error: tool arguments must be a JSON object"
         self.on_event("tool_start", {"name": call.name, "args": args})
+        if tool is None:
+            output = self._execute_mcp(call.name, args)
+            self.on_event("tool_result", {"name": call.name, "output": output})
+            return output
         try:
             output = self._run_with_permissions(tool, args)
         except ToolError as exc:
@@ -130,6 +139,14 @@ class Agent:
             output = f"Error: {type(exc).__name__}: {exc}"
         self.on_event("tool_result", {"name": call.name, "output": output})
         return output
+
+    def _execute_mcp(self, qualified: str, args: dict) -> str:
+        if not self.permissions.check_mcp(qualified):
+            return "User denied permission to call this MCP tool."
+        try:
+            return self.mcp.call(qualified, args)
+        except Exception as exc:
+            return f"Error: {type(exc).__name__}: {exc}"
 
     def _run_with_permissions(self, tool, args: dict) -> str:
         if tool.kind == "write":

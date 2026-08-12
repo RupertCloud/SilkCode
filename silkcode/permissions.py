@@ -117,3 +117,13 @@ class PermissionManager:
                 return True
             return decision == "yes"
         return self.asker(f"Run HIGH-RISK command: {command}") == "yes"
+
+    def check_mcp(self, qualified_name: str) -> bool:
+        """External MCP tools are treated like medium-risk commands."""
+        if self.mode == "agent" or qualified_name in self._always_commands:
+            return True
+        decision = self.asker(f"Call MCP tool: {qualified_name}")
+        if decision == "always":
+            self._always_commands.add(qualified_name)
+            return True
+        return decision == "yes"

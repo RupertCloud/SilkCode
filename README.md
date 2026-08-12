@@ -65,6 +65,10 @@ Model specs are `provider` (uses its default model) or `provider/model`, e.g.
 mid-session with `/model <spec>` in the CLI or the model selector in the GUI.
 Providers can also be onboarded from the GUI (**+ Add model**).
 
+`--model auto` picks the first available model: a running local server first
+(Ollama, preferring coder models), then cloud providers with an API key configured.
+The order is configurable via `auto_order` in the config file.
+
 Configuration lives at `~/.silkcode/config.json` (override the directory with
 `$SILKCODE_HOME`).
 
@@ -79,6 +83,7 @@ silkcode models [add|pull|default]                    # provider/model managemen
 silkcode sessions                                     # list saved sessions
 silkcode resume <id>                                  # continue a session (GUI or CLI)
 silkcode test [path] [--command CMD]                  # run the project's tests (auto-detected)
+silkcode mcp [add|remove]                             # manage MCP servers
 silkcode config                                       # show configuration
 ```
 
@@ -93,6 +98,16 @@ mode selectors, provider onboarding, checkpoint revert, a stop button for runnin
 turns, and live permission prompts. Sessions are saved to the same store as the CLI —
 resume any session from the GUI's session picker or with `silkcode resume <id>`
 (SRS section 47).
+
+## MCP
+
+Silk Code is an MCP client: connect any MCP server and its tools become available to
+the model as `mcp__<server>__<tool>` (approval-gated like medium-risk commands).
+
+```bash
+silkcode mcp add fetch --command "uvx mcp-server-fetch"
+silkcode mcp                       # list servers and their tools
+```
 
 ## Permissions and safety
 
@@ -113,6 +128,7 @@ or **Revert** (GUI) restores the last turn's changes (SRS section 28).
 silkcode/
 ├── providers/       ModelProvider abstraction: OpenAI-compatible + Ollama
 ├── repomap.py       compact repository map injected into the model's context
+├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── tools/           read/write/edit, glob/grep, run_command, run_tests, git status/diff/log/commit
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
 ├── permissions.py   risk classification + ask/edit/agent modes

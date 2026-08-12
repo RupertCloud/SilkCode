@@ -35,6 +35,7 @@ HELP = """Commands:
   /diff              show the current git diff
   /usage             show token usage for this session
   /revert            revert the files changed in the last turn (checkpoint restore)
+  /mcp               list connected MCP servers and their tools
   /clear             clear the conversation (keeps the session file)
   /sessions          list saved sessions
   /exit              quit
@@ -97,9 +98,17 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
               f"Set ${provider_cfg['api_key_env']} or run: silkcode models add ...{RESET}")
     provider = build_provider(provider_name, provider_cfg, api_key=api_key)
 
+    mcp = None
+    mcp_servers = config.data.get("mcp_servers") or {}
+    if mcp_servers:
+        from ..mcp import McpManager
+        mcp = McpManager(mcp_servers)
+        for server_name, error in mcp.errors.items():
+            print(f"{YELLOW}warning: MCP server '{server_name}' failed to start: {error}{RESET}")
+
     permissions = PermissionManager(mode=(resume or {}).get("mode", mode), asker=_ask_user)
     agent = Agent(provider, model, workspace, permissions, on_event=_on_event,
-                  context=repo_map(workspace))
+                  context=repo_map(workspace), mcp=mcp)
 
     if resume:
         session = resume
@@ -164,6 +173,8 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         store.save(session)
     if len(agent.messages) > 1:  # don't persist empty sessions
         store.save(session | {"messages": agent.messages})
+    if mcp is not None:
+        mcp.close()
     return 0
 
 
@@ -215,6 +226,14 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
     elif cmd == "/clear":
         agent.messages = agent.messages[:1]
         print("Conversation cleared.")
+    elif cmd == "/mcp":
+        if agent.mcp is None:
+            print("No MCP servers configured. Add one with: silkcode mcp add <name> --command '...'")
+        else:
+            for server_name, server in agent.mcp.servers.items():
+                print(f"{server_name}: {', '.join(t['name'] for t in server.tools) or '(no tools)'}")
+            for server_name, error in agent.mcp.errors.items():
+                print(f"{RED}{server_name}: failed - {error}{RESET}")
     elif cmd == "/sessions":
         for s in store.list():
             print(f"#{s['id']:<5} {s['model']:<28} {s['title']}")
