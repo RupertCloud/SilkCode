@@ -76,6 +76,7 @@ silkcode gui [path] [--port N]                        # local GUI
 silkcode models [add|pull|default]                    # provider/model management
 silkcode sessions                                     # list saved sessions
 silkcode resume <id>                                  # continue a session (GUI or CLI)
+silkcode test [path] [--command CMD]                  # run the project's tests (auto-detected)
 silkcode config                                       # show configuration
 ```
 
@@ -86,9 +87,10 @@ REPL commands: `/model`, `/models`, `/mode`, `/diff`, `/usage`, `/revert`, `/cle
 
 `silkcode gui` starts the Silk Code daemon and opens a browser app with the project
 explorer, AI conversation, agent activity timeline, git diff / file viewer, model and
-mode selectors, provider onboarding, checkpoint revert, and live permission prompts.
-GUI sessions are saved to the same store as the CLI, so you can continue any GUI
-session with `silkcode resume <id>` (SRS section 47).
+mode selectors, provider onboarding, checkpoint revert, a stop button for running
+turns, and live permission prompts. Sessions are saved to the same store as the CLI —
+resume any session from the GUI's session picker or with `silkcode resume <id>`
+(SRS section 47).
 
 ## Permissions and safety
 
@@ -108,7 +110,7 @@ or **Revert** (GUI) restores the last turn's changes (SRS section 28).
 ```
 silkcode/
 ├── providers/       ModelProvider abstraction: OpenAI-compatible + Ollama
-├── tools/           read/write/edit, glob/grep, run_command, git status/diff/log
+├── tools/           read/write/edit, glob/grep, run_command, run_tests, git status/diff/log
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
 ├── permissions.py   risk classification + ask/edit/agent modes
 ├── checkpoints.py   snapshot-before-modify, revert per turn

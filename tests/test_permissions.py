@@ -2,7 +2,8 @@ from silkcode.permissions import PermissionManager, Risk, classify_command
 
 
 def test_low_risk_commands():
-    for cmd in ("ls -la", "pwd", "git status", "git log --oneline", "pytest", "npm test", "cat a.txt | grep foo"):
+    for cmd in ("ls -la", "pwd", "git status", "git log --oneline", "pytest", "npm test",
+                "cargo test", "go test ./...", "flutter test", "cat a.txt | grep foo"):
         assert classify_command(cmd) == Risk.LOW, cmd
 
 

@@ -32,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
         "sessions": cmd_sessions,
         "resume": cmd_resume,
         "gui": cmd_gui,
+        "test": cmd_test,
     }
     if argv and argv[0] in commands:
         try:
@@ -177,6 +178,27 @@ def _models_default(argv: list[str]) -> int:
     config.save()
     print(f"Default model set to {args.spec}")
     return 0
+
+
+def cmd_test(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="silkcode test")
+    parser.add_argument("path", nargs="?", default=".")
+    parser.add_argument("--command", help="explicit test command (auto-detected when omitted)")
+    args = parser.parse_args(argv)
+    from ..tools.testing import detect_test_command, run_tests
+    from ..workspace import ToolError, Workspace
+    try:
+        ws = Workspace(args.path)
+        command = args.command or detect_test_command(ws)
+        if not command:
+            print("error: no test framework detected; pass --command", file=sys.stderr)
+            return 1
+        output = run_tests(ws, command)
+    except ToolError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(output)
+    return 0 if "exit code: 0" in output else 1
 
 
 def cmd_config(argv: list[str]) -> int:

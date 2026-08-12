@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from . import files, git, search, shell
+from . import files, git, search, shell, testing
 
 
 @dataclass(frozen=True)
@@ -94,6 +94,17 @@ _register(Tool(
         "timeout": {"type": "integer", "description": "Timeout in seconds (default 120, max 600)"},
     }, ["command"]),
     func=shell.run_command,
+    kind="command",
+))
+
+_register(Tool(
+    name="run_tests",
+    description="Run the project's test suite. Detects the test framework (pytest, npm test, cargo test, go test, flutter test) when no command is given.",
+    parameters=_params({
+        "command": {"type": "string", "description": "Explicit test command (optional; auto-detected when omitted)"},
+        "timeout": {"type": "integer", "description": "Timeout in seconds (default 300)"},
+    }, []),
+    func=testing.run_tests,
     kind="command",
 ))
 

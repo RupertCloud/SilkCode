@@ -165,6 +165,27 @@ class GuiState:
             "usage": self.usage_dict(),
         }
 
+    def stop(self) -> None:
+        self.agent.request_stop()
+
+    def load_session(self, session_id: int) -> None:
+        if self.running:
+            raise ToolError("cannot switch sessions while the agent is running")
+        data = self.store.load(session_id)
+        self.session = data
+        if data.get("messages"):
+            self.agent.messages = data["messages"]
+        self.agent.usage.prompt_tokens = data.get("usage", {}).get("prompt_tokens", 0)
+        self.agent.usage.completion_tokens = data.get("usage", {}).get("completion_tokens", 0)
+        self.transcript = _transcript_from_messages(self.agent.messages)
+        try:
+            self.switch_model(data.get("model") or self.spec)
+        except ConfigError:
+            pass  # keep the current model if the saved one is gone
+        if data.get("mode") in PermissionManager.MODES:
+            self.permissions.mode = data["mode"]
+        self.broadcast({"type": "reload"})
+
     def switch_model(self, spec: str) -> None:
         provider_name, provider_cfg, model = self.config.resolve_model(spec)
         provider = build_provider(provider_name, provider_cfg, api_key=self.config.api_key_for(provider_cfg))
@@ -235,6 +256,24 @@ class GuiState:
         return {"path": rel_path, "content": p.read_text(errors="replace")}
 
 
+def _transcript_from_messages(messages: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for m in messages:
+        if m.get("role") == "user":
+            out.append({"kind": "user", "text": m.get("content", "")})
+        elif m.get("role") == "assistant":
+            if m.get("content"):
+                out.append({"kind": "assistant", "text": m["content"]})
+            for tc in m.get("tool_calls") or []:
+                args = tc.get("function", {}).get("arguments", "")
+                out.append({
+                    "kind": "tool",
+                    "name": tc.get("function", {}).get("name", "?"),
+                    "args": args if len(args) <= 200 else args[:200] + "...",
+                })
+    return out
+
+
 class GuiHandler(BaseHTTPRequestHandler):
     state: GuiState = None  # type: ignore[assignment]
     html: bytes = b""
@@ -278,6 +317,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json({"diff": git_diff(st.workspace), "status": git_status(st.workspace)})
             elif route == "/api/providers":
                 self._json(st.providers_info())
+            elif route == "/api/sessions":
+                self._json(st.store.list())
             elif route == "/api/events":
                 self._sse()
             else:
@@ -346,6 +387,15 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/providers":
                 st.add_provider(body)
                 self._json(st.providers_info())
+            elif route == "/api/stop":
+                st.stop()
+                self._json({"ok": True})
+            elif route == "/api/session":
+                try:
+                    st.load_session(int(body.get("id", 0)))
+                except FileNotFoundError as exc:
+                    return self._error(str(exc), 404)
+                self._json(st.state())
             else:
                 self._error("not found", 404)
         except (ToolError, ConfigError, ProviderError) as exc:

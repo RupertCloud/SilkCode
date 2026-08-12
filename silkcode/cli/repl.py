@@ -133,6 +133,7 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         except ProviderError as exc:
             print(f"\n{RED}provider error: {exc}{RESET}")
         except KeyboardInterrupt:
+            agent.repair_dangling_tool_calls()
             print(f"\n{YELLOW}[interrupted]{RESET}")
         session["messages"] = agent.messages
         session["model"] = spec if "/" in spec else f"{provider_name}/{model}"
@@ -141,7 +142,8 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
             "completion_tokens": agent.usage.completion_tokens,
         }
         store.save(session)
-    store.save(session | {"messages": agent.messages})
+    if len(agent.messages) > 1:  # don't persist empty sessions
+        store.save(session | {"messages": agent.messages})
     return 0
 
 

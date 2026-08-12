@@ -73,6 +73,51 @@ def test_agent_unknown_tool(tmp_path):
     assert "unknown tool" in agent.messages[3]["content"]
 
 
+def test_agent_stop_cancels_remaining_tools(tmp_path):
+    agent, _ = make_agent(tmp_path, [
+        ChatResult(tool_calls=[
+            tc("write_file", path="a.txt", content="a"),
+            tc("write_file", path="b.txt", content="b"),
+        ]),
+    ])
+    agent.on_event = lambda kind, data: agent.request_stop() if kind == "tool_result" else None
+    reply = agent.run_turn("write two files")
+    assert reply == "Stopped by user."
+    assert (tmp_path / "a.txt").exists()
+    assert not (tmp_path / "b.txt").exists()
+    # every tool_call still has a tool result, so the history stays valid
+    tool_msgs = [m for m in agent.messages if m["role"] == "tool"]
+    assert len(tool_msgs) == 2
+    assert "Cancelled" in tool_msgs[1]["content"]
+
+
+def test_repair_dangling_tool_calls(tmp_path):
+    agent, _ = make_agent(tmp_path, [])
+    agent.messages.append({"role": "user", "content": "go"})
+    agent.messages.append({"role": "assistant", "content": "", "tool_calls": [
+        {"id": "c1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}},
+    ]})
+    agent.repair_dangling_tool_calls()
+    assert agent.messages[-1] == {"role": "tool", "tool_call_id": "c1",
+                                  "content": "Cancelled: the user interrupted this turn."}
+    # idempotent-ish: repairing again adds nothing (last message is now a tool result)
+    n = len(agent.messages)
+    agent.repair_dangling_tool_calls()
+    assert len(agent.messages) == n
+
+
+def test_agent_run_tests_autodetect(tmp_path):
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"test": "echo jest-ran"}}))
+    agent, _ = make_agent(tmp_path, [
+        ChatResult(tool_calls=[ToolCall(id="c1", name="run_tests", arguments="{}")]),
+        ChatResult(content="tests pass"),
+    ], mode="ask", asker=lambda p: "no")  # npm test is LOW risk: must not prompt
+    reply = agent.run_turn("run the tests")
+    assert reply == "tests pass"
+    tool_msg = agent.messages[3]["content"]
+    assert "$ npm test" in tool_msg
+
+
 def test_agent_checkpoint_revert(tmp_path):
     (tmp_path / "app.py").write_text("v1")
     agent, _ = make_agent(tmp_path, [

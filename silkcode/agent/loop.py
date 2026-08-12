@@ -36,12 +36,14 @@ class Agent:
         self.checkpoints = checkpoints or Checkpoints()
         self.on_event: EventHandler = on_event or (lambda kind, data: None)
         self.usage = Usage()
+        self.stop_requested = False
         self.messages: list[dict] = [{
             "role": "system",
             "content": SYSTEM_PROMPT.format(root=workspace.root, platform=platform.platform()),
         }]
 
     def run_turn(self, user_input: str) -> str:
+        self.stop_requested = False
         self.checkpoints.begin()
         self.messages.append({"role": "user", "content": user_input})
         for _ in range(MAX_STEPS):
@@ -51,13 +53,36 @@ class Agent:
             if not result.tool_calls:
                 return result.content
             for call in result.tool_calls:
-                output = self._execute_tool(call)
+                if self.stop_requested:
+                    output = "Cancelled: the user stopped this turn."
+                else:
+                    output = self._execute_tool(call)
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": call.id,
                     "content": output,
                 })
+            if self.stop_requested:
+                return "Stopped by user."
         return "Stopped: reached the maximum number of agent steps for one turn."
+
+    def request_stop(self) -> None:
+        """Stop after the current model call or tool finishes."""
+        self.stop_requested = True
+
+    def repair_dangling_tool_calls(self) -> None:
+        """Append cancelled tool results if a turn was interrupted mid-call,
+        so the message history stays valid for the next request."""
+        if not self.messages:
+            return
+        last = self.messages[-1]
+        if last.get("role") == "assistant" and last.get("tool_calls"):
+            for tc in last["tool_calls"]:
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": "Cancelled: the user interrupted this turn.",
+                })
 
     def _call_model(self) -> ChatResult:
         result = None
@@ -112,7 +137,10 @@ class Agent:
                 return "User denied permission to modify this file."
             self.checkpoints.snapshot(resolved)
         elif tool.kind == "command":
-            command = str(args.get("command", ""))
-            if not self.permissions.check_command(command):
+            command = str(args.get("command") or "")
+            if not command and tool.name == "run_tests":
+                from ..tools.testing import detect_test_command
+                command = detect_test_command(self.workspace) or ""
+            if command and not self.permissions.check_command(command):
                 return "User denied permission to run this command."
         return tool.func(self.workspace, **args)

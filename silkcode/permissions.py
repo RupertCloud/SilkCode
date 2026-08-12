@@ -57,7 +57,8 @@ def _classify_segment(segment: str) -> Risk:
         if len(tokens) > 1 and tokens[1] in GIT_READ_SUBCOMMANDS:
             return Risk.LOW
         return Risk.MEDIUM
-    if head == "npm" and tokens[1:2] == ["test"]:
+    # test runners are low risk per SRS section 30
+    if head in ("npm", "cargo", "go", "flutter", "yarn") and tokens[1:2] == ["test"]:
         return Risk.LOW
     if head in LOW_RISK_COMMANDS:
         if "-delete" in tokens or "-exec" in tokens:

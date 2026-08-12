@@ -134,6 +134,31 @@ def test_gui_provider_onboarding_and_model_switch(gui):
     assert bad.status_code == 400
 
 
+def test_gui_sessions_list_and_resume(gui):
+    base, state, ws = gui
+    httpx.post(f"{base}/api/message", json={"text": "create hello.txt"})
+    assert wait_until(lambda: not state.running and (ws / "hello.txt").exists())
+
+    sessions = httpx.get(f"{base}/api/sessions").json()
+    assert any(s["id"] == state.session["id"] for s in sessions)
+
+    resp = httpx.post(f"{base}/api/session", json={"id": state.session["id"]})
+    assert resp.status_code == 200
+    transcript = httpx.get(f"{base}/api/transcript").json()
+    assert transcript[0] == {"kind": "user", "text": "create hello.txt"}
+    assert any(t["kind"] == "tool" and t["name"] == "write_file" for t in transcript)
+
+    missing = httpx.post(f"{base}/api/session", json={"id": 99999})
+    assert missing.status_code == 404
+
+
+def test_gui_stop_endpoint(gui):
+    base, state, _ws = gui
+    resp = httpx.post(f"{base}/api/stop", json={})
+    assert resp.status_code == 200
+    assert state.agent.stop_requested is True
+
+
 def test_gui_permission_flow(gui):
     base, state, _ws = gui
     decisions = {}

@@ -79,6 +79,7 @@
   <span class="path" id="cwd"></span>
   <span id="status-dot" title="agent status"></span>
   <span class="spacer"></span>
+  <label>Session <select id="session-select"></select></label>
   <label>Model <select id="model-select"></select></label>
   <button id="add-model">+ Add model</button>
   <label>Mode <select id="mode-select">
@@ -96,6 +97,7 @@
     <div id="composer">
       <textarea id="input" placeholder="Ask Silk Code to build or change something… (Enter to send, Shift+Enter for a new line)"></textarea>
       <button id="send">Send</button>
+      <button id="stop" style="display:none;background:#4a2529;color:var(--err)">Stop</button>
     </div>
   </section>
   <section class="pane" id="activity"><h2>AGENT ACTIVITY</h2><div id="timeline"></div></section>
@@ -178,6 +180,7 @@ function addActivity(name, args) {
 function setRunning(running) {
   $("status-dot").classList.toggle("running", running);
   $("send").disabled = running;
+  $("stop").style.display = running ? "" : "none";
 }
 
 function renderUsage(u) {
@@ -218,6 +221,7 @@ function handleEvent(ev) {
     streamEl = null; setRunning(false); renderUsage(ev.usage); loadDiff(); loadTree();
   }
   else if (ev.type === "permission_request") { permQueue.push(ev); showNextPermission(); }
+  else if (ev.type === "reload") { init(); }
 }
 
 // ---- permissions ----------------------------------------------------------
@@ -323,6 +327,30 @@ $("model-select").onchange = async (e) => {
 };
 
 $("mode-select").onchange = (e) => api("/api/mode", {mode: e.target.value}).catch(err => alert(err.message));
+$("stop").onclick = () => api("/api/stop", {}).catch(() => {});
+
+async function loadSessions(currentId) {
+  const sessions = await api("/api/sessions");
+  const sel = $("session-select");
+  sel.innerHTML = "";
+  if (!sessions.some(s => s.id === currentId)) {
+    const opt = document.createElement("option");
+    opt.value = currentId; opt.textContent = `#${currentId} (current)`;
+    sel.appendChild(opt);
+  }
+  for (const s of sessions) {
+    const opt = document.createElement("option");
+    opt.value = s.id;
+    opt.textContent = `#${s.id} ${s.title || "(untitled)"}`.slice(0, 48);
+    sel.appendChild(opt);
+  }
+  sel.value = currentId;
+}
+
+$("session-select").onchange = async (e) => {
+  try { await api("/api/session", {id: parseInt(e.target.value, 10)}); }
+  catch (err) { alert(err.message); init(); }
+};
 $("revert").onclick = async () => {
   try {
     const data = await api("/api/revert", {});
@@ -368,6 +396,7 @@ async function init() {
   setRunning(state.running);
   renderUsage(state.usage);
   await loadProviders(state.spec);
+  await loadSessions(state.session_id);
   const transcript = await api("/api/transcript");
   $("messages").innerHTML = ""; $("timeline").innerHTML = "";
   transcript.forEach(renderEntry);
