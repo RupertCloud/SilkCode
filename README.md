@@ -1,5 +1,7 @@
 # Silk Code
 
+**Homepage: [silkcode.web.app](https://silkcode.web.app)** · MIT licensed
+
 **An open, model-agnostic AI coding harness.** Use DeepSeek, Qwen, Kimi, OpenRouter, any
 OpenAI-compatible endpoint, or local models (Ollama, vLLM, LM Studio) to understand a
 repository, plan changes, write code, run commands and tests, and review diffs — from a
@@ -13,8 +15,19 @@ designed to be wrapped in Tauri later, per SRS sections 67-68).
 
 ## Install
 
+Without building from source — grab the wheel from the
+[latest release](https://github.com/RupertCloud/SilkCode/releases/latest):
+
 ```bash
-pip install -e .          # from this repository
+pip install https://github.com/RupertCloud/SilkCode/releases/download/v0.1.0/silkcode-0.1.0-py3-none-any.whl
+# or isolated, with pipx:
+pipx install https://github.com/RupertCloud/SilkCode/releases/download/v0.1.0/silkcode-0.1.0-py3-none-any.whl
+```
+
+Or from source:
+
+```bash
+pip install -e .          # from a clone of this repository
 ```
 
 Requires Python 3.10+. The only runtime dependency is `httpx`.

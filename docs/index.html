@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Silk Code — an open, model-agnostic AI coding harness. Use DeepSeek, Qwen, Kimi, Cloudflare Workers AI, or any local model to understand, edit, test, and ship code.">
+<link rel="canonical" href="https://silkcode.web.app/">
 <title>Silk Code</title>
 </head>
 <body>
@@ -195,12 +196,17 @@
       <div class="step-no">01</div>
       <div>
         <h3>Install</h3>
-        <pre class="code">git clone https://github.com/RupertCloud/SilkCode.git
-cd SilkCode
-python3 -m venv .venv
-source .venv/bin/activate
+        <pre class="code"><span class="cm"># no source build — install the wheel from the latest release:</span>
+pip install https://github.com/RupertCloud/SilkCode/releases/download/v0.1.0/silkcode-0.1.0-py3-none-any.whl
+
+<span class="cm"># or from source:</span>
+git clone https://github.com/RupertCloud/SilkCode.git &amp;&amp; cd SilkCode
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
 pip install -e .
+
 silkcode models   <span class="cm"># prints the provider table when the install is good</span></pre>
+        <p>Prefer an isolated install? <code>pipx install &lt;wheel-url&gt;</code> works too —
+        see the <a href="https://github.com/RupertCloud/SilkCode/releases/latest">releases page</a>.</p>
       </div>
     </div>
 
@@ -311,11 +317,13 @@ X-Silk-Session: 42</pre>
   </section>
 
   <footer>
-    <span>Silk Code · MIT · single runtime dependency (<code>httpx</code>) · runs entirely on your machine</span>
+    <span>Silk Code · <a href="https://github.com/RupertCloud/SilkCode/blob/main/LICENSE">MIT license</a> ·
+    single runtime dependency (<code>httpx</code>) · runs entirely on your machine</span>
     <span class="spacer"></span>
+    <a href="https://silkcode.web.app">silkcode.web.app</a>
     <a href="https://github.com/RupertCloud/SilkCode">GitHub</a>
+    <a href="https://github.com/RupertCloud/SilkCode/releases/latest">Releases</a>
     <a href="https://github.com/RupertCloud/SilkCode/blob/main/SRS.md">Specification</a>
-    <a href="https://github.com/RupertCloud/SilkCode/blob/main/docs/GITHUB_APP.md">GitHub App setup</a>
   </footer>
 </div>
 </body>
