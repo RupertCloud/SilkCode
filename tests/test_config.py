@@ -55,6 +55,44 @@ def test_api_key_from_env(monkeypatch):
     assert config.api_key_for(cfg) == "sk-test"
 
 
+def test_cloudflare_requires_account_id():
+    with pytest.raises(ConfigError, match="account id"):
+        Config({}).resolve_model("cloudflare")
+
+
+def test_cloudflare_with_account_id_resolves_url(monkeypatch):
+    config = Config({"providers": {"cloudflare": {"account_id": "abc123"}}})
+    name, cfg, model = config.resolve_model("cloudflare")
+    assert name == "cloudflare"
+    assert cfg["base_url"] == "https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1"
+    assert cfg["api_key_env"] == "CLOUDFLARE_API_TOKEN"
+    assert model == "@cf/qwen/qwen2.5-coder-32b-instruct"
+
+    # explicit model spec keeps the @cf/... path intact
+    _n, _c, model = config.resolve_model("cloudflare/@cf/meta/llama-3.3-70b-instruct")
+    assert model == "@cf/meta/llama-3.3-70b-instruct"
+
+
+def test_auto_skips_cloudflare_without_account_id(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "cf-token")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-x")
+    config = Config({"auto_order": ["cloudflare", "deepseek"]})
+    name, _cfg, _model = config.resolve_model("auto")
+    assert name == "deepseek"
+
+
+def test_auto_uses_cloudflare_when_onboarded(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "cf-token")
+    config = Config({
+        "auto_order": ["cloudflare"],
+        "providers": {"cloudflare": {"account_id": "abc123"}},
+    })
+    name, cfg, model = config.resolve_model("auto")
+    assert name == "cloudflare"
+    assert "abc123" in cfg["base_url"]
+    assert model == "@cf/qwen/qwen2.5-coder-32b-instruct"
+
+
 def test_default_model_setting():
     assert Config({}).default_model == "deepseek"
     assert Config({"default_model": "ollama/qwen2.5-coder"}).default_model == "ollama/qwen2.5-coder"

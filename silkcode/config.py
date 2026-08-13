@@ -40,6 +40,14 @@ BUILTIN_PROVIDERS: dict[str, dict] = {
         "api_key_env": "MOONSHOT_API_KEY",
         "default_model": "kimi-k2-0711-preview",
     },
+    "cloudflare": {
+        # Workers AI: OpenAI-compatible endpoint on Cloudflare's edge GPUs.
+        # The URL needs your account id: silkcode models add cloudflare --account-id <id>
+        "type": "openai_compat",
+        "base_url": "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
+        "api_key_env": "CLOUDFLARE_API_TOKEN",
+        "default_model": "@cf/qwen/qwen2.5-coder-32b-instruct",
+    },
     "glm": {
         "type": "openai_compat",
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
@@ -121,11 +129,12 @@ class Config:
         """Resolve 'deepseek', 'ollama/qwen2.5-coder', or 'auto' to (provider, cfg, model)."""
         spec = spec or self.default_model
         if spec == "auto":
-            return self._resolve_auto()
+            name, cfg, model = self._resolve_auto()
+            return name, self._fill_placeholders(name, cfg), model
         if "/" in spec:
             prefix, rest = spec.split("/", 1)
             if prefix in self.providers:
-                return prefix, self.providers[prefix], rest
+                return prefix, self._fill_placeholders(prefix, self.providers[prefix]), rest
         if spec in self.providers:
             cfg = self.providers[spec]
             model = cfg.get("default_model")
@@ -134,11 +143,26 @@ class Config:
                     f"Provider '{spec}' has no default model; use '{spec}/<model-name>' "
                     f"(e.g. '{spec}/qwen2.5-coder')."
                 )
-            return spec, cfg, model
+            return spec, self._fill_placeholders(spec, cfg), model
         raise ConfigError(
             f"Unknown model '{spec}'. Known providers: {', '.join(sorted(self.providers))}. "
             "Use '<provider>' or '<provider>/<model>'."
         )
+
+    def _fill_placeholders(self, name: str, cfg: dict) -> dict:
+        """Substitute {account_id}-style placeholders in the base URL."""
+        base_url = cfg.get("base_url", "")
+        if "{account_id}" not in base_url:
+            return cfg
+        account_id = cfg.get("account_id")
+        if not account_id:
+            raise ConfigError(
+                f"Provider '{name}' needs your account id. "
+                f"Run: silkcode models add {name} --account-id <your-account-id>"
+            )
+        resolved = dict(cfg)
+        resolved["base_url"] = base_url.format(account_id=account_id)
+        return resolved
 
     def _resolve_auto(self) -> tuple[str, dict, str]:
         """Pick the first available model (SRS section 17, basic router):
@@ -155,6 +179,8 @@ class Config:
             cfg = self.providers.get(name)
             if not cfg:
                 continue
+            if "{account_id}" in cfg.get("base_url", "") and not cfg.get("account_id"):
+                continue  # placeholder provider not onboarded yet (e.g. cloudflare)
             if cfg.get("type") == "ollama":
                 probe = OllamaProvider(name, base_url=cfg["base_url"], timeout=2.0)
                 models = probe.list_models()

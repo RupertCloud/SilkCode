@@ -136,16 +136,26 @@ def _models_list() -> int:
 
 def _models_add(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="silkcode models add")
-    parser.add_argument("name", help="provider name, e.g. 'myserver'")
-    parser.add_argument("--base-url", required=True, help="OpenAI-compatible base URL, e.g. https://ai.company.com/v1")
+    parser.add_argument("name", help="provider name, e.g. 'myserver' or a builtin like 'cloudflare'")
+    parser.add_argument("--base-url", help="OpenAI-compatible base URL (not needed when "
+                        "configuring a builtin provider, e.g. cloudflare)")
     parser.add_argument("--type", choices=("openai_compat", "ollama"), default="openai_compat")
     parser.add_argument("--model", help="default model for this provider")
+    parser.add_argument("--account-id", help="account id for providers whose URL needs one (Cloudflare)")
     parser.add_argument("--api-key-env", help="environment variable that holds the API key (recommended)")
     parser.add_argument("--api-key", help="API key stored in the config file (prefer --api-key-env)")
     args = parser.parse_args(argv)
 
     config = Config.load()
-    cfg: dict = {"type": args.type, "base_url": args.base_url}
+    is_builtin = args.name in config.providers
+    if not args.base_url and not is_builtin:
+        parser.error("--base-url is required for new providers")
+    cfg: dict = {}
+    if args.base_url:
+        cfg["base_url"] = args.base_url
+        cfg["type"] = args.type
+    if args.account_id:
+        cfg["account_id"] = args.account_id
     if args.model:
         cfg["default_model"] = args.model
     if args.api_key_env:
@@ -155,8 +165,13 @@ def _models_add(argv: list[str]) -> int:
         print("warning: storing the API key in the config file; prefer --api-key-env", file=sys.stderr)
     config.set_provider(args.name, cfg)
     config.save()
-    print(f"Added provider '{args.name}' ({args.base_url}) to {config.path}")
-    print(f"Use it with: silkcode --model {args.name}" + ("" if args.model else "/<model-name>"))
+    merged = config.providers[args.name]
+    print(f"{'Configured' if is_builtin else 'Added'} provider '{args.name}' "
+          f"({merged.get('base_url', '?')}) in {config.path}")
+    has_default = args.model or merged.get("default_model")
+    print(f"Use it with: silkcode --model {args.name}" + ("" if has_default else "/<model-name>"))
+    if merged.get("api_key_env"):
+        print(f"API key is read from ${merged['api_key_env']}")
     return 0
 
 

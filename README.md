@@ -44,9 +44,27 @@ and risky commands ask for your approval first (see *Permissions* below).
 ## Models: cloud, local, and onboarding your own
 
 Silk Code ships with built-in providers: `deepseek`, `qwen`, `kimi`, `glm`, `minimax`,
-`openrouter`, `ollama`, `vllm`, `lmstudio`. API keys are read from environment variables
-(`DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`, `GLM_API_KEY`,
-`MINIMAX_API_KEY`, `OPENROUTER_API_KEY`).
+`cloudflare` (Workers AI), `openrouter`, `ollama`, `vllm`, `lmstudio`. API keys are read
+from environment variables (`DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`,
+`GLM_API_KEY`, `MINIMAX_API_KEY`, `CLOUDFLARE_API_TOKEN`, `OPENROUTER_API_KEY`).
+
+**Cloudflare Workers AI** (models on Cloudflare's edge GPUs) needs your account id once:
+
+```bash
+export CLOUDFLARE_API_TOKEN=...        # token with Workers AI permission
+silkcode models add cloudflare --account-id <your-account-id>
+silkcode --model cloudflare                                    # qwen2.5-coder-32b default
+silkcode --model "cloudflare/@cf/meta/llama-3.3-70b-instruct"  # any Workers AI model
+```
+
+**Cloudflare AI Gateway** (caching/analytics proxy in front of any provider) is just an
+OpenAI-compatible endpoint:
+
+```bash
+silkcode models add gateway \
+  --base-url https://gateway.ai.cloudflare.com/v1/<account-id>/<gateway>/compat \
+  --api-key-env CF_AIG_TOKEN --model <model>
+```
 
 ```bash
 silkcode models                            # list providers, keys, local models
