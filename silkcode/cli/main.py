@@ -37,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         "mcp": cmd_mcp,
         "connect": cmd_connect,
         "benchmark": cmd_benchmark,
+        "sandbox": cmd_sandbox,
     }
     if argv and argv[0] in commands:
         try:
@@ -54,6 +55,9 @@ def _repl_parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=("ask", "edit", "agent"), default="ask", help="permission mode")
     parser.add_argument("--allow", help="pre-authorize git operations without prompts, "
                         "comma-separated from: pull,commit,push,merge")
+    parser.add_argument("--sandbox", action="store_true",
+                        help="run commands in the configured remote sandbox "
+                             "(silkcode sandbox connect <url>)")
     return parser
 
 
@@ -75,7 +79,7 @@ def cmd_repl(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     from .repl import run_repl
     return run_repl(args.path, args.model, args.mode, prompt=args.prompt,
-                    grants=_parse_grants(args.allow))
+                    grants=_parse_grants(args.allow), use_sandbox=args.sandbox)
 
 
 REVIEW_PROMPT = (
@@ -99,7 +103,7 @@ def cmd_gui(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     from ..gui.server import run_gui
     return run_gui(args.path, args.model, args.mode, host=args.host, port=args.port,
-                   grants=_parse_grants(args.allow))
+                   grants=_parse_grants(args.allow), use_sandbox=args.sandbox)
 
 
 def cmd_models(argv: list[str]) -> int:
@@ -379,6 +383,71 @@ def cmd_config(argv: list[str]) -> int:
     print("\nBuilt-in providers: " + ", ".join(sorted(Config().providers)))
     print("API keys are read from environment variables (e.g. DEEPSEEK_API_KEY) unless set in the config.")
     return 0
+
+
+def cmd_sandbox(argv: list[str]) -> int:
+    from ..execbackend import remote_backend_from_config
+    from ..workspace import ToolError
+
+    if argv and argv[0] == "connect":
+        parser = argparse.ArgumentParser(prog="silkcode sandbox connect")
+        parser.add_argument("url", help="sandbox base URL, e.g. https://sandbox.example.workers.dev")
+        parser.add_argument("--token", help="shared secret stored in the config file")
+        parser.add_argument("--token-env", help="environment variable holding the secret "
+                            "(default SILKCODE_SANDBOX_TOKEN)")
+        args = parser.parse_args(argv[1:])
+        config = Config.load()
+        sandbox: dict = {"url": args.url.rstrip("/")}
+        if args.token:
+            sandbox["token"] = args.token
+        if args.token_env:
+            sandbox["token_env"] = args.token_env
+        config.data["sandbox"] = sandbox
+        config.save()
+        print(f"Sandbox configured: {sandbox['url']}")
+        print("Use it with: silkcode --sandbox <path>   (or silkcode gui --sandbox <path>)")
+        return _sandbox_status()
+    if argv and argv[0] == "disconnect":
+        config = Config.load()
+        config.data.pop("sandbox", None)
+        config.save()
+        print("Sandbox removed from configuration.")
+        return 0
+    if argv and argv[0] == "serve":
+        parser = argparse.ArgumentParser(prog="silkcode sandbox serve")
+        parser.add_argument("--host", default="127.0.0.1")
+        parser.add_argument("--port", type=int, default=8390)
+        parser.add_argument("--token", required=True, help="shared secret clients must present")
+        parser.add_argument("--dir", default=None, help="directory for synced workspaces")
+        args = parser.parse_args(argv[1:])
+        from pathlib import Path
+        from ..config import config_dir
+        from ..sandbox_server import serve
+        base_dir = Path(args.dir) if args.dir else config_dir() / "sandbox-workspaces"
+        return serve(base_dir, args.token, args.host, args.port)
+    return _sandbox_status()
+
+
+def _sandbox_status() -> int:
+    from ..execbackend import remote_backend_from_config
+    from ..workspace import ToolError
+    config = Config.load()
+    if not (config.data.get("sandbox") or {}).get("url"):
+        print("No sandbox configured.")
+        print("Self-hosted:  silkcode sandbox serve --token <secret>  (on the machine that should run commands)")
+        print("              silkcode sandbox connect http://<host>:8390 --token <secret>")
+        print("Cloudflare:   deploy sandbox/cloudflare-worker, then connect its URL")
+        return 0
+    try:
+        backend = remote_backend_from_config(config.data)
+        health = backend.health()
+        print(f"Sandbox: {backend.url}")
+        print(f"Status: reachable (protocol v{health.get('version', '?')})")
+        return 0
+    except ToolError as exc:
+        print(f"Sandbox: {config.data['sandbox']['url']}")
+        print(f"Status: NOT reachable - {exc}")
+        return 1
 
 
 def cmd_sessions(argv: list[str]) -> int:

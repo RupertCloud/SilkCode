@@ -1,0 +1,22 @@
+{
+  // Silk Sandbox on Cloudflare. Deploy: npx wrangler deploy
+  // Then set the shared secret: npx wrangler secret put SANDBOX_TOKEN
+  "name": "silkcode-sandbox",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+      "max_instances": 5
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "class_name": "Sandbox", "name": "Sandbox" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Sandbox"] }
+  ]
+}

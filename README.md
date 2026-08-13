@@ -178,6 +178,28 @@ silkcode mcp add fetch --command "uvx mcp-server-fetch"
 silkcode mcp                       # list servers and their tools
 ```
 
+## Remote sandboxes
+
+Run the agent's commands and tests in a disposable cloud container instead of on your
+machine (file edits stay local; the workspace syncs up before each command):
+
+```bash
+# Self-hosted, on any machine/VM that should execute commands:
+silkcode sandbox serve --token <secret>
+silkcode sandbox connect http://<host>:8390 --token <secret>
+
+# Or Cloudflare: deploy sandbox/cloudflare-worker (see its README), then
+silkcode sandbox connect https://silkcode-sandbox.<you>.workers.dev
+
+silkcode --sandbox ~/my-project           # CLI with remote execution
+silkcode gui --sandbox ~/my-project       # GUI with remote execution
+silkcode sandbox                          # status / health check
+```
+
+Both implement the same documented Silk Sandbox Protocol v1 (`/health`, `/sync`,
+`/exec`, bearer-token auth). Remote outputs are labeled `[sandbox]` in the agent's
+tool results. Note: artifacts created remotely are not synced back.
+
 ## Benchmarking
 
 `silkcode benchmark` runs real end-to-end coding tasks (create, fix, extend, refactor —
@@ -229,6 +251,8 @@ silkcode/
 ├── memory.py        project memory (.silkcode/memory.md)
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
+├── execbackend.py   execution backends: local subprocesses or remote sandbox
+├── sandbox_server.py  reference Silk Sandbox Protocol server (self-hosted)
 ├── tools/           read/write/edit, glob/grep, run_command, run_tests, git status/diff/log/commit
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
 ├── permissions.py   risk classification + ask/edit/agent modes
