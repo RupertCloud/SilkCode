@@ -110,8 +110,10 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
 
     permissions = PermissionManager(mode=(resume or {}).get("mode", mode), asker=_ask_user,
                                     grants=grants)
+    from ..agent.loop import DEFAULT_CONTEXT_TOKENS
     agent = Agent(provider, model, workspace, permissions, on_event=_on_event,
-                  context=build_context(workspace), mcp=mcp)
+                  context=build_context(workspace), mcp=mcp,
+                  max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS)
 
     if resume:
         session = resume
@@ -220,6 +222,8 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
     elif cmd == "/usage":
         u = agent.usage
         print(f"tokens: {u.prompt_tokens} prompt + {u.completion_tokens} completion = {u.total_tokens} total")
+        print(f"context: ~{agent.context_tokens()} tokens of {agent.max_context_tokens} budget"
+              + (f" ({agent.trimmed_messages} old messages trimmed)" if agent.trimmed_messages else ""))
     elif cmd == "/revert":
         restored = agent.checkpoints.revert_last()
         if restored:

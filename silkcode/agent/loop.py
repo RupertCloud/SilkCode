@@ -15,6 +15,13 @@ from .prompts import SYSTEM_PROMPT
 
 MAX_STEPS = 40
 
+# Context compaction (SRS section 24). Token counts are estimated at ~4
+# characters per token; compaction triggers when the estimate exceeds the
+# budget and never touches the most recent turns.
+DEFAULT_CONTEXT_TOKENS = 100_000
+KEEP_RECENT_TOOL_RESULTS = 6
+TRUNCATED_TOOL_CHARS = 500
+
 # on_event(kind, data): kind in {"text", "tool_start", "tool_result"}
 EventHandler = Callable[[str, object], None]
 
@@ -30,6 +37,7 @@ class Agent:
         on_event: EventHandler | None = None,
         context: str | None = None,
         mcp=None,
+        max_context_tokens: int = DEFAULT_CONTEXT_TOKENS,
     ):
         self.provider = provider
         self.model = model
@@ -40,9 +48,12 @@ class Agent:
         self.mcp = mcp
         self.usage = Usage()
         self.stop_requested = False
+        self.max_context_tokens = max_context_tokens
+        self.trimmed_messages = 0
         system = SYSTEM_PROMPT.format(root=workspace.root, platform=platform.platform())
         if context:
             system += "\n" + context
+        self._base_system = system
         self.messages: list[dict] = [{"role": "system", "content": system}]
 
     def run_turn(self, user_input: str) -> str:
@@ -87,7 +98,44 @@ class Agent:
                     "content": "Cancelled: the user interrupted this turn.",
                 })
 
+    # ---- context compaction (SRS section 24) -------------------------------
+
+    def context_tokens(self) -> int:
+        """Rough token estimate for the current conversation."""
+        chars = 0
+        for m in self.messages:
+            chars += len(str(m.get("content") or ""))
+            for tc in m.get("tool_calls") or []:
+                chars += len(tc["function"]["name"]) + len(tc["function"]["arguments"])
+        return chars // 4
+
+    def _compact(self) -> None:
+        if self.context_tokens() <= self.max_context_tokens:
+            return
+        # Stage 1: truncate all but the most recent tool results.
+        tool_messages = [m for m in self.messages if m.get("role") == "tool"]
+        for m in tool_messages[:-KEEP_RECENT_TOOL_RESULTS]:
+            content = str(m.get("content") or "")
+            if len(content) > TRUNCATED_TOOL_CHARS:
+                m["content"] = content[:TRUNCATED_TOOL_CHARS] + "\n...[old output truncated to save context]"
+        # Stage 2: drop the oldest turns, always cutting at a user-message
+        # boundary so assistant/tool pairs stay intact.
+        while self.context_tokens() > self.max_context_tokens:
+            user_indices = [i for i, m in enumerate(self.messages) if m.get("role") == "user"]
+            if len(user_indices) < 2:
+                break  # only the current turn remains; nothing left to drop
+            start, end = user_indices[0], user_indices[1]
+            self.trimmed_messages += end - start
+            del self.messages[start:end]
+        if self.trimmed_messages:
+            self.messages[0]["content"] = (
+                self._base_system
+                + f"\n[Context note: {self.trimmed_messages} earlier messages were trimmed to fit "
+                "the context window. Re-read files or re-run searches if you need that information.]"
+            )
+
     def _call_model(self) -> ChatResult:
+        self._compact()
         schemas = openai_schemas()
         if self.mcp is not None:
             schemas = schemas + self.mcp.tool_schemas()

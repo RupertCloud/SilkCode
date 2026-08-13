@@ -46,10 +46,12 @@ class GuiState:
         if mcp_servers:
             from ..mcp import McpManager
             mcp = McpManager(mcp_servers)
+        from ..agent.loop import DEFAULT_CONTEXT_TOKENS
         self.permissions = PermissionManager(mode=mode, asker=self._ask_via_gui, grants=grants)
         self.agent = Agent(provider, model, self.workspace, self.permissions,
                            on_event=self._on_agent_event, context=build_context(self.workspace),
-                           mcp=mcp)
+                           mcp=mcp,
+                           max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS)
         self.session = new_session(self.store.new_id(), title="", model=self.spec,
                                    cwd=str(self.workspace.root), mode=mode)
 

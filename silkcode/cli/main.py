@@ -36,6 +36,7 @@ def main(argv: list[str] | None = None) -> int:
         "review": cmd_review,
         "mcp": cmd_mcp,
         "connect": cmd_connect,
+        "benchmark": cmd_benchmark,
     }
     if argv and argv[0] in commands:
         try:
@@ -234,6 +235,34 @@ def cmd_test(argv: list[str]) -> int:
         return 1
     print(output)
     return 0 if "exit code: 0" in output else 1
+
+
+def cmd_benchmark(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="silkcode benchmark")
+    parser.add_argument("--model", "-m", action="append", dest="models",
+                        help="model spec to benchmark; repeat to compare (default: config default)")
+    parser.add_argument("--tasks", help="comma-separated task ids (default: all)")
+    parser.add_argument("--ab", action="store_true",
+                        help="paired-condition run: each task twice, bare agent vs full harness "
+                             "context, to measure the harness's contribution")
+    parser.add_argument("--list", action="store_true", help="list available tasks and exit")
+    args = parser.parse_args(argv)
+
+    from ..benchmark import TASKS, format_results, run_benchmark
+    if args.list:
+        for task in TASKS:
+            print(f"{task.id:<16} {task.prompt[:80]}")
+        return 0
+    specs = args.models or [Config.load().default_model]
+    task_ids = [t.strip() for t in args.tasks.split(",")] if args.tasks else None
+    try:
+        results = run_benchmark(specs, task_ids, ab=args.ab, on_progress=print)
+    except (ConfigError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print()
+    print(format_results(results))
+    return 0
 
 
 def cmd_connect(argv: list[str]) -> int:

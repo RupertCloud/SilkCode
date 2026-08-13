@@ -160,6 +160,33 @@ silkcode mcp add fetch --command "uvx mcp-server-fetch"
 silkcode mcp                       # list servers and their tools
 ```
 
+## Benchmarking
+
+`silkcode benchmark` runs real end-to-end coding tasks (create, fix, extend, refactor —
+each verified by executing code, with anti-cheating checks) through the full agent loop:
+
+```bash
+silkcode benchmark -m deepseek -m ollama/qwen2.5-coder   # compare models
+silkcode benchmark --ab                                  # paired-condition protocol:
+                                                         # bare agent vs full harness context
+silkcode benchmark --list                                # available tasks
+```
+
+Reports solved count, tokens, and wall-clock per model; saves JSON results and full
+per-task traces under `~/.silkcode/benchmarks/` for review and provenance. The `--ab`
+mode follows the paired-comparison design used by harness-evaluation protocols
+(e.g. Nimbalyst's): same task, model, prompts, and permissions in both conditions, so
+the delta isolates the harness's contribution.
+
+## Context management
+
+The full conversation is sent to the model each turn. When the estimated size
+approaches the model's context window (default budget 100K tokens; set
+`context_tokens` per provider in the config), Silk Code compacts automatically:
+old tool outputs are truncated first, then the oldest turns are dropped at turn
+boundaries — the current turn and recent results are never touched, and the model is
+told what was trimmed. Check `/usage` for the live context estimate.
+
 ## Permissions and safety
 
 Commands are risk-classified (SRS section 30): read-only commands run automatically;
