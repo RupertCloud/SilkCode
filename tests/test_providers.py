@@ -1,0 +1,89 @@
+import json
+
+import httpx
+import pytest
+
+from silkcode.providers import build_provider
+from silkcode.providers.base import ProviderError
+from silkcode.providers.ollama import OllamaProvider
+from silkcode.providers.openai_compat import OpenAICompatProvider
+
+
+def make_provider(handler):
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    return OpenAICompatProvider("test", "http://test/v1", api_key="k", client=client)
+
+
+def test_chat_parses_content_and_usage():
+    def handler(request):
+        assert request.headers["Authorization"] == "Bearer k"
+        payload = json.loads(request.content)
+        assert payload["model"] == "m1"
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        })
+
+    result = make_provider(handler).chat("m1", [{"role": "user", "content": "hi"}])
+    assert result.content == "hello"
+    assert result.usage.total_tokens == 15
+    assert result.tool_calls == []
+
+
+def test_chat_parses_tool_calls():
+    def handler(request):
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": None, "tool_calls": [
+                {"id": "call_1", "type": "function",
+                 "function": {"name": "read_file", "arguments": '{"path": "a.py"}'}},
+            ]}, "finish_reason": "tool_calls"}],
+        })
+
+    result = make_provider(handler).chat("m1", [])
+    assert result.content == ""
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "read_file"
+    assert json.loads(result.tool_calls[0].arguments) == {"path": "a.py"}
+
+
+def test_chat_http_error_raises():
+    def handler(request):
+        return httpx.Response(401, json={"error": "bad key"})
+
+    with pytest.raises(ProviderError, match="401"):
+        make_provider(handler).chat("m1", [])
+
+
+def test_stream_assembles_text_and_tool_calls():
+    chunks = [
+        {"choices": [{"delta": {"content": "Hel"}}]},
+        {"choices": [{"delta": {"content": "lo"}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_9", "function": {"name": "grep", "arguments": '{"pat'}}]}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": 'tern": "x"}'}}]}}]},
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+        {"choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 3}},
+    ]
+    body = "".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n"
+
+    def handler(request):
+        return httpx.Response(200, content=body.encode(), headers={"content-type": "text/event-stream"})
+
+    events = list(make_provider(handler).stream("m1", []))
+    texts = [d for k, d in events if k == "text"]
+    assert "".join(texts) == "Hello"
+    result = [d for k, d in events if k == "result"][0]
+    assert result.content == "Hello"
+    assert result.tool_calls[0].id == "call_9"
+    assert result.tool_calls[0].name == "grep"
+    assert json.loads(result.tool_calls[0].arguments) == {"pattern": "x"}
+    assert result.usage.total_tokens == 10
+
+
+def test_build_provider_types():
+    p = build_provider("x", {"type": "openai_compat", "base_url": "http://h/v1"})
+    assert isinstance(p, OpenAICompatProvider)
+    o = build_provider("ollama", {"type": "ollama", "base_url": "http://localhost:11434"})
+    assert isinstance(o, OllamaProvider)
+    assert o.base_url == "http://localhost:11434/v1"
+    with pytest.raises(ProviderError):
+        build_provider("x", {"type": "nope", "base_url": "http://h"})

@@ -1,0 +1,80 @@
+import subprocess
+
+import pytest
+
+from silkcode.tools.git import git_commit, git_diff, git_log, git_status
+from silkcode.workspace import Workspace
+
+
+@pytest.fixture
+def repo(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True)
+    return Workspace(tmp_path)
+
+
+def test_git_commit_stages_and_commits(repo):
+    (repo.root / "a.py").write_text("x = 1\n")
+    out = git_commit(repo, "Add a.py")
+    assert out.startswith("Committed:")
+    assert "Add a.py" in out
+    assert "Add a.py" in git_log(repo)
+    assert git_status(repo).startswith("## ") or "clean" in git_status(repo)
+
+
+def test_git_commit_empty_message(repo):
+    assert "must not be empty" in git_commit(repo, "   ")
+
+
+def test_git_commit_nothing_to_commit(repo):
+    out = git_commit(repo, "empty")
+    assert out.startswith("git error")
+
+
+def test_git_diff_in_repo(repo):
+    (repo.root / "a.py").write_text("x = 1\n")
+    git_commit(repo, "init")
+    (repo.root / "a.py").write_text("x = 2\n")
+    diff = git_diff(repo)
+    assert "-x = 1" in diff and "+x = 2" in diff
+
+
+def test_git_push_and_pull_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("SILKCODE_HOME", str(tmp_path / "home"))
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+
+    work = tmp_path / "work"
+    work.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=work, check=True)
+    subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=work, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=work, check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=work, check=True)
+    ws = Workspace(work)
+    (work / "a.txt").write_text("v1")
+    git_commit(ws, "init")
+
+    from silkcode.tools.git import git_pull, git_push
+    out = git_push(ws)
+    assert out.startswith("Pushed main to origin.")
+
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(origin), str(clone)], check=True)
+    assert (clone / "a.txt").read_text() == "v1"
+
+    subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=clone, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=clone, check=True)
+    (clone / "a.txt").write_text("v2")
+    subprocess.run(["git", "commit", "-aqm", "update"], cwd=clone, check=True)
+    subprocess.run(["git", "push", "-q"], cwd=clone, check=True)
+
+    out = git_pull(ws)
+    assert "a.txt" in out or "Fast-forward" in out or "up to date" not in out
+    assert (work / "a.txt").read_text() == "v2"
+
+
+def test_git_error_is_single_line(tmp_path):
+    out = git_diff(Workspace(tmp_path))  # not a git repository
+    assert out.startswith("git error")
+    assert "\n" not in out

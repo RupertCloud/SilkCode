@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Silk Code</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1b1e24; --panel2: #20242c; --border: #2c313a;
+    --text: #d7dae0; --dim: #8b93a1; --accent: #5cc8ff; --user: #2a3550;
+    --ok: #7ad48a; --warn: #e6c07b; --err: #e06c75; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--border); flex: 0 0 auto; flex-wrap: wrap; }
+  header .logo { font-weight: 700; color: var(--accent); }
+  header .path { color: var(--dim); font-family: var(--mono); font-size: 12px; }
+  header select, header button, header input {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 13px;
+  }
+  header button { cursor: pointer; } header button:hover { border-color: var(--accent); }
+  header .spacer { flex: 1; }
+  header .usage { color: var(--dim); font-size: 12px; }
+  #status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); display: inline-block; }
+  #status-dot.running { background: var(--warn); animation: pulse 1s infinite alternate; }
+  @keyframes pulse { to { opacity: .35; } }
+
+  main { display: grid; grid-template-columns: 230px 1fr 270px; grid-template-rows: 1fr 240px; flex: 1; min-height: 0; }
+  .pane { border-right: 1px solid var(--border); overflow: auto; background: var(--bg); min-height: 0; }
+  .pane h2 { font-size: 11px; letter-spacing: .12em; color: var(--dim); padding: 8px 12px 4px; position: sticky; top: 0; background: var(--bg); }
+
+  #files { grid-row: 1 / 3; }
+  #files .entry { padding: 1px 10px; cursor: pointer; white-space: nowrap; font-family: var(--mono); font-size: 12px; color: var(--text); }
+  #files .entry.dir { color: var(--dim); }
+  #files .entry:hover { background: var(--panel2); }
+
+  #chat { display: flex; flex-direction: column; min-height: 0; }
+  #messages { flex: 1; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 92%; padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { background: var(--user); align-self: flex-end; }
+  .msg.assistant { background: var(--panel2); align-self: flex-start; }
+  .msg.error { background: #4a2529; color: var(--err); align-self: stretch; font-family: var(--mono); font-size: 12px; }
+  .msg.tool { background: transparent; border: 1px dashed var(--border); color: var(--dim); font-family: var(--mono); font-size: 12px; align-self: flex-start; padding: 4px 10px; }
+  #composer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--panel); }
+  #composer textarea { flex: 1; resize: none; height: 58px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit; }
+  #composer button { background: var(--accent); color: #10222e; border: 0; border-radius: 8px; padding: 0 20px; font-weight: 700; cursor: pointer; }
+  #composer button:disabled { opacity: .4; cursor: default; }
+
+  #activity { border-right: 0; grid-row: 1 / 3; border-left: 1px solid var(--border); }
+  .act { padding: 4px 12px; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid #1e222a; }
+  .act .name { color: var(--accent); }
+  .act .args, .act .out { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+  .act .out { color: var(--ok); }
+
+  #bottom { grid-column: 2; border-top: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
+  #tabs { display: flex; gap: 2px; padding: 6px 10px 0; }
+  #tabs button { background: transparent; border: 0; color: var(--dim); padding: 5px 12px; cursor: pointer; border-radius: 6px 6px 0 0; font-size: 12px; letter-spacing: .06em; }
+  #tabs button.active { background: var(--bg); color: var(--text); }
+  #viewer { flex: 1; overflow: auto; background: var(--bg); margin: 0 10px 10px; border: 1px solid var(--border); border-radius: 0 6px 6px 6px; }
+  #viewer pre { padding: 10px 12px; font: 12px/1.45 var(--mono); white-space: pre; }
+  .dline.add { color: var(--ok); } .dline.del { color: var(--err); } .dline.hunk { color: var(--accent); }
+
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; align-items: center; justify-content: center; z-index: 10; }
+  .modal-bg.open { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; width: 460px; max-width: 92vw; }
+  .modal h3 { margin-bottom: 10px; font-size: 15px; }
+  .modal .prompt { font-family: var(--mono); font-size: 13px; background: var(--panel2); padding: 10px; border-radius: 8px; margin-bottom: 14px; word-break: break-all; }
+  .modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+  .modal button { padding: 6px 14px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); cursor: pointer; }
+  .modal button.primary { background: var(--accent); color: #10222e; border: 0; font-weight: 700; }
+  .modal button.danger { background: #4a2529; color: var(--err); }
+  .modal label { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 2px; }
+  .modal input, .modal select { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">Silk Code</span>
+  <span class="path" id="cwd"></span>
+  <span id="status-dot" title="agent status"></span>
+  <span class="spacer"></span>
+  <label>Session <select id="session-select"></select></label>
+  <label>Model <select id="model-select"></select></label>
+  <button id="add-model">+ Add model</button>
+  <button id="github-btn">GitHub</button>
+  <label>Mode <select id="mode-select">
+    <option value="ask">ask</option><option value="edit">edit</option><option value="agent">agent</option>
+  </select></label>
+  <button id="revert" title="Undo the last turn's file changes">↩ Revert</button>
+  <span class="usage" id="usage"></span>
+  <span class="usage" id="session"></span>
+</header>
+
+<main>
+  <section class="pane" id="files"><h2>PROJECT</h2><div id="tree"></div></section>
+  <section id="chat">
+    <div id="messages"></div>
+    <div id="composer">
+      <textarea id="input" placeholder="Ask Silk Code to build or change something… (Enter to send, Shift+Enter for a new line)"></textarea>
+      <button id="send">Send</button>
+      <button id="stop" style="display:none;background:#4a2529;color:var(--err)">Stop</button>
+    </div>
+  </section>
+  <section class="pane" id="activity"><h2>AGENT ACTIVITY</h2><div id="timeline"></div></section>
+  <section id="bottom">
+    <div id="tabs">
+      <button data-tab="diff" class="active">GIT DIFF</button>
+      <button data-tab="file">FILE</button>
+    </div>
+    <div id="viewer"><pre id="viewer-pre">(no changes yet)</pre></div>
+  </section>
+</main>
+
+<div class="modal-bg" id="perm-modal">
+  <div class="modal">
+    <h3>Permission required</h3>
+    <div class="prompt" id="perm-prompt"></div>
+    <div class="row">
+      <button class="danger" data-decision="no">Deny</button>
+      <button data-decision="always">Always (this session)</button>
+      <button class="primary" data-decision="yes">Allow</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="github-modal">
+  <div class="modal">
+    <h3>GitHub authorization</h3>
+    <div class="prompt" id="gh-status">checking…</div>
+    <label>Personal access token (repo scope) — stored in your Silk Code config</label>
+    <input id="gh-token" type="password" placeholder="ghp_… (leave empty to keep current)">
+    <label style="margin-top:12px">Authorize the agent for this session (no per-action prompts):</label>
+    <div style="display:flex;gap:14px;margin:6px 0 2px">
+      <label><input type="checkbox" id="grant-pull"> pull</label>
+      <label><input type="checkbox" id="grant-commit"> commit</label>
+      <label><input type="checkbox" id="grant-push"> push</label>
+      <label><input type="checkbox" id="grant-merge"> merge</label>
+    </div>
+    <div style="color:var(--dim);font-size:12px">Anything not checked keeps its normal approval prompt. Grants reset when the session ends.</div>
+    <div class="row">
+      <button id="gh-cancel">Close</button>
+      <button class="primary" id="gh-save">Authorize</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="provider-modal">
+  <div class="modal">
+    <h3>Add a model provider</h3>
+    <label>Name</label><input id="p-name" placeholder="myserver">
+    <label>Type</label><select id="p-type"><option value="openai_compat">OpenAI-compatible</option><option value="ollama">Ollama</option></select>
+    <label>Base URL</label><input id="p-url" placeholder="https://ai.company.com/v1 or http://localhost:11434">
+    <label>Default model (optional)</label><input id="p-model" placeholder="qwen2.5-coder">
+    <label>API key environment variable (optional)</label><input id="p-keyenv" placeholder="MY_API_KEY">
+    <label>API key (optional; stored in config file)</label><input id="p-key" type="password">
+    <div class="row">
+      <button id="p-cancel">Cancel</button>
+      <button class="primary" id="p-save">Add provider</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const api = async (path, body) => {
+  const opts = body ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : {};
+  const resp = await fetch(path, opts);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error || resp.statusText);
+  return data;
+};
+
+let streamEl = null;          // assistant bubble currently being streamed into
+const permQueue = [];         // pending permission requests
+
+function addMsg(kind, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + kind;
+  div.textContent = text;
+  $("messages").appendChild(div);
+  $("messages").scrollTop = $("messages").scrollHeight;
+  return div;
+}
+
+function addToolMsg(name, args) {
+  const div = addMsg("tool", "");
+  div.textContent = "⚙ " + name + "  " + args;
+  return div;
+}
+
+function addActivity(name, args) {
+  const div = document.createElement("div");
+  div.className = "act";
+  div.innerHTML = `<span class="name">${esc(name)}</span><span class="args">${esc(args)}</span>`;
+  $("timeline").appendChild(div);
+  $("timeline").scrollTop = $("timeline").scrollHeight;
+  return div;
+}
+
+function setRunning(running) {
+  $("status-dot").classList.toggle("running", running);
+  $("send").disabled = running;
+  $("stop").style.display = running ? "" : "none";
+}
+
+function renderUsage(u) {
+  if (u) $("usage").textContent = `${u.total_tokens ?? (u.prompt_tokens + u.completion_tokens)} tokens`;
+}
+
+// ---- transcript / events -------------------------------------------------
+
+function renderEntry(e) {
+  if (e.kind === "user") addMsg("user", e.text);
+  else if (e.kind === "assistant") addMsg("assistant", e.text);
+  else if (e.kind === "tool") { addToolMsg(e.name, e.args); addActivity(e.name, e.args); }
+  else if (e.kind === "error") addMsg("error", e.text);
+}
+
+function handleEvent(ev) {
+  if (ev.type === "user") { streamEl = null; addMsg("user", ev.text); setRunning(true); }
+  else if (ev.type === "text") {
+    if (!streamEl) streamEl = addMsg("assistant", "");
+    streamEl.textContent += ev.data;
+    $("messages").scrollTop = $("messages").scrollHeight;
+  }
+  else if (ev.type === "tool_start") {
+    streamEl = null;
+    addToolMsg(ev.name, ev.args);
+    handleEvent._lastAct = addActivity(ev.name, ev.args);
+  }
+  else if (ev.type === "tool_result") {
+    if (handleEvent._lastAct) {
+      const out = document.createElement("span");
+      out.className = "out";
+      out.textContent = "→ " + ev.output;
+      handleEvent._lastAct.appendChild(out);
+    }
+  }
+  else if (ev.type === "error") { streamEl = null; addMsg("error", ev.message); }
+  else if (ev.type === "turn_done") {
+    streamEl = null; setRunning(false); renderUsage(ev.usage); loadDiff(); loadTree();
+  }
+  else if (ev.type === "permission_request") { permQueue.push(ev); showNextPermission(); }
+  else if (ev.type === "reload") { init(); }
+}
+
+// ---- permissions ----------------------------------------------------------
+
+function showNextPermission() {
+  if ($("perm-modal").classList.contains("open") || !permQueue.length) return;
+  $("perm-prompt").textContent = permQueue[0].prompt;
+  $("perm-modal").classList.add("open");
+}
+document.querySelectorAll("#perm-modal [data-decision]").forEach(btn => {
+  btn.onclick = async () => {
+    const req = permQueue.shift();
+    $("perm-modal").classList.remove("open");
+    try { await api("/api/permission", {id: req.id, decision: btn.dataset.decision}); } catch (e) {}
+    showNextPermission();
+  };
+});
+
+// ---- panels ---------------------------------------------------------------
+
+async function loadTree() {
+  const entries = await api("/api/tree");
+  const tree = $("tree");
+  tree.innerHTML = "";
+  for (const e of entries) {
+    const div = document.createElement("div");
+    div.className = "entry" + (e.dir ? " dir" : "");
+    div.style.paddingLeft = (10 + e.depth * 14) + "px";
+    div.textContent = (e.dir ? "▸ " : "") + e.path.split("/").pop();
+    div.title = e.path;
+    if (!e.dir) div.onclick = () => openFile(e.path);
+    tree.appendChild(div);
+  }
+}
+
+let activeTab = "diff";
+function setTab(tab) {
+  activeTab = tab;
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+}
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => { setTab(b.dataset.tab); if (b.dataset.tab === "diff") loadDiff(); });
+
+async function loadDiff() {
+  if (activeTab !== "diff") return;
+  const data = await api("/api/diff");
+  const pre = $("viewer-pre");
+  pre.innerHTML = "";
+  const text = (data.status ? data.status + "\n\n" : "") + (data.diff || "(no changes)");
+  for (const line of text.split("\n")) {
+    const span = document.createElement("span");
+    span.className = "dline " + (line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : line.startsWith("@@") ? "hunk" : "");
+    span.textContent = line + "\n";
+    pre.appendChild(span);
+  }
+}
+
+async function openFile(path) {
+  const data = await api("/api/file?path=" + encodeURIComponent(path));
+  setTab("file");
+  $("viewer-pre").textContent = data.path + "\n" + "─".repeat(40) + "\n" + data.content;
+}
+
+// ---- header controls -------------------------------------------------------
+
+async function loadProviders(currentSpec) {
+  const providers = await api("/api/providers");
+  const sel = $("model-select");
+  sel.innerHTML = "";
+  const specs = [];
+  for (const p of providers) {
+    if (p.default_model) specs.push({spec: p.name, label: `${p.name}/${p.default_model}` + (p.needs_key && !p.has_key ? " (no key)" : "")});
+    for (const m of p.local_models) specs.push({spec: `${p.name}/${m}`, label: `${p.name}/${m} (local)`});
+  }
+  for (const s of specs) {
+    const opt = document.createElement("option");
+    opt.value = s.spec; opt.textContent = s.label;
+    sel.appendChild(opt);
+  }
+  const custom = document.createElement("option");
+  custom.value = "__custom__"; custom.textContent = "custom spec…";
+  sel.appendChild(custom);
+  if (currentSpec) {
+    if (![...sel.options].some(o => o.value === currentSpec)) {
+      const opt = document.createElement("option");
+      opt.value = currentSpec; opt.textContent = currentSpec;
+      sel.insertBefore(opt, sel.firstChild);
+    }
+    sel.value = currentSpec;
+  }
+}
+
+$("model-select").onchange = async (e) => {
+  let spec = e.target.value;
+  if (spec === "__custom__") {
+    spec = prompt("Model spec (provider or provider/model):") || "";
+    if (!spec) return init();
+  }
+  try {
+    const state = await api("/api/model", {spec});
+    $("session").textContent = "session #" + state.session_id;
+    await loadProviders(state.spec);
+  } catch (err) { alert(err.message); init(); }
+};
+
+$("mode-select").onchange = (e) => api("/api/mode", {mode: e.target.value}).catch(err => alert(err.message));
+$("stop").onclick = () => api("/api/stop", {}).catch(() => {});
+
+async function loadSessions(currentId) {
+  const sessions = await api("/api/sessions");
+  const sel = $("session-select");
+  sel.innerHTML = "";
+  if (!sessions.some(s => s.id === currentId)) {
+    const opt = document.createElement("option");
+    opt.value = currentId; opt.textContent = `#${currentId} (current)`;
+    sel.appendChild(opt);
+  }
+  for (const s of sessions) {
+    const opt = document.createElement("option");
+    opt.value = s.id;
+    opt.textContent = `#${s.id} ${s.title || "(untitled)"}`.slice(0, 48);
+    sel.appendChild(opt);
+  }
+  sel.value = currentId;
+}
+
+$("session-select").onchange = async (e) => {
+  try { await api("/api/session", {id: parseInt(e.target.value, 10)}); }
+  catch (err) { alert(err.message); init(); }
+};
+$("revert").onclick = async () => {
+  try {
+    const data = await api("/api/revert", {});
+    addMsg("tool", data.restored.length ? "↩ reverted:\n" + data.restored.join("\n") : "nothing to revert");
+    loadDiff(); loadTree();
+  } catch (err) { alert(err.message); }
+};
+
+const GRANTS = ["pull", "commit", "push", "merge"];
+
+async function refreshGithubStatus() {
+  const s = await api("/api/github/status");
+  const bits = [];
+  bits.push(s.connected ? `✓ connected as ${s.login}` : "✗ not connected");
+  if (s.repo) bits.push(`repo: ${s.repo}`);
+  bits.push(s.token_stored ? "token: stored in config" : `token: $${s.token_env} (not stored)`);
+  if (s.error) bits.push(`error: ${s.error}`);
+  $("gh-status").textContent = bits.join("\n");
+  for (const g of GRANTS) $("grant-" + g).checked = s.grants.includes(g);
+  $("github-btn").textContent = s.connected ? `GitHub ✓ ${s.login}` : "GitHub";
+}
+
+$("github-btn").onclick = async () => {
+  $("github-modal").classList.add("open");
+  refreshGithubStatus().catch(() => { $("gh-status").textContent = "status unavailable"; });
+};
+$("gh-cancel").onclick = () => $("github-modal").classList.remove("open");
+$("gh-save").onclick = async () => {
+  try {
+    const token = $("gh-token").value.trim();
+    if (token) { await api("/api/github/token", {token}); $("gh-token").value = ""; }
+    await api("/api/github/grants", {grants: GRANTS.filter(g => $("grant-" + g).checked)});
+    await refreshGithubStatus();
+  } catch (err) { alert(err.message); }
+};
+
+$("add-model").onclick = () => $("provider-modal").classList.add("open");
+$("p-cancel").onclick = () => $("provider-modal").classList.remove("open");
+$("p-save").onclick = async () => {
+  try {
+    await api("/api/providers", {
+      name: $("p-name").value, type: $("p-type").value, base_url: $("p-url").value,
+      default_model: $("p-model").value, api_key_env: $("p-keyenv").value, api_key: $("p-key").value,
+    });
+    $("provider-modal").classList.remove("open");
+    const state = await api("/api/state");
+    await loadProviders(state.spec);
+  } catch (err) { alert(err.message); }
+};
+
+// ---- composer ---------------------------------------------------------------
+
+async function send() {
+  const text = $("input").value.trim();
+  if (!text) return;
+  $("input").value = "";
+  try { await api("/api/message", {text}); } catch (err) { addMsg("error", err.message); }
+}
+$("send").onclick = send;
+$("input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+
+// ---- init --------------------------------------------------------------------
+
+async function init() {
+  const state = await api("/api/state");
+  $("cwd").textContent = state.cwd;
+  $("mode-select").value = state.mode;
+  $("session").textContent = "session #" + state.session_id;
+  setRunning(state.running);
+  renderUsage(state.usage);
+  await loadProviders(state.spec);
+  await loadSessions(state.session_id);
+  refreshGithubStatus().catch(() => {});
+  const transcript = await api("/api/transcript");
+  $("messages").innerHTML = ""; $("timeline").innerHTML = "";
+  transcript.forEach(renderEntry);
+  loadTree(); loadDiff();
+}
+
+const es = new EventSource("/api/events");
+es.onmessage = (e) => handleEvent(JSON.parse(e.data));
+init();
+</script>
+</body>
+</html>

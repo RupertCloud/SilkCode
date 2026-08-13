@@ -78,7 +78,7 @@ Silk Code shall:
 1. Provide an easy-to-use AI coding GUI.
 2. Provide a powerful CLI for developers.
 3. Support multiple AI providers and open-source models.
-4. support locally hosted AI models.
+4. Support locally hosted AI models.
 5. Allow developers to switch models without changing development workflows.
 6. Automatically understand software repositories.
 7. Allow agents to modify and create code.
@@ -159,8 +159,6 @@ Silk Code
 ├── CLI
 │
 ├── Agent Runtime
-│
-├── Model Gateway
 │
 ├── Model Router
 │
@@ -285,7 +283,7 @@ The Silk Code GUI shall provide a development environment designed around conver
 
 ## 9.1 Main Window
 
-The primary workspace shall contain five major areas.
+The primary workspace shall contain at least six major areas, including the code viewer/editor required by Section 11. Section 66 shows the recommended arrangement.
 
 ```text
 ┌───────────────────────────────────────────────────────────────┐
@@ -300,6 +298,8 @@ The primary workspace shall contain five major areas.
 │              │ I found the issue...        │ ○ Run tests      │
 │              │                             │                  │
 ├──────────────┴─────────────────────────────┴──────────────────┤
+│ CODE / DIFF VIEWER                                            │
+├───────────────────────────────────────────────────────────────┤
 │ TERMINAL / PROBLEMS / TESTS / GIT / OUTPUT                   │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -427,7 +427,7 @@ Silk Code shall support commands such as:
 /test
 /fix
 /explain
-/commit
+/commit (V0.2 — see Section 79)
 /diff
 /context
 /agents
@@ -885,7 +885,7 @@ May execute automatically.
 
 ```text
 npm install
-git checkout
+git checkout (when no uncommitted changes would be affected)
 database migrations
 ```
 
@@ -895,6 +895,7 @@ May require approval depending on settings.
 
 ```text
 rm -rf
+git checkout / git restore discarding uncommitted changes
 git push --force
 production deployment
 credential changes
@@ -946,6 +947,8 @@ The AI shall be able to:
 * Stage changes
 * Generate commit messages
 * Commit changes
+
+Inspection and diff capabilities are required for V0.1; branch, stage, and commit operations are scheduled for V0.2 (Section 79).
 
 Remote operations such as push should follow configured permission policies.
 
@@ -1291,6 +1294,8 @@ silkcode test
 silkcode benchmark
 silkcode models
 silkcode config
+silkcode sessions
+silkcode resume <session-id>
 ```
 
 ---
@@ -1635,7 +1640,7 @@ Silk Code shall:
 * Allow `.env` exclusion.
 * Support path permission rules.
 * Log important agent actions.
-* Require approval for dangerous operations.
+* Require approval for dangerous operations, unless enterprise policy explicitly permits otherwise (see Section 30).
 * Provide command allow/deny policies.
 * Provide network access controls.
 
@@ -1804,7 +1809,7 @@ Tauri is preferred over building the entire desktop application directly in Pyth
         │          │          │
         └──────────┼──────────┘
                    │
-              Model Gateway
+              Model Router
                    │
       ┌────────────┼────────────┐
       ▼            ▼            ▼
@@ -2004,7 +2009,9 @@ Silk Code V0.1 shall include:
 * Test execution.
 * Permission prompts.
 * Code diff review.
+* Basic checkpoints (create before automated modifications; restore/revert).
 * Session persistence.
+* GUI/CLI session sharing (`silkcode sessions`, `silkcode resume`).
 * Agent activity timeline.
 * Basic usage statistics.
 
