@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Silk Code — an open, model-agnostic AI coding harness. Use DeepSeek, Qwen, Kimi, Cloudflare Workers AI, or any local model to understand, edit, test, and ship code.">
+<title>Silk Code</title>
+</head>
+<body>
+<style>
+  :root {
+    /* dark-first: the product's own palette */
+    --bg: #14161a; --panel: #1b1e24; --panel-2: #20242c; --border: #2b303a;
+    --text: #d7dae0; --dim: #8d95a3; --accent: #5cc8ff; --gold: #e6c07b;
+    --ok: #7ad48a; --err: #e06c75;
+    --thread: linear-gradient(180deg, var(--gold), var(--accent));
+    --code-bg: #101216;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f3f4f7; --panel: #ffffff; --panel-2: #eef0f4; --border: #d9dde5;
+      --text: #1b1e24; --dim: #5c6472; --accent: #0d76b8; --gold: #9a6f22;
+      --ok: #257a3e; --err: #b3392f;
+      --code-bg: #1b1e24;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f3f4f7; --panel: #ffffff; --panel-2: #eef0f4; --border: #d9dde5;
+    --text: #1b1e24; --dim: #5c6472; --accent: #0d76b8; --gold: #9a6f22;
+    --ok: #257a3e; --err: #b3392f;
+    --code-bg: #1b1e24;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 16px/1.65 var(--sans); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; position: relative; }
+
+  /* the thread: a warp line stitching the page together */
+  .thread { position: absolute; left: 3px; top: 0; bottom: 0; width: 2px;
+            background: var(--thread); opacity: .45; }
+  @media (max-width: 720px) { .thread { display: none; } }
+
+  h1, h2, h3 { font-family: var(--mono); text-wrap: balance; }
+  h2 { font-size: 26px; margin-bottom: 6px; letter-spacing: -.01em; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .22em;
+             text-transform: uppercase; color: var(--gold); display: flex;
+             align-items: center; gap: 10px; }
+  .eyebrow::before { content: ""; width: 26px; height: 2px; background: var(--thread); display: inline-block; }
+  section { padding: 56px 0 8px; }
+  section > p.lede { color: var(--dim); max-width: 62ch; margin: 6px 0 22px; }
+
+  /* hero */
+  header.hero { padding: 72px 0 40px; }
+  .hero h1 { font-size: clamp(40px, 7vw, 64px); letter-spacing: -.03em; line-height: 1.05; }
+  .hero h1 .silk { color: var(--accent); }
+  .hero .tag { font-size: 19px; color: var(--dim); max-width: 56ch; margin: 16px 0 8px; }
+  .promise { font-family: var(--mono); font-size: 15px; color: var(--gold);
+             border-left: 2px solid var(--gold); padding: 4px 0 4px 14px; margin: 20px 0 26px; }
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 40px; }
+  .btn { font-family: var(--mono); font-size: 15px; padding: 10px 20px; border-radius: 8px;
+         border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 700; }
+  .btn:hover { text-decoration: none; border-color: var(--accent); }
+  .btn.primary:hover { filter: brightness(1.08); }
+
+  /* terminal */
+  .term { background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px;
+          overflow: hidden; box-shadow: 0 18px 50px rgba(0,0,0,.35); }
+  .term-bar { display: flex; gap: 7px; padding: 11px 14px; border-bottom: 1px solid var(--border); }
+  .term-bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--border); }
+  .term pre { padding: 18px 20px 22px; font: 13.5px/1.75 var(--mono); color: #d7dae0;
+              overflow-x: auto; }
+  .term .p  { color: #5cc8ff; font-weight: 700; }
+  .term .c  { color: #8d95a3; }
+  .term .t  { color: #e6c07b; }
+  .term .g  { color: #7ad48a; }
+  .term .q  { color: #e6c07b; }
+
+  /* code blocks */
+  pre.code { background: var(--code-bg); color: #d7dae0; border: 1px solid var(--border);
+             border-radius: 10px; padding: 14px 18px; font: 13.5px/1.7 var(--mono);
+             overflow-x: auto; }
+  pre.code .cm { color: #8d95a3; }
+  code { font-family: var(--mono); font-size: .92em; background: var(--panel-2);
+         padding: 1.5px 6px; border-radius: 5px; }
+  pre.code code { background: none; padding: 0; }
+
+  /* provider strip */
+  .providers { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0 8px; }
+  .providers span { font-family: var(--mono); font-size: 13.5px; padding: 7px 14px;
+                    border: 1px solid var(--border); border-radius: 999px; background: var(--panel); }
+  .providers span.local { border-style: dashed; }
+  .providers-note { color: var(--dim); font-size: 14px; }
+
+  /* steps — a real sequence */
+  .step { display: grid; grid-template-columns: 56px 1fr; gap: 18px; margin: 26px 0; }
+  .step-no { font-family: var(--mono); font-size: 22px; color: var(--gold);
+             border-top: 2px solid var(--gold); padding-top: 8px; font-variant-numeric: tabular-nums; }
+  .step h3 { font-size: 17px; margin-bottom: 6px; }
+  .step p { color: var(--dim); font-size: 15px; margin: 8px 0; max-width: 64ch; }
+  .step pre.code { margin-top: 10px; }
+  @media (max-width: 600px) { .step { grid-template-columns: 1fr; gap: 6px; } }
+
+  /* feature weave */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+          gap: 14px; margin-top: 22px; }
+  .cell { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+          padding: 18px 18px 16px; }
+  .cell h3 { font-size: 15px; color: var(--accent); margin-bottom: 8px; }
+  .cell p { font-size: 14px; color: var(--dim); }
+  .cell code { font-size: .88em; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; margin-top: 20px; }
+  @media (max-width: 780px) { .two-col { grid-template-columns: 1fr; } }
+
+  table.cmds { border-collapse: collapse; width: 100%; font-size: 14.5px; margin-top: 16px; }
+  .cmds td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .cmds td:first-child { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
+  .cmds td:last-child { color: var(--dim); }
+
+  footer { margin-top: 70px; padding: 28px 0 46px; border-top: 1px solid var(--border);
+           color: var(--dim); font-size: 14px; display: flex; gap: 18px; flex-wrap: wrap; }
+  footer .spacer { flex: 1; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .cell, .btn { transition: border-color .15s ease, transform .15s ease; }
+    .cell:hover { border-color: var(--accent); transform: translateY(-2px); }
+  }
+</style>
+
+<div class="wrap">
+  <div class="thread" aria-hidden="true"></div>
+
+  <header class="hero">
+    <h1><span class="silk">Silk</span> Code</h1>
+    <p class="tag">An open, model-agnostic AI coding harness. One environment that understands your
+    repository, edits code, runs your tests, and manages git — with DeepSeek, Qwen, Kimi, GLM,
+    MiniMax, Cloudflare Workers AI, or any model running on your own machine.</p>
+    <p class="promise">The coding environment belongs to the developer.<br>The AI model is replaceable.</p>
+    <div class="cta-row">
+      <a class="btn primary" href="#quick-start">Quick start</a>
+      <a class="btn" href="https://github.com/RupertCloud/SilkCode">GitHub</a>
+      <a class="btn" href="https://github.com/RupertCloud/SilkCode/blob/main/SRS.md">Read the spec</a>
+    </div>
+
+    <div class="term" role="img" aria-label="A Silk Code terminal session fixing a bug and running tests">
+      <div class="term-bar"><i></i><i></i><i></i></div>
+      <pre>$ silkcode --model auto ~/apps/ridelink
+<span class="c">Silk Code v0.1  |  model: ollama/qwen2.5-coder  |  mode: ask  |  ~/apps/ridelink</span>
+
+<span class="p">silk&gt;</span> Fix the login redirect bug and run the tests.
+
+<span class="t">⚙ grep</span> {"pattern": "redirect", "path": "src/auth"}
+<span class="t">⚙ read_file</span> {"path": "src/auth/session.ts"}
+<span class="t">⚙ edit_file</span> {"path": "src/auth/session.ts", "old_string": "…", "new_string": "…"}
+<span class="q">? Allow modifying file: src/auth/session.ts</span>   [y]es / [n]o / [a]lways: y
+<span class="t">⚙ run_tests</span> {}
+<span class="c">  → $ npm test … exit code: 0</span>
+
+<span class="g">Fixed the redirect target in session.ts and verified it: 24 tests passed.</span></pre>
+    </div>
+  </header>
+
+  <section id="models">
+    <p class="eyebrow">Any model, cloud or local</p>
+    <h2>Bring whichever model you trust</h2>
+    <p class="lede">One provider layer speaks to every OpenAI-compatible endpoint, with native Ollama
+    support and local-model discovery. Switch models mid-session — or per session — without changing
+    how you work.</p>
+    <div class="providers">
+      <span>DeepSeek</span><span>Qwen</span><span>Kimi</span><span>GLM</span><span>MiniMax</span>
+      <span>Cloudflare Workers AI</span><span>OpenRouter</span>
+      <span class="local">Ollama</span><span class="local">vLLM</span><span class="local">LM Studio</span>
+      <span class="local">any OpenAI-compatible endpoint</span>
+    </div>
+    <p class="providers-note">Dashed = runs on your own hardware. <code>--model auto</code> picks whatever
+    you have: a running local server first, then any cloud provider with a key. Onboard anything else
+    with <code>silkcode models add</code> — or pull local models Ollama-style with
+    <code>silkcode models pull qwen2.5-coder</code>.</p>
+  </section>
+
+  <section id="quick-start">
+    <p class="eyebrow">Quick start</p>
+    <h2>Running in three steps</h2>
+    <p class="lede">Requires Python 3.10 or newer (macOS ships 3.9 — grab a current Python from
+    python.org first) and git.</p>
+
+    <div class="step">
+      <div class="step-no">01</div>
+      <div>
+        <h3>Install</h3>
+        <pre class="code">git clone https://github.com/RupertCloud/SilkCode.git
+cd SilkCode
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+silkcode models   <span class="cm"># prints the provider table when the install is good</span></pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-no">02</div>
+      <div>
+        <h3>Connect a model — either side works</h3>
+        <pre class="code"><span class="cm"># cloud: DeepSeek (or qwen / kimi / glm / minimax / openrouter)</span>
+export DEEPSEEK_API_KEY=sk-your-key
+
+<span class="cm"># or local &amp; private: install Ollama from ollama.com, then</span>
+silkcode models pull qwen2.5-coder</pre>
+        <p>Pick a model with tool-calling support — the agent works by calling tools.
+        <code>qwen2.5-coder</code> is the reliable local choice.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-no">03</div>
+      <div>
+        <h3>Point it at a project</h3>
+        <pre class="code">silkcode gui ~/path/to/your/project   <span class="cm"># browser GUI at 127.0.0.1:8377</span>
+silkcode ~/path/to/your/project       <span class="cm"># or the terminal REPL</span></pre>
+        <p>Then just ask: <em>“Build a small Flask API with tests, and make sure the tests
+        pass.”</em> Approve its actions as prompts appear; switch to
+        <code>--mode agent</code> once you trust it.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="features">
+    <p class="eyebrow">The harness</p>
+    <h2>Everything between you and the model</h2>
+    <div class="grid">
+      <div class="cell"><h3>Multi-session GUI</h3>
+        <p>Project explorer, streaming chat, agent activity timeline, diff viewer. Open parallel
+        sessions with different models; a busy session keeps working while you use another.</p></div>
+      <div class="cell"><h3>Repository intelligence</h3>
+        <p>Every session starts with a repo map, your <code>SILKCODE.md</code> project rules,
+        accumulated project memory, and installed skills — the model knows the codebase
+        before its first tool call.</p></div>
+      <div class="cell"><h3>Permissions with teeth</h3>
+        <p>Commands are risk-classified. Reads run free, writes and installs ask,
+        <code>rm&nbsp;-rf</code> / push / merge always require approval — unless you explicitly
+        grant them for the session.</p></div>
+      <div class="cell"><h3>Checkpoints &amp; revert</h3>
+        <p>Files are snapshotted before the agent touches them. One click (or
+        <code>/revert</code>) undoes a whole turn.</p></div>
+      <div class="cell"><h3>Verifies its own work</h3>
+        <p><code>run_tests</code> auto-detects pytest, npm, cargo, go, and flutter — the agent
+        runs your suite and reads the failures before claiming success.</p></div>
+      <div class="cell"><h3>Long sessions that survive</h3>
+        <p>Context compaction trims old tool output and turns as you approach the model’s
+        window — sessions roll on instead of dying, and are resumable from GUI or CLI.</p></div>
+      <div class="cell"><h3>MCP client</h3>
+        <p>Connect any Model Context Protocol server — its tools become agent tools,
+        approval-gated like everything else.</p></div>
+      <div class="cell"><h3>Remote sandboxes</h3>
+        <p>Run the agent’s commands in a disposable container instead of your machine:
+        self-hosted with one command, or on Cloudflare Sandboxes via the bundled Worker.</p></div>
+      <div class="cell"><h3>Built-in evals</h3>
+        <p><code>silkcode benchmark</code> runs real coding tasks end-to-end per model —
+        with an A/B mode that isolates what the harness itself contributes.</p></div>
+    </div>
+  </section>
+
+  <section id="github">
+    <p class="eyebrow">GitHub</p>
+    <h2>Authorize like an app, ship like a team</h2>
+    <div class="two-col">
+      <div>
+        <p class="lede" style="margin-bottom:10px">Sign in with GitHub — install the Silk Code app,
+        approve a code in your browser, done. No tokens to create or paste; short-lived credentials,
+        scoped to the repos you chose, refreshed automatically.</p>
+        <table class="cmds">
+          <tr><td>silkcode connect github</td><td>sign in (or verify a $GITHUB_TOKEN)</td></tr>
+          <tr><td>/push · ⇧ Push</td><td>push when you say so</td></tr>
+          <tr><td>--auto-push</td><td>push automatically after each turn</td></tr>
+          <tr><td>github_create_pr</td><td>agent opens draft PRs, reads issues, merges on approval</td></tr>
+        </table>
+      </div>
+      <div>
+        <p class="lede" style="margin-bottom:10px">And the harness signs its work. Agent-made commits
+        register Silk Code as co-author — you stay the author, the record stays honest:</p>
+        <pre class="code">Fix login redirect after session refresh
+
+Co-Authored-By: Silk Code &lt;agent@silkcode.dev&gt;
+X-Silk-Model: deepseek/deepseek-chat
+X-Silk-Session: 42</pre>
+        <p class="providers-note" style="margin-top:10px"><code>git log --grep=X-Silk-Model</code>
+        forever answers “which commits did the agent write, with which model?”</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="cli">
+    <p class="eyebrow">Command line</p>
+    <h2>The whole harness from the terminal</h2>
+    <table class="cmds">
+      <tr><td>silkcode [path]</td><td>interactive REPL — /model, /mode, /diff, /revert, /push, /usage</td></tr>
+      <tr><td>silkcode -p "…"</td><td>one-shot, scriptable: run a single request and exit</td></tr>
+      <tr><td>silkcode review</td><td>AI review of your uncommitted changes</td></tr>
+      <tr><td>silkcode test</td><td>run the project’s tests, framework auto-detected</td></tr>
+      <tr><td>silkcode models</td><td>list, add, pull, or set default models</td></tr>
+      <tr><td>silkcode sessions · resume</td><td>continue any session — including ones started in the GUI</td></tr>
+      <tr><td>silkcode mcp · sandbox · benchmark</td><td>tool servers, remote execution, model evals</td></tr>
+    </table>
+  </section>
+
+  <footer>
+    <span>Silk Code · MIT · single runtime dependency (<code>httpx</code>) · runs entirely on your machine</span>
+    <span class="spacer"></span>
+    <a href="https://github.com/RupertCloud/SilkCode">GitHub</a>
+    <a href="https://github.com/RupertCloud/SilkCode/blob/main/SRS.md">Specification</a>
+    <a href="https://github.com/RupertCloud/SilkCode/blob/main/docs/GITHUB_APP.md">GitHub App setup</a>
+  </footer>
+</div>
+</body>
+</html>
