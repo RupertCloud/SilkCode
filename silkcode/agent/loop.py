@@ -38,6 +38,8 @@ class Agent:
         context: str | None = None,
         mcp=None,
         max_context_tokens: int = DEFAULT_CONTEXT_TOKENS,
+        session_id: int | None = None,
+        attribution: bool = True,
     ):
         self.provider = provider
         self.model = model
@@ -46,6 +48,8 @@ class Agent:
         self.checkpoints = checkpoints or Checkpoints()
         self.on_event: EventHandler = on_event or (lambda kind, data: None)
         self.mcp = mcp
+        self.session_id = session_id
+        self.attribution = attribution
         self.usage = Usage()
         self.stop_requested = False
         self.max_context_tokens = max_context_tokens
@@ -57,28 +61,34 @@ class Agent:
         self.messages: list[dict] = [{"role": "system", "content": system}]
 
     def run_turn(self, user_input: str) -> str:
+        from ..tools.git import clear_attribution, set_attribution
+        if self.attribution:
+            set_attribution(model=f"{self.provider.name}/{self.model}", session=self.session_id)
         self.stop_requested = False
         self.checkpoints.begin()
         self.messages.append({"role": "user", "content": user_input})
-        for _ in range(MAX_STEPS):
-            result = self._call_model()
-            self.usage.add(result.usage)
-            self._append_assistant(result)
-            if not result.tool_calls:
-                return result.content
-            for call in result.tool_calls:
+        try:
+            for _ in range(MAX_STEPS):
+                result = self._call_model()
+                self.usage.add(result.usage)
+                self._append_assistant(result)
+                if not result.tool_calls:
+                    return result.content
+                for call in result.tool_calls:
+                    if self.stop_requested:
+                        output = "Cancelled: the user stopped this turn."
+                    else:
+                        output = self._execute_tool(call)
+                    self.messages.append({
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": output,
+                    })
                 if self.stop_requested:
-                    output = "Cancelled: the user stopped this turn."
-                else:
-                    output = self._execute_tool(call)
-                self.messages.append({
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": output,
-                })
-            if self.stop_requested:
-                return "Stopped by user."
-        return "Stopped: reached the maximum number of agent steps for one turn."
+                    return "Stopped by user."
+            return "Stopped: reached the maximum number of agent steps for one turn."
+        finally:
+            clear_attribution()  # attribution never outlives the turn
 
     def request_stop(self) -> None:
         """Stop after the current model call or tool finishes."""
