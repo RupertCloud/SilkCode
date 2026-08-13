@@ -29,6 +29,17 @@ def test_js_ts_symbols(tmp_path):
     assert "web.ts:3: function handler" in out
 
 
+def test_symbols_bounded_on_wide_trees(tmp_path):
+    from silkcode.tools.symbols import MAX_FILES, _collect_source_files
+    for i in range(40):
+        d = tmp_path / f"pkg{i:02}"
+        d.mkdir()
+        for j in range(10):
+            (d / f"m{j}.py").write_text("def f(): pass\n")
+    files = _collect_source_files(tmp_path)
+    assert len(files) == MAX_FILES
+
+
 def test_symbols_skips_ignored_and_handles_empty(tmp_path):
     hidden = tmp_path / "node_modules"
     hidden.mkdir()

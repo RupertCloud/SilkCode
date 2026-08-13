@@ -46,16 +46,31 @@ def _regex_symbols(path: Path, rel: str, pattern: re.Pattern, out: list[str]) ->
                     out.append(f"{rel}:{lineno}: {label} {name}")
 
 
+SOURCE_SUFFIXES = (".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs")
+
+
+def _collect_source_files(base: Path) -> list[Path]:
+    """Bounded walk: prunes ignored/hidden dirs and stops at MAX_FILES, so
+    huge directories can't hang the tool."""
+    import os
+    files: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(d for d in dirnames
+                             if d not in IGNORED_DIRS and not d.startswith("."))
+        for name in sorted(filenames):
+            if name.endswith(SOURCE_SUFFIXES):
+                files.append(Path(dirpath) / name)
+                if len(files) >= MAX_FILES:
+                    return files
+    return files
+
+
 def symbols(ws: Workspace, path: str = ".") -> str:
     base = ws.resolve(path)
     if base.is_file():
         files = [base]
     else:
-        files = sorted(
-            p for p in base.rglob("*")
-            if p.is_file() and not (set(p.parts) & IGNORED_DIRS)
-            and p.suffix in (".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs")
-        )[:MAX_FILES]
+        files = _collect_source_files(base)
     out: list[str] = []
     for f in files:
         rel = ws.relative(f)
