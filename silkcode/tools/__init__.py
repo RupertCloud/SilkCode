@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import files, git, search, shell, symbols, testing
+from ..github import github_create_pr, github_get_issue, github_list_issues, github_list_prs
 from ..memory import MEMORY_RELPATH, remember
 from ..skills import use_skill
 
@@ -185,6 +186,52 @@ _register(Tool(
         "limit": {"type": "integer", "description": "Number of commits to show (default 10)"},
     }, []),
     func=git.git_log,
+    kind="read",
+))
+
+
+_register(Tool(
+    name="github_create_pr",
+    description="Create a GitHub pull request (draft by default) from the current or given branch. Requires $GITHUB_TOKEN and an 'origin' remote on github.com.",
+    parameters=_params({
+        "title": {"type": "string", "description": "Pull request title"},
+        "body": {"type": "string", "description": "Pull request description (markdown)"},
+        "base": {"type": "string", "description": "Base branch (default 'main')"},
+        "head": {"type": "string", "description": "Head branch (default: current branch)"},
+        "draft": {"type": "boolean", "description": "Create as draft (default true)"},
+    }, ["title"]),
+    func=github_create_pr,
+    kind="command",
+    command_of=lambda args, ws: "github create-pr",  # outward-facing: approval-gated
+))
+
+_register(Tool(
+    name="github_list_prs",
+    description="List pull requests in the repository's GitHub project.",
+    parameters=_params({
+        "state": {"type": "string", "description": "open, closed, or all (default open)"},
+    }, []),
+    func=github_list_prs,
+    kind="read",
+))
+
+_register(Tool(
+    name="github_list_issues",
+    description="List issues in the repository's GitHub project.",
+    parameters=_params({
+        "state": {"type": "string", "description": "open, closed, or all (default open)"},
+    }, []),
+    func=github_list_issues,
+    kind="read",
+))
+
+_register(Tool(
+    name="github_get_issue",
+    description="Read a GitHub issue with its recent comments.",
+    parameters=_params({
+        "number": {"type": "integer", "description": "Issue number"},
+    }, ["number"]),
+    func=github_get_issue,
     kind="read",
 ))
 

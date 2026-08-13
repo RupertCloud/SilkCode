@@ -35,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         "test": cmd_test,
         "review": cmd_review,
         "mcp": cmd_mcp,
+        "connect": cmd_connect,
     }
     if argv and argv[0] in commands:
         try:
@@ -217,6 +218,50 @@ def cmd_test(argv: list[str]) -> int:
         return 1
     print(output)
     return 0 if "exit code: 0" in output else 1
+
+
+def cmd_connect(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="silkcode connect")
+    parser.add_argument("service", choices=["github"])
+    parser.add_argument("path", nargs="?", default=".", help="workspace to check the git remote in")
+    parser.add_argument("--token-env", help="environment variable holding the token (default GITHUB_TOKEN)")
+    args = parser.parse_args(argv)
+
+    from ..github import DEFAULT_API_URL, GitHubClient, detect_repo, token_from_env
+    from ..workspace import ToolError, Workspace
+
+    config = Config.load()
+    if args.token_env:
+        config.data.setdefault("github", {})["token_env"] = args.token_env
+        config.save()
+        print(f"GitHub token will be read from ${args.token_env}")
+
+    token = token_from_env(config.data)
+    env = (config.data.get("github") or {}).get("token_env", "GITHUB_TOKEN")
+    if not token:
+        print(f"Not connected: ${env} is not set.")
+        print("Create a GitHub personal access token (repo scope) at https://github.com/settings/tokens")
+        print(f"then: export {env}=ghp_...   and run 'silkcode connect github' again.")
+        print("\nAlternative: use GitHub's MCP server instead:")
+        print("  silkcode mcp add github --command 'npx -y @modelcontextprotocol/server-github' \\")
+        print(f"      --env GITHUB_PERSONAL_ACCESS_TOKEN=$" + env)
+        return 1
+
+    api_url = (config.data.get("github") or {}).get("api_url", DEFAULT_API_URL)
+    try:
+        client = GitHubClient(token, api_url)
+        login = client.whoami()
+    except ToolError as exc:
+        print(f"Token check failed: {exc}")
+        return 1
+    print(f"Connected to GitHub as {login}")
+    try:
+        owner, repo = detect_repo(Workspace(args.path))
+        print(f"Workspace repository: {owner}/{repo}")
+    except ToolError as exc:
+        print(f"note: {exc}")
+    print("Agent tools available: github_create_pr, github_list_prs, github_list_issues, github_get_issue")
+    return 0
 
 
 def cmd_mcp(argv: list[str]) -> int:

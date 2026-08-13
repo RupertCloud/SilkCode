@@ -85,6 +85,7 @@ silkcode sessions                                     # list saved sessions
 silkcode resume <id>                                  # continue a session (GUI or CLI)
 silkcode test [path] [--command CMD]                  # run the project's tests (auto-detected)
 silkcode mcp [add|remove]                             # manage MCP servers
+silkcode connect github                               # set up GitHub access
 silkcode config                                       # show configuration
 ```
 
@@ -112,6 +113,22 @@ resume any session from the GUI's session picker or with `silkcode resume <id>`
   `<project>/.silkcode/skills/` (project overrides user). Optional frontmatter gives a
   `name:` and `description:`; the agent sees the list and loads one with `use_skill`
   when relevant. List them with `/skills`.
+
+## GitHub
+
+Connect once, then the agent can work with your GitHub project:
+
+```bash
+export GITHUB_TOKEN=ghp_...        # personal access token with repo scope
+silkcode connect github            # verifies the token and detects owner/repo
+```
+
+The repository is auto-detected from the workspace's `origin` remote. Agent tools:
+`github_create_pr` (draft by default, approval-gated), `github_list_prs`,
+`github_list_issues`, `github_get_issue`. GitHub Enterprise: set `github.api_url` in
+the config. Pushing branches still happens over your own git credentials
+(`git push` is always approval-gated). Prefer MCP? `silkcode connect github` prints
+the equivalent `silkcode mcp add` command.
 
 ## MCP
 
@@ -146,6 +163,7 @@ silkcode/
 ├── skills.py        reusable skills loaded from markdown files
 ├── memory.py        project memory (.silkcode/memory.md)
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
+├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── tools/           read/write/edit, glob/grep, run_command, run_tests, git status/diff/log/commit
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
 ├── permissions.py   risk classification + ask/edit/agent modes
