@@ -25,28 +25,31 @@
   #status-dot.running { background: var(--warn); animation: pulse 1s infinite alternate; }
   @keyframes pulse { to { opacity: .35; } }
 
-  main { display: grid; grid-template-columns: 230px 1fr 270px; grid-template-rows: 1fr 240px; flex: 1; min-height: 0; }
+  main { display: grid; grid-template-columns: 230px 1fr 270px; grid-template-rows: 1fr minmax(120px, 200px) auto; flex: 1; min-height: 0; }
   .pane { border-right: 1px solid var(--border); overflow: auto; background: var(--bg); min-height: 0; }
   .pane h2 { font-size: 11px; letter-spacing: .12em; color: var(--dim); padding: 8px 12px 4px; position: sticky; top: 0; background: var(--bg); }
 
-  #files { grid-row: 1 / 3; }
+  #files { grid-row: 1 / 4; }
   #files .entry { padding: 1px 10px; cursor: pointer; white-space: nowrap; font-family: var(--mono); font-size: 12px; color: var(--text); }
   #files .entry.dir { color: var(--dim); }
   #files .entry:hover { background: var(--panel2); }
 
   #chat { display: flex; flex-direction: column; min-height: 0; }
-  #messages { flex: 1; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+  #messages { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
   .msg { max-width: 92%; padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; word-break: break-word; }
   .msg.user { background: var(--user); align-self: flex-end; }
   .msg.assistant { background: var(--panel2); align-self: flex-start; }
   .msg.error { background: #4a2529; color: var(--err); align-self: stretch; font-family: var(--mono); font-size: 12px; }
   .msg.tool { background: transparent; border: 1px dashed var(--border); color: var(--dim); font-family: var(--mono); font-size: 12px; align-self: flex-start; padding: 4px 10px; }
-  #composer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--panel); }
+  /* the chat bar is its own persistent grid row: it can never be pushed out or squeezed */
+  #composer { grid-column: 2; grid-row: 3; display: flex; flex-shrink: 0; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--panel); }
   #composer textarea { flex: 1; resize: none; height: 58px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit; }
   #composer button { background: var(--accent); color: #10222e; border: 0; border-radius: 8px; padding: 0 20px; font-weight: 700; cursor: pointer; }
   #composer button:disabled { opacity: .4; cursor: default; }
 
-  #activity { border-right: 0; grid-row: 1 / 3; border-left: 1px solid var(--border); }
+  #activity { border-right: 0; grid-row: 1 / 4; border-left: 1px solid var(--border); }
+
+  #version-banner { display: none; background: #4a3a20; color: var(--warn); padding: 8px 14px; font-size: 13px; }
   .act { padding: 4px 12px; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid #1e222a; }
   .act .name { color: var(--accent); }
   .act .args, .act .out { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
@@ -93,17 +96,18 @@
   <span class="usage" id="session"></span>
 </header>
 
+<div id="version-banner">⚠ The Silk Code server is running an older version. Stop it (Ctrl+C in its terminal) and run <b>silkcode gui</b> again, then reload this page.</div>
 <main>
   <section class="pane" id="files"><h2>PROJECT</h2><div id="tree"></div></section>
   <section id="chat">
     <div id="messages"></div>
-    <div id="composer">
-      <textarea id="input" placeholder="Ask Silk Code to build or change something… (Enter to send, Shift+Enter for a new line)"></textarea>
-      <button id="send">Send</button>
-      <button id="stop" style="display:none;background:#4a2529;color:var(--err)">Stop</button>
-    </div>
   </section>
   <section class="pane" id="activity"><h2>AGENT ACTIVITY</h2><div id="timeline"></div></section>
+  <div id="composer">
+    <textarea id="input" placeholder="Ask Silk Code to build or change something… (Enter to send, Shift+Enter for a new line)"></textarea>
+    <button id="send">Send</button>
+    <button id="stop" style="display:none;background:#4a2529;color:var(--err)">Stop</button>
+  </div>
   <section id="bottom">
     <div id="tabs">
       <button data-tab="diff" class="active">GIT DIFF</button>
@@ -511,8 +515,14 @@ $("input").addEventListener("keydown", (e) => {
 
 // ---- init --------------------------------------------------------------------
 
+const UI_VERSION = "0.1.0";
+
 async function init() {
   const state = await api("/api/state" + (currentSessionId ? "?session=" + currentSessionId : ""));
+  if (!state.version || state.version !== UI_VERSION || !Array.isArray(state.sessions)) {
+    $("version-banner").style.display = "block";
+    if (!Array.isArray(state.sessions)) return;  // old server: stop before we crash
+  }
   currentSessionId = state.session_id;
   $("cwd").textContent = state.cwd;
   $("mode-select").value = state.mode;
