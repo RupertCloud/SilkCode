@@ -153,6 +153,32 @@
   </div>
 </div>
 
+<div class="modal-bg" id="project-modal">
+  <div class="modal" style="max-width:560px">
+    <h3>Open a project for this session</h3>
+    <div id="project-tabs" style="display:flex;gap:8px;margin-bottom:10px">
+      <button class="ptab active" data-pgtab="github" style="flex:1">GitHub repository</button>
+      <button class="ptab" data-pgtab="local" style="flex:1">Local directory</button>
+    </div>
+    <div data-pgpane="github">
+      <div class="prompt" id="project-github-status">checking your repositories…</div>
+      <div id="project-github-list" style="max-height:280px;overflow:auto;margin:6px 0"></div>
+    </div>
+    <div data-pgpane="local" style="display:none">
+      <label>Path to a local project directory</label>
+      <input id="project-path" placeholder="/path/to/your/project or ~/my-project">
+      <div style="color:var(--dim);font-size:12px;margin-top:2px">
+        Leave empty to reuse this session's current project.
+      </div>
+    </div>
+    <div class="row">
+      <button id="project-cancel">Cancel</button>
+      <button class="primary" id="project-confirm">Open</button>
+    </div>
+    <div id="project-error" style="color:var(--err);font-size:12px;margin-top:6px"></div>
+  </div>
+</div>
+
 <div class="modal-bg" id="provider-modal">
   <div class="modal">
     <h3>Add a model provider</h3>
@@ -397,7 +423,9 @@ function renderSessions(sessions, currentId) {
     const opt = document.createElement("option");
     opt.value = s.id;
     const mark = s.running ? "⏳ " : (s.open ? "● " : "");
-    opt.textContent = (`#${s.id} ${mark}${s.title || "(new)"}`).slice(0, 48);
+    const cwd = s.cwd ? " …/" + s.cwd.split(/[\\/]/).slice(-2).join("/") : "";
+    opt.textContent = (`#${s.id} ${mark}${s.title || "(new)"}${cwd}`).slice(0, 72);
+    opt.title = s.cwd || "";
     sel.appendChild(opt);
   }
   sel.value = currentId;
@@ -418,12 +446,79 @@ $("session-select").onchange = async (e) => {
   } catch (err) { alert(err.message); init(); }
 };
 
-$("new-session").onclick = async () => {
+$("new-session").onclick = () => {
+  // New sessions ask for a project first (GitHub repo or a local directory).
+  openProjectModal();
+};
+// ---- new-session project picker ------------------------------------------
+let selectedProject = null;  // "github:owner/repo" or a local path; null = current
+
+function paintProjectTabs() {
+  document.querySelectorAll("#project-tabs .ptab").forEach(b => {
+    const on = b.dataset.pgtab === (selectedProject && selectedProject.startsWith("github") ? "github" : selectedProject ? "local" : "github");
+    b.classList.toggle("active", on);
+    document.querySelector(`[data-pgpane="${b.dataset.pgtab}"]`).style.display = on ? "" : "none";
+  });
+}
+
+function renderProjectList(projects) {
+  const box = $("project-github-list");
+  box.innerHTML = "";
+  if (!projects.length) {
+    $("project-github-status").textContent = "No repositories yet. Connect GitHub, then refresh.";
+    return;
+  }
+  $("project-github-status").textContent = `${projects.length} repository/project available — click one:`;
+  for (const p of projects) {
+    if (p.kind === "github") {
+      const row = document.createElement("button");
+      row.className = "project-row";
+      row.style.cssText = "display:block;width:100%;text-align:left;margin:2px 0;padding:6px 8px;cursor:pointer";
+      let txt = "github/" + p.github_owner_repo;
+      if (p.label !== "github/" + p.github_owner_repo) txt += "  (" + p.label + ")";
+      row.textContent = txt;
+      row.onclick = () => { selectedProject = "github:" + p.github_owner_repo; paintProjectTabs(); $("project-confirm").focus(); };
+      box.appendChild(row);
+    } else {
+      // recent local projects
+      const row = document.createElement("button");
+      row.className = "project-row";
+      row.style.cssText = "display:block;width:100%;text-align:left;margin:2px 0;padding:6px 8px;cursor:pointer";
+      const isGithubSpec = p.spec && p.spec.startsWith("github");
+      row.textContent = (isGithubSpec ? "github/" : "local/") + (p.label || p.spec);
+      row.onclick = () => { selectedProject = p.spec; paintProjectTabs(); $("project-confirm").focus(); };
+      box.appendChild(row);
+    }
+  }
+}
+
+function openProjectModal() {
+  selectedProject = null;
+  $("project-path").value = "";
+  $("project-error").textContent = "";
+  $("project-modal").classList.add("open");
+  paintProjectTabs();
+  api("/api/projects")
+    .then(renderProjectList)
+    .catch(err => { $("project-github-status").textContent = "could not load projects: " + err.message; });
+}
+document.querySelectorAll("#project-tabs .ptab").forEach(b => {
+  b.onclick = () => { if (b.dataset.pgtab === "local") selectedProject = null; paintProjectTabs(); $("project-path").focus(); };
+});
+$("project-cancel").onclick = () => $("project-modal").classList.remove("open");
+$("project-confirm").onclick = async () => {
+  const path = $("project-path").value.trim();
+  $("project-confirm").disabled = true;
   try {
-    const state = await api("/api/session/new", {});
+    let state;
+    if (path) state = await api("/api/session/new", {project: path});
+    else if (selectedProject) state = await api("/api/session/new", {project: selectedProject});
+    else state = await api("/api/session/new", {});
+    $("project-modal").classList.remove("open");
     currentSessionId = state.session_id;
     init();
-  } catch (err) { alert(err.message); }
+  } catch (err) { $("project-error").textContent = err.message; }
+  finally { $("project-confirm").disabled = false; }
 };
 $("revert").onclick = async () => {
   try {

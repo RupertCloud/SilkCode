@@ -24,6 +24,7 @@ from ..config import Config, ConfigError
 from ..context import build_context
 from ..permissions import PermissionManager
 from ..providers import ProviderError, build_provider
+from ..project import record_recent_project, resolve_project
 from ..repomap import IGNORED_DIRS
 from ..sessions import SessionStore, new_session
 from ..tools.git import git_diff, git_status
@@ -52,7 +53,8 @@ def _transcript_from_messages(messages: list[dict]) -> list[dict]:
 
 
 class AgentSession:
-    """One conversation: its own agent, transcript, and checkpoints."""
+    """One conversation: its own agent, transcript, checkpoints — and its
+    own workspace (a project), so sessions can open different projects."""
 
     def __init__(self, state: "GuiState", data: dict):
         self.data = data
@@ -72,6 +74,11 @@ class AgentSession:
         provider = build_provider(provider_name, provider_cfg,
                                   api_key=state.config.api_key_for(provider_cfg))
 
+        # Resolve this session's workspace: a specific project, or the app's
+        # default workspace when the session was created on a directory.
+        cwd = data.get("cwd") or str(state.workspace.root)
+        self.workspace = state._resolve_workspace(cwd)
+
         permissions = PermissionManager(
             mode=data.get("mode") or state.mode,
             asker=lambda prompt, sid=self.id: state._ask_via_gui(prompt, sid),
@@ -80,9 +87,9 @@ class AgentSession:
         self.permissions = permissions
 
         self.agent = Agent(
-            provider, model, state.workspace, permissions,
+            provider, model, self.workspace, permissions,
             on_event=lambda kind, payload: state._on_agent_event(self, kind, payload),
-            context=state.context, mcp=state.mcp,
+            context=build_context(self.workspace), mcp=state.mcp,
             max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS,
             session_id=self.id,
             attribution=state.config.data.get("attribution", True),
@@ -140,7 +147,6 @@ class GuiState:
         self.config.resolve_model(self.spec)  # validate early
         self.mode = mode
         self.shared_grants: set[str] = {g for g in (grants or [])}
-        self.context = build_context(self.workspace)
         self.mcp = None
         mcp_servers = self.config.data.get("mcp_servers") or {}
         if mcp_servers:
@@ -156,11 +162,30 @@ class GuiState:
 
     # ---- sessions ----------------------------------------------------------
 
-    def new_session(self) -> AgentSession:
+    def _resolve_workspace(self, cwd: str) -> Workspace:
+        """Resolve a session's working directory to a Workspace. The default
+        workspace is used for the very first session; a new session may point
+        at another project (see new_session / /api/session/new)."""
+        p = Path(cwd).expanduser().resolve()
+        if str(p) in (str(self.workspace.root), ""):
+            return self.workspace
+        ws = Workspace(str(p))
+        if getattr(self.workspace, "exec_backend", None) is not None:
+            ws.exec_backend = self.workspace.exec_backend
+        return ws
+
+    def new_session(self, project: str | None = None) -> AgentSession:
+        """Create a session. `project` is a 'github:owner/repo' spec or a local
+        directory; when None the session uses the app's default workspace."""
         # unsaved open sessions also occupy their ids, not just those on disk
         session_id = max([self.store.new_id()] + [sid + 1 for sid in self.sessions])
+        ws = self.workspace
+        if project:
+            choice = resolve_project(project)
+            ws = choice.workspace
+            record_recent_project(choice.kind, project, choice.label)
         data = new_session(session_id, title="", model=self.spec,
-                           cwd=str(self.workspace.root), mode=self.mode)
+                           cwd=str(ws.root), mode=self.mode)
         session = AgentSession(self, data)
         self.sessions[session.id] = session
         self.default_session_id = session.id
@@ -185,13 +210,14 @@ class GuiState:
     def sessions_summary(self) -> list[dict]:
         loaded = {
             s.id: {"id": s.id, "title": s.data.get("title", ""), "model": s.spec,
-                   "running": s.running, "open": True}
+                   "cwd": str(s.workspace.root), "running": s.running, "open": True}
             for s in self.sessions.values()
         }
         for saved in self.store.list():
             if saved["id"] not in loaded:
                 loaded[saved["id"]] = {"id": saved["id"], "title": saved["title"],
-                                       "model": saved["model"], "running": False, "open": False}
+                                       "model": saved["model"], "cwd": saved.get("cwd", ""),
+                                       "running": False, "open": False}
         return sorted(loaded.values(), key=lambda s: s["id"], reverse=True)
 
     # ---- compatibility accessors (default session) -------------------------
@@ -298,7 +324,7 @@ class GuiState:
             if self.auto_push:
                 from ..tools.git import push_if_needed
                 try:
-                    pushed = push_if_needed(self.workspace)
+                    pushed = push_if_needed(session.workspace)
                 except Exception as exc:
                     pushed = f"auto-push failed: {exc}"
                 if pushed:
@@ -330,7 +356,7 @@ class GuiState:
             "model": f"{session.provider_name}/{session.model}",
             "spec": session.spec,
             "mode": session.permissions.mode,
-            "cwd": str(self.workspace.root),
+            "cwd": str(session.workspace.root),
             "session_id": session.id,
             "running": session.running,
             "auto_push": self.auto_push,
@@ -358,10 +384,11 @@ class GuiState:
 
     # ---- GitHub authorization (SRS sections 30-31, 60) ---------------------
 
-    def github_status(self) -> dict:
+    def github_status(self, session_id: int | None = None) -> dict:
         from ..github import DEFAULT_API_URL, GitHubClient, detect_repo, get_token
         from ..github_oauth import client_id_from
         github_cfg = self.config.data.get("github") or {}
+        workspace = self.get_session(session_id).workspace
         status: dict = {
             "token_env": github_cfg.get("token_env", "GITHUB_TOKEN"),
             "token_stored": bool(github_cfg.get("token")),
@@ -372,7 +399,7 @@ class GuiState:
             "grants": sorted(self.shared_grants),
         }
         try:
-            owner, repo = detect_repo(self.workspace)
+            owner, repo = detect_repo(workspace)
             status["repo"] = f"{owner}/{repo}"
         except ToolError:
             pass
@@ -466,7 +493,8 @@ class GuiState:
             out.append(info)
         return out
 
-    def tree(self) -> list[dict]:
+    def tree(self, session_id: int | None = None) -> list[dict]:
+        workspace = self.get_session(session_id).workspace
         entries: list[dict] = []
 
         def walk(directory: Path, depth: int) -> None:
@@ -481,21 +509,30 @@ class GuiState:
                     return
                 if child.name in IGNORED_DIRS or child.name.endswith(".egg-info"):
                     continue
-                entries.append({"path": self.workspace.relative(child), "dir": child.is_dir(),
+                entries.append({"path": workspace.relative(child), "dir": child.is_dir(),
                                 "depth": depth})
                 if child.is_dir():
                     walk(child, depth + 1)
 
-        walk(self.workspace.root, 0)
+        walk(workspace.root, 0)
         return entries
 
-    def read_file(self, rel_path: str) -> dict:
-        p = self.workspace.resolve(rel_path)
+    def read_file(self, rel_path: str, session_id: int | None = None) -> dict:
+        workspace = self.get_session(session_id).workspace
+        p = workspace.resolve(rel_path)
         if not p.is_file():
             raise ToolError(f"Not a file: {rel_path}")
         if p.stat().st_size > 1_000_000:
             return {"path": rel_path, "content": "(file too large to display)"}
         return {"path": rel_path, "content": p.read_text(errors="replace")}
+
+    def diff(self, session_id: int | None = None) -> dict:
+        workspace = self.get_session(session_id).workspace
+        return {"diff": git_diff(workspace), "status": git_status(workspace)}
+
+    def projects_info(self) -> list[dict]:
+        from ..project import available_projects
+        return available_projects()
 
 
 class GuiHandler(BaseHTTPRequestHandler):
@@ -549,18 +586,20 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/transcript":
                 self._json(st.get_session(sid).transcript_snapshot())
             elif route == "/api/tree":
-                self._json(st.tree())
+                self._json(st.tree(sid))
             elif route == "/api/file":
                 path = (params.get("path") or [""])[0]
-                self._json(st.read_file(path))
+                self._json(st.read_file(path, sid))
             elif route == "/api/diff":
-                self._json({"diff": git_diff(st.workspace), "status": git_status(st.workspace)})
+                self._json(st.diff(sid))
+            elif route == "/api/projects":
+                self._json(st.projects_info())
             elif route == "/api/providers":
                 self._json(st.providers_info())
             elif route == "/api/sessions":
                 self._json(st.sessions_summary())
             elif route == "/api/github/status":
-                self._json(st.github_status())
+                self._json(st.github_status(sid))
             elif route == "/api/events":
                 self._sse()
             else:
@@ -634,7 +673,7 @@ class GuiHandler(BaseHTTPRequestHandler):
                 if st.get_session(sid).running:
                     return self._error("cannot push while the agent is running", 409)
                 from ..tools.git import git_push
-                self._json({"result": git_push(st.workspace)})
+                self._json({"result": git_push(st.get_session(sid).workspace)})
             elif route == "/api/autopush":
                 st.auto_push = bool(body.get("enabled"))
                 if st.auto_push:
@@ -644,7 +683,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                 st.stop(sid)
                 self._json({"ok": True})
             elif route == "/api/session/new":
-                session = st.new_session()
+                project = str(body.get("project", "")).strip() or None
+                session = st.new_session(project=project)
                 self._json(st.state(session.id))
             elif route == "/api/session":
                 session = st.load_session(int(body.get("id", 0)))

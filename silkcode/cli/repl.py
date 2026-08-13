@@ -32,6 +32,7 @@ HELP = """Commands:
   /model [spec]      show or switch the model (e.g. /model ollama/qwen2.5-coder)
   /models            list configured providers
   /mode [m]          show or set permission mode: ask | edit | agent
+  /project [spec]    open another project (GitHub repo or local path) for this session
   /diff              show the current git diff
   /push              push the current branch to the remote
   /autopush [on|off] automatically push unpushed commits after each turn
@@ -298,6 +299,40 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
     elif cmd == "/sessions":
         for s in store.list():
             print(f"#{s['id']:<5} {s['model']:<28} {s['title']}")
+    elif cmd == "/project":
+        _project_command(agent, config, session, arg)
     else:
         print(f"Unknown command {cmd}. Try /help")
     return False
+
+
+def _project_command(agent: Agent, config: Config, session: dict, arg: str) -> None:
+    """Open a new project in this session: switch the agent to another
+    workspace chosen from GitHub or a local path (SRS: new sessions ask for
+    a project)."""
+    from ..context import build_context
+    from ..project import record_recent_project, resolve_project
+    from ..workspace import ToolError
+
+    try:
+        if arg:
+            choice = resolve_project(arg)
+        else:
+            from ..project import prompt_for_project
+            choice = prompt_for_project()
+        if choice is None:
+            return  # cancelled / nothing chosen
+    except ToolError as exc:
+        print(f"{RED}{exc}{RESET}")
+        return
+
+    spec = f"github:{choice.github.owner}/{choice.github.repo}" if choice.github \
+        else str(choice.workspace.root)
+    record_recent_project(choice.kind, spec, choice.label)
+    agent.set_workspace(choice.workspace, build_context(choice.workspace))
+    session["cwd"] = str(choice.workspace.root)
+    banner = (f"{CYAN}{choice.label}{RESET}{DIM}  {choice.workspace.root}{RESET}"
+              if choice.kind == "github"
+              else f"{CYAN}{choice.workspace.root}{RESET}")
+    print(f"\n{BOLD}Opened project:{RESET} {banner}")
+    print(f"{DIM}Files and git now refer to {choice.workspace.root}{RESET}")
