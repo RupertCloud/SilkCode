@@ -124,11 +124,31 @@ silkcode connect github            # verifies the token and detects owner/repo
 ```
 
 The repository is auto-detected from the workspace's `origin` remote. Agent tools:
-`github_create_pr` (draft by default, approval-gated), `github_list_prs`,
-`github_list_issues`, `github_get_issue`. GitHub Enterprise: set `github.api_url` in
-the config. Pushing branches still happens over your own git credentials
-(`git push` is always approval-gated). Prefer MCP? `silkcode connect github` prints
-the equivalent `silkcode mcp add` command.
+`github_create_pr` (draft by default, approval-gated), `github_merge_pr`,
+`github_list_prs`, `github_list_issues`, `github_get_issue`, plus `git_push` and
+`git_pull` (HTTPS remotes authenticate with your token; SSH remotes use your own
+keys). GitHub Enterprise: set `github.api_url` in the config. Prefer MCP?
+`silkcode connect github` prints the equivalent `silkcode mcp add` command.
+
+### Authorization
+
+The GUI has a **GitHub** authorization page: paste a token (verified before it is
+stored), see connection status, and pre-authorize `pull` / `commit` / `push` /
+`merge` for the session so those operations run without per-action prompts.
+Everything not granted keeps its normal approval prompt (push and merge are
+high-risk by default), and grants reset when the session ends. From the CLI:
+
+```bash
+silkcode --allow pull,commit .            # session grants in the REPL
+silkcode gui --allow pull,commit,push .   # or in the GUI
+```
+
+### Copilot cloud agents (Agent Tasks API)
+
+With a Copilot Business/Enterprise token, the agent can also delegate work to
+GitHub's cloud agents (API version 2026-03-10): `github_agent_task_start` (prompt,
+optional model/base branch/auto-PR), `github_agent_tasks`, `github_agent_task_get`
+(task state and sessions).
 
 ## MCP
 

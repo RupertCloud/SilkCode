@@ -17,6 +17,8 @@ import httpx
 from .workspace import ToolError, Workspace
 
 DEFAULT_API_URL = "https://api.github.com"
+API_VERSION = "2022-11-28"
+AGENT_TASKS_API_VERSION = "2026-03-10"  # required by the /agents endpoints
 REMOTE_PATTERN = re.compile(r"github\.com[:/](?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?$")
 
 # Test hook: replaced to inject a mock transport.
@@ -24,8 +26,39 @@ _make_client = lambda: httpx.Client(timeout=30.0)  # noqa: E731
 
 
 def token_from_env(config_data: dict | None = None) -> str | None:
-    env = ((config_data or {}).get("github") or {}).get("token_env", "GITHUB_TOKEN")
-    return os.environ.get(env)
+    """Token from the environment, falling back to one stored in the config
+    (set via the GUI authorization page or 'silkcode connect github')."""
+    github_cfg = (config_data or {}).get("github") or {}
+    env = github_cfg.get("token_env", "GITHUB_TOKEN")
+    return os.environ.get(env) or github_cfg.get("token")
+
+
+def git_credential_env() -> dict | None:
+    """Environment that lets git push/pull authenticate to github.com over
+    HTTPS with the configured token. Returns None when no token is set (git
+    then uses the developer's own ambient credentials, e.g. SSH keys)."""
+    from .config import Config, config_dir
+
+    config = Config.load()
+    token = token_from_env(config.data)
+    if not token:
+        return None
+    askpass = config_dir() / "git-askpass.sh"
+    if not askpass.exists():
+        config_dir().mkdir(parents=True, exist_ok=True)
+        askpass.write_text(
+            "#!/bin/sh\n"
+            'case "$1" in\n'
+            "  Username*) echo x-access-token ;;\n"
+            "  *) printenv SILKCODE_GIT_TOKEN ;;\n"
+            "esac\n"
+        )
+        askpass.chmod(0o755)
+    return {
+        "GIT_ASKPASS": str(askpass),
+        "SILKCODE_GIT_TOKEN": token,
+        "GIT_TERMINAL_PROMPT": "0",
+    }
 
 
 def detect_repo(ws: Workspace) -> tuple[str, str]:
@@ -50,13 +83,16 @@ class GitHubClient:
         self._headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
+            "X-GitHub-Api-Version": API_VERSION,
         }
         self._client = _make_client()
 
-    def _request(self, method: str, path: str, **kwargs) -> dict | list:
+    def _request(self, method: str, path: str, api_version: str | None = None, **kwargs) -> dict | list:
+        headers = dict(self._headers)
+        if api_version:
+            headers["X-GitHub-Api-Version"] = api_version
         try:
-            resp = self._client.request(method, f"{self.api_url}{path}", headers=self._headers, **kwargs)
+            resp = self._client.request(method, f"{self.api_url}{path}", headers=headers, **kwargs)
         except httpx.HTTPError as exc:
             raise ToolError(f"GitHub request failed: {exc}") from exc
         if resp.status_code >= 400:
@@ -94,6 +130,60 @@ class GitHubClient:
         if not issues:
             return f"No {state} issues."
         return "\n".join(f"#{i['number']} [{i['state']}] {i['title']}" for i in issues)
+
+    def merge_pull_request(self, owner: str, repo: str, number: int,
+                           method: str = "merge") -> str:
+        if method not in ("merge", "squash", "rebase"):
+            raise ToolError("merge method must be one of: merge, squash, rebase")
+        data = self._request("PUT", f"/repos/{owner}/{repo}/pulls/{number}/merge",
+                             json={"merge_method": method})
+        if not data.get("merged"):
+            raise ToolError(f"merge failed: {data.get('message', 'unknown reason')}")
+        return f"Merged pull request #{number} ({method}): {data.get('sha', '')[:10]}"
+
+    # ---- Agent Tasks API (Copilot cloud agents, api version 2026-03-10) ----
+
+    def start_agent_task(self, owner: str, repo: str, prompt: str, model: str | None = None,
+                         base_ref: str | None = None, create_pull_request: bool = False) -> str:
+        payload: dict = {"prompt": prompt, "create_pull_request": create_pull_request}
+        if model:
+            payload["model"] = model
+        if base_ref:
+            payload["base_ref"] = base_ref
+        task = self._request("POST", f"/agents/repos/{owner}/{repo}/tasks",
+                             api_version=AGENT_TASKS_API_VERSION, json=payload)
+        return (f"Started agent task {task.get('id')} [{task.get('state', '?')}]: "
+                f"{task.get('html_url', '')}")
+
+    @staticmethod
+    def _format_task(task: dict) -> str:
+        return (f"{task.get('id')} [{task.get('state', '?')}] {task.get('name', '(unnamed)')} "
+                f"(sessions: {task.get('session_count', 0)}, updated: {task.get('updated_at', '?')})")
+
+    def list_agent_tasks(self, owner: str, repo: str, state: str | None = None) -> str:
+        params: dict = {"per_page": 20}
+        if state:
+            params["state"] = state
+        data = self._request("GET", f"/agents/repos/{owner}/{repo}/tasks",
+                             api_version=AGENT_TASKS_API_VERSION, params=params)
+        tasks = data.get("tasks") or []
+        if not tasks:
+            return "No agent tasks."
+        lines = [self._format_task(t) for t in tasks]
+        lines.append(f"(active: {data.get('total_active_count', '?')}, "
+                     f"archived: {data.get('total_archived_count', '?')})")
+        return "\n".join(lines)
+
+    def get_agent_task(self, owner: str, repo: str, task_id: str) -> str:
+        task = self._request("GET", f"/agents/repos/{owner}/{repo}/tasks/{task_id}",
+                             api_version=AGENT_TASKS_API_VERSION)
+        lines = [self._format_task(task), f"url: {task.get('html_url', '')}"]
+        for session in task.get("sessions") or []:
+            lines.append(f"  session {session.get('id')} [{session.get('state', '?')}] "
+                         f"model: {session.get('model', '?')}")
+            if session.get("error"):
+                lines.append(f"    error: {session['error']}")
+        return "\n".join(lines)
 
     def get_issue(self, owner: str, repo: str, number: int) -> str:
         issue = self._request("GET", f"/repos/{owner}/{repo}/issues/{number}")
@@ -150,3 +240,24 @@ def github_list_issues(ws: Workspace, state: str = "open") -> str:
 def github_get_issue(ws: Workspace, number: int) -> str:
     client, owner, repo = _client_for(ws)
     return client.get_issue(owner, repo, int(number))
+
+
+def github_merge_pr(ws: Workspace, number: int, method: str = "merge") -> str:
+    client, owner, repo = _client_for(ws)
+    return client.merge_pull_request(owner, repo, int(number), method)
+
+
+def github_agent_task_start(ws: Workspace, prompt: str, model: str | None = None,
+                            base_ref: str | None = None, create_pull_request: bool = False) -> str:
+    client, owner, repo = _client_for(ws)
+    return client.start_agent_task(owner, repo, prompt, model, base_ref, create_pull_request)
+
+
+def github_agent_tasks(ws: Workspace, state: str | None = None) -> str:
+    client, owner, repo = _client_for(ws)
+    return client.list_agent_tasks(owner, repo, state)
+
+
+def github_agent_task_get(ws: Workspace, task_id: str) -> str:
+    client, owner, repo = _client_for(ws)
+    return client.get_agent_task(owner, repo, str(task_id))

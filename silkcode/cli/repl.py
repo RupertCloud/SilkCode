@@ -78,7 +78,7 @@ def _on_event(kind: str, data) -> None:
 
 
 def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None = None,
-             prompt: str | None = None) -> int:
+             prompt: str | None = None, grants: list[str] | None = None) -> int:
     try:
         workspace = Workspace(path)
     except ToolError as exc:
@@ -108,7 +108,8 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         for server_name, error in mcp.errors.items():
             print(f"{YELLOW}warning: MCP server '{server_name}' failed to start: {error}{RESET}")
 
-    permissions = PermissionManager(mode=(resume or {}).get("mode", mode), asker=_ask_user)
+    permissions = PermissionManager(mode=(resume or {}).get("mode", mode), asker=_ask_user,
+                                    grants=grants)
     agent = Agent(provider, model, workspace, permissions, on_event=_on_event,
                   context=build_context(workspace), mcp=mcp)
 

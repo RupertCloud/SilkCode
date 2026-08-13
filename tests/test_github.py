@@ -77,6 +77,60 @@ def test_tools_require_token(repo_ws, monkeypatch):
         github_list_issues(repo_ws)
 
 
+def test_merge_pr(repo_ws, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+
+    def handler(request):
+        if request.url.path == "/repos/acme/widgets/pulls/7/merge" and request.method == "PUT":
+            assert json.loads(request.content) == {"merge_method": "squash"}
+            return httpx.Response(200, json={"merged": True, "sha": "abc1234567890"})
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    mock_github(handler, monkeypatch)
+    from silkcode.github import github_merge_pr
+    out = github_merge_pr(repo_ws, 7, method="squash")
+    assert "Merged pull request #7" in out
+
+
+def test_agent_tasks_use_new_api_version(repo_ws, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    seen = {}
+
+    def handler(request):
+        seen[request.url.path] = request.headers.get("X-GitHub-Api-Version")
+        if request.url.path == "/agents/repos/acme/widgets/tasks" and request.method == "POST":
+            assert json.loads(request.content) == {
+                "prompt": "Fix the login bug", "create_pull_request": True, "base_ref": "main",
+            }
+            return httpx.Response(201, json={"id": "t1", "state": "queued",
+                                             "html_url": "https://github.com/acme/widgets/agents/t1"})
+        if request.url.path == "/agents/repos/acme/widgets/tasks" and request.method == "GET":
+            return httpx.Response(200, json={
+                "tasks": [{"id": "t1", "state": "completed", "name": "Fix login",
+                           "session_count": 1, "updated_at": "2026-08-13T00:00:00Z"}],
+                "total_active_count": 0, "total_archived_count": 1,
+            })
+        if request.url.path == "/agents/repos/acme/widgets/tasks/t1":
+            return httpx.Response(200, json={
+                "id": "t1", "state": "completed", "name": "Fix login", "session_count": 1,
+                "updated_at": "2026-08-13T00:00:00Z", "html_url": "u",
+                "sessions": [{"id": "s1", "state": "completed", "model": "claude-sonnet-4.6"}],
+            })
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    mock_github(handler, monkeypatch)
+    from silkcode.github import github_agent_task_get, github_agent_task_start, github_agent_tasks
+
+    out = github_agent_task_start(repo_ws, "Fix the login bug", base_ref="main",
+                                  create_pull_request=True)
+    assert "Started agent task t1" in out
+    out = github_agent_tasks(repo_ws)
+    assert "t1 [completed] Fix login" in out
+    out = github_agent_task_get(repo_ws, "t1")
+    assert "session s1 [completed] model: claude-sonnet-4.6" in out
+    assert all(v == "2026-03-10" for v in seen.values())
+
+
 def test_list_issues_filters_prs(repo_ws, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "tok")
 

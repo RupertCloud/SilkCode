@@ -14,6 +14,7 @@ class Risk(IntEnum):
 
 
 HIGH_RISK_PATTERNS = [
+    r"\bgithub merge-pr\b",  # merging a PR is as outward-facing as a push
     r"\brm\s+-[a-zA-Z-]*[rf]",
     r"\bsudo\b",
     r"\bgit\s+push\b",
@@ -70,6 +71,26 @@ def _classify_segment(segment: str) -> Risk:
 # Asker callback: takes a human-readable prompt, returns "yes", "no", or "always".
 Asker = Callable[[str], str]
 
+# Operations a user can pre-authorize (SRS section 31, Custom policies).
+GRANTABLE = ("pull", "push", "commit", "merge")
+
+_GIT_OP_BY_SUBCOMMAND = {
+    "pull": "pull", "fetch": "pull",
+    "push": "push",
+    "commit": "commit",
+    "merge": "merge",
+}
+
+
+def git_operation(command: str) -> str | None:
+    """Map a command to a grantable git operation, or None."""
+    if re.match(r"\s*github merge-pr\b", command):
+        return "merge"
+    match = re.match(r"\s*git\s+(\w+)", command)
+    if match:
+        return _GIT_OP_BY_SUBCOMMAND.get(match.group(1))
+    return None
+
 
 class PermissionManager:
     """Permission modes per SRS section 31.
@@ -84,11 +105,13 @@ class PermissionManager:
 
     MODES = ("ask", "edit", "agent")
 
-    def __init__(self, mode: str = "ask", asker: Asker | None = None):
+    def __init__(self, mode: str = "ask", asker: Asker | None = None,
+                 grants: set[str] | list[str] | None = None):
         if mode not in self.MODES:
             raise ValueError(f"Unknown permission mode '{mode}'; expected one of {self.MODES}")
         self.mode = mode
         self.asker: Asker = asker or (lambda prompt: "no")
+        self.grants: set[str] = {g for g in (grants or []) if g in GRANTABLE}
         self._always_write = False
         self._always_commands: set[str] = set()
 
@@ -104,6 +127,9 @@ class PermissionManager:
     def check_command(self, command: str) -> bool:
         risk = classify_command(command)
         if risk == Risk.LOW:
+            return True
+        operation = git_operation(command)
+        if operation is not None and operation in self.grants:
             return True
         if risk == Risk.MEDIUM:
             if self.mode == "agent":

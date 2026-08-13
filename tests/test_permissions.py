@@ -80,3 +80,29 @@ def test_high_risk_always_prompts_even_in_agent_mode():
     pm = PermissionManager("agent", asker=lambda p: next(answers))
     assert pm.check_command("rm -rf build") is True
     assert pm.check_command("rm -rf dist") is False
+
+
+def test_git_operation_mapping():
+    from silkcode.permissions import git_operation
+    assert git_operation("git push origin main") == "push"
+    assert git_operation("git pull") == "pull"
+    assert git_operation("git fetch origin") == "pull"
+    assert git_operation("git commit -m x") == "commit"
+    assert git_operation("git merge feature") == "merge"
+    assert git_operation("github merge-pr") == "merge"
+    assert git_operation("git status") is None
+    assert git_operation("rm -rf /") is None
+
+
+def test_grants_bypass_prompts():
+    pm = PermissionManager("ask", asker=lambda p: "no", grants=["push", "merge", "commit"])
+    assert pm.check_command("git push origin main") is True      # HIGH, but granted
+    assert pm.check_command("github merge-pr") is True           # HIGH, but granted
+    assert pm.check_command("git commit -m 'x'") is True         # MEDIUM, granted
+    assert pm.check_command("git pull") is False                 # not granted -> asker says no
+    assert pm.check_command("rm -rf build") is False              # grants never cover rm
+
+
+def test_grants_filtered_to_grantable():
+    pm = PermissionManager("ask", grants=["push", "bogus", "rm -rf"])
+    assert pm.grants == {"push"}

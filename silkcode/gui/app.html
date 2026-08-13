@@ -82,6 +82,7 @@
   <label>Session <select id="session-select"></select></label>
   <label>Model <select id="model-select"></select></label>
   <button id="add-model">+ Add model</button>
+  <button id="github-btn">GitHub</button>
   <label>Mode <select id="mode-select">
     <option value="ask">ask</option><option value="edit">edit</option><option value="agent">agent</option>
   </select></label>
@@ -118,6 +119,27 @@
       <button class="danger" data-decision="no">Deny</button>
       <button data-decision="always">Always (this session)</button>
       <button class="primary" data-decision="yes">Allow</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="github-modal">
+  <div class="modal">
+    <h3>GitHub authorization</h3>
+    <div class="prompt" id="gh-status">checking…</div>
+    <label>Personal access token (repo scope) — stored in your Silk Code config</label>
+    <input id="gh-token" type="password" placeholder="ghp_… (leave empty to keep current)">
+    <label style="margin-top:12px">Authorize the agent for this session (no per-action prompts):</label>
+    <div style="display:flex;gap:14px;margin:6px 0 2px">
+      <label><input type="checkbox" id="grant-pull"> pull</label>
+      <label><input type="checkbox" id="grant-commit"> commit</label>
+      <label><input type="checkbox" id="grant-push"> push</label>
+      <label><input type="checkbox" id="grant-merge"> merge</label>
+    </div>
+    <div style="color:var(--dim);font-size:12px">Anything not checked keeps its normal approval prompt. Grants reset when the session ends.</div>
+    <div class="row">
+      <button id="gh-cancel">Close</button>
+      <button class="primary" id="gh-save">Authorize</button>
     </div>
   </div>
 </div>
@@ -359,6 +381,34 @@ $("revert").onclick = async () => {
   } catch (err) { alert(err.message); }
 };
 
+const GRANTS = ["pull", "commit", "push", "merge"];
+
+async function refreshGithubStatus() {
+  const s = await api("/api/github/status");
+  const bits = [];
+  bits.push(s.connected ? `✓ connected as ${s.login}` : "✗ not connected");
+  if (s.repo) bits.push(`repo: ${s.repo}`);
+  bits.push(s.token_stored ? "token: stored in config" : `token: $${s.token_env} (not stored)`);
+  if (s.error) bits.push(`error: ${s.error}`);
+  $("gh-status").textContent = bits.join("\n");
+  for (const g of GRANTS) $("grant-" + g).checked = s.grants.includes(g);
+  $("github-btn").textContent = s.connected ? `GitHub ✓ ${s.login}` : "GitHub";
+}
+
+$("github-btn").onclick = async () => {
+  $("github-modal").classList.add("open");
+  refreshGithubStatus().catch(() => { $("gh-status").textContent = "status unavailable"; });
+};
+$("gh-cancel").onclick = () => $("github-modal").classList.remove("open");
+$("gh-save").onclick = async () => {
+  try {
+    const token = $("gh-token").value.trim();
+    if (token) { await api("/api/github/token", {token}); $("gh-token").value = ""; }
+    await api("/api/github/grants", {grants: GRANTS.filter(g => $("grant-" + g).checked)});
+    await refreshGithubStatus();
+  } catch (err) { alert(err.message); }
+};
+
 $("add-model").onclick = () => $("provider-modal").classList.add("open");
 $("p-cancel").onclick = () => $("provider-modal").classList.remove("open");
 $("p-save").onclick = async () => {
@@ -397,6 +447,7 @@ async function init() {
   renderUsage(state.usage);
   await loadProviders(state.spec);
   await loadSessions(state.session_id);
+  refreshGithubStatus().catch(() => {});
   const transcript = await api("/api/transcript");
   $("messages").innerHTML = ""; $("timeline").innerHTML = "";
   transcript.forEach(renderEntry);

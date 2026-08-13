@@ -31,7 +31,8 @@ PERMISSION_TIMEOUT = 600  # seconds; deny if the browser never answers
 
 
 class GuiState:
-    def __init__(self, path: str, model_spec: str | None, mode: str):
+    def __init__(self, path: str, model_spec: str | None, mode: str,
+                 grants: list[str] | None = None):
         self.workspace = Workspace(path)
         self.config = Config.load()
         self.store = SessionStore()
@@ -45,7 +46,7 @@ class GuiState:
         if mcp_servers:
             from ..mcp import McpManager
             mcp = McpManager(mcp_servers)
-        self.permissions = PermissionManager(mode=mode, asker=self._ask_via_gui)
+        self.permissions = PermissionManager(mode=mode, asker=self._ask_via_gui, grants=grants)
         self.agent = Agent(provider, model, self.workspace, self.permissions,
                            on_event=self._on_agent_event, context=build_context(self.workspace),
                            mcp=mcp)
@@ -234,6 +235,56 @@ class GuiState:
         self.config.set_provider(name, cfg)
         self.config.save()
 
+    # ---- GitHub authorization (SRS sections 30-31, 60) ---------------------
+
+    def github_status(self) -> dict:
+        from ..github import DEFAULT_API_URL, GitHubClient, detect_repo, token_from_env
+        github_cfg = self.config.data.get("github") or {}
+        status: dict = {
+            "token_env": github_cfg.get("token_env", "GITHUB_TOKEN"),
+            "token_stored": bool(github_cfg.get("token")),
+            "connected": False,
+            "login": None,
+            "repo": None,
+            "grants": sorted(self.permissions.grants),
+        }
+        try:
+            owner, repo = detect_repo(self.workspace)
+            status["repo"] = f"{owner}/{repo}"
+        except ToolError:
+            pass
+        token = token_from_env(self.config.data)
+        if token:
+            try:
+                client = GitHubClient(token, github_cfg.get("api_url", DEFAULT_API_URL))
+                status["login"] = client.whoami()
+                status["connected"] = True
+            except ToolError as exc:
+                status["error"] = str(exc)
+        return status
+
+    def set_github_token(self, token: str) -> dict:
+        from ..github import DEFAULT_API_URL, GitHubClient
+        token = token.strip()
+        if not token:
+            raise ConfigError("empty token")
+        github_cfg = self.config.data.setdefault("github", {})
+        client = GitHubClient(token, github_cfg.get("api_url", DEFAULT_API_URL))
+        client.whoami()  # verify before storing
+        github_cfg["token"] = token
+        self.config.save()
+        return self.github_status()
+
+    def set_grants(self, grants: list) -> dict:
+        from ..permissions import GRANTABLE
+        cleaned = {g for g in grants if g in GRANTABLE}
+        unknown = [g for g in grants if g not in GRANTABLE]
+        if unknown:
+            raise ConfigError(f"unknown grants: {', '.join(map(str, unknown))}; "
+                              f"allowed: {', '.join(GRANTABLE)}")
+        self.permissions.grants = cleaned
+        return self.github_status()
+
     def tree(self) -> list[dict]:
         entries: list[dict] = []
 
@@ -326,6 +377,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json(st.providers_info())
             elif route == "/api/sessions":
                 self._json(st.store.list())
+            elif route == "/api/github/status":
+                self._json(st.github_status())
             elif route == "/api/events":
                 self._sse()
             else:
@@ -397,6 +450,13 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/stop":
                 st.stop()
                 self._json({"ok": True})
+            elif route == "/api/github/token":
+                self._json(st.set_github_token(str(body.get("token", ""))))
+            elif route == "/api/github/grants":
+                grants = body.get("grants")
+                if not isinstance(grants, list):
+                    return self._error("'grants' must be a list")
+                self._json(st.set_grants(grants))
             elif route == "/api/session":
                 try:
                     st.load_session(int(body.get("id", 0)))
@@ -411,9 +471,10 @@ class GuiHandler(BaseHTTPRequestHandler):
             pass
 
 
-def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1", port: int = 8377) -> int:
+def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1",
+            port: int = 8377, grants: list[str] | None = None) -> int:
     try:
-        state = GuiState(path, model_spec, mode)
+        state = GuiState(path, model_spec, mode, grants=grants)
     except (ToolError, ConfigError) as exc:
         print(f"error: {exc}")
         return 1

@@ -51,7 +51,21 @@ def _repl_parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument("path", nargs="?", default=".", help="workspace directory (default: current)")
     parser.add_argument("--model", "-m", help="model spec, e.g. 'deepseek' or 'ollama/qwen2.5-coder'")
     parser.add_argument("--mode", choices=("ask", "edit", "agent"), default="ask", help="permission mode")
+    parser.add_argument("--allow", help="pre-authorize git operations without prompts, "
+                        "comma-separated from: pull,commit,push,merge")
     return parser
+
+
+def _parse_grants(allow: str | None) -> list[str]:
+    if not allow:
+        return []
+    from ..permissions import GRANTABLE
+    grants = [g.strip() for g in allow.split(",") if g.strip()]
+    unknown = [g for g in grants if g not in GRANTABLE]
+    if unknown:
+        raise SystemExit(f"error: unknown --allow operations: {', '.join(unknown)} "
+                         f"(allowed: {', '.join(GRANTABLE)})")
+    return grants
 
 
 def cmd_repl(argv: list[str]) -> int:
@@ -59,7 +73,8 @@ def cmd_repl(argv: list[str]) -> int:
     parser.add_argument("--prompt", "-p", help="run a single request non-interactively and exit")
     args = parser.parse_args(argv)
     from .repl import run_repl
-    return run_repl(args.path, args.model, args.mode, prompt=args.prompt)
+    return run_repl(args.path, args.model, args.mode, prompt=args.prompt,
+                    grants=_parse_grants(args.allow))
 
 
 REVIEW_PROMPT = (
@@ -82,7 +97,8 @@ def cmd_gui(argv: list[str]) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args(argv)
     from ..gui.server import run_gui
-    return run_gui(args.path, args.model, args.mode, host=args.host, port=args.port)
+    return run_gui(args.path, args.model, args.mode, host=args.host, port=args.port,
+                   grants=_parse_grants(args.allow))
 
 
 def cmd_models(argv: list[str]) -> int:

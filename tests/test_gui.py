@@ -159,6 +159,26 @@ def test_gui_stop_endpoint(gui):
     assert state.agent.stop_requested is True
 
 
+def test_gui_github_status_and_grants(gui, monkeypatch):
+    base, state, _ws = gui
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    status = httpx.get(f"{base}/api/github/status").json()
+    assert status["connected"] is False
+    assert status["repo"] is None  # workspace has no origin remote
+    assert status["grants"] == []
+
+    resp = httpx.post(f"{base}/api/github/grants", json={"grants": ["push", "merge"]})
+    assert resp.status_code == 200
+    assert sorted(resp.json()["grants"]) == ["merge", "push"]
+    assert state.permissions.grants == {"push", "merge"}
+    # granted operations no longer prompt
+    assert state.permissions.check_command("git push origin main") is True
+
+    bad = httpx.post(f"{base}/api/github/grants", json={"grants": ["push", "rm"]})
+    assert bad.status_code == 400
+
+
 def test_gui_permission_flow(gui):
     base, state, _ws = gui
     decisions = {}

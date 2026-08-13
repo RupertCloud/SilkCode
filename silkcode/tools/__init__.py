@@ -6,7 +6,16 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import files, git, search, shell, symbols, testing
-from ..github import github_create_pr, github_get_issue, github_list_issues, github_list_prs
+from ..github import (
+    github_agent_task_get,
+    github_agent_task_start,
+    github_agent_tasks,
+    github_create_pr,
+    github_get_issue,
+    github_list_issues,
+    github_list_prs,
+    github_merge_pr,
+)
 from ..memory import MEMORY_RELPATH, remember
 from ..skills import use_skill
 
@@ -180,6 +189,31 @@ _register(Tool(
 ))
 
 _register(Tool(
+    name="git_push",
+    description="Push the current (or given) branch to a remote. Uses the configured GitHub token for HTTPS remotes, or the developer's own git credentials.",
+    parameters=_params({
+        "remote": {"type": "string", "description": "Remote name (default 'origin')"},
+        "branch": {"type": "string", "description": "Branch to push (default: current branch)"},
+        "set_upstream": {"type": "boolean", "description": "Set upstream tracking (default true)"},
+    }, []),
+    func=git.git_push,
+    kind="command",
+    command_of=lambda args, ws: "git push",
+))
+
+_register(Tool(
+    name="git_pull",
+    description="Pull from a remote into the current branch.",
+    parameters=_params({
+        "remote": {"type": "string", "description": "Remote name (default 'origin')"},
+        "branch": {"type": "string", "description": "Branch to pull (default: tracked branch)"},
+    }, []),
+    func=git.git_pull,
+    kind="command",
+    command_of=lambda args, ws: "git pull",
+))
+
+_register(Tool(
     name="git_log",
     description="Show recent commits (oneline format).",
     parameters=_params({
@@ -232,6 +266,53 @@ _register(Tool(
         "number": {"type": "integer", "description": "Issue number"},
     }, ["number"]),
     func=github_get_issue,
+    kind="read",
+))
+
+
+_register(Tool(
+    name="github_merge_pr",
+    description="Merge a GitHub pull request (merge, squash, or rebase).",
+    parameters=_params({
+        "number": {"type": "integer", "description": "Pull request number"},
+        "method": {"type": "string", "description": "merge, squash, or rebase (default merge)"},
+    }, ["number"]),
+    func=github_merge_pr,
+    kind="command",
+    command_of=lambda args, ws: "github merge-pr",  # high-risk: gated unless 'merge' is granted
+))
+
+_register(Tool(
+    name="github_agent_task_start",
+    description="Start a GitHub Copilot cloud agent task on this repository (requires Copilot subscription). The agent works remotely; check progress with github_agent_task_get.",
+    parameters=_params({
+        "prompt": {"type": "string", "description": "Task prompt for the cloud agent"},
+        "model": {"type": "string", "description": "Model to use (optional)"},
+        "base_ref": {"type": "string", "description": "Base branch (optional)"},
+        "create_pull_request": {"type": "boolean", "description": "Open a PR with the result (default false)"},
+    }, ["prompt"]),
+    func=github_agent_task_start,
+    kind="command",
+    command_of=lambda args, ws: "github agent-task start",
+))
+
+_register(Tool(
+    name="github_agent_tasks",
+    description="List GitHub Copilot cloud agent tasks for this repository.",
+    parameters=_params({
+        "state": {"type": "string", "description": "Filter by state (optional)"},
+    }, []),
+    func=github_agent_tasks,
+    kind="read",
+))
+
+_register(Tool(
+    name="github_agent_task_get",
+    description="Get a GitHub Copilot cloud agent task and its sessions by id.",
+    parameters=_params({
+        "task_id": {"type": "string", "description": "Task id"},
+    }, ["task_id"]),
+    func=github_agent_task_get,
     kind="read",
 ))
 
