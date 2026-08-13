@@ -32,9 +32,16 @@ PERMISSION_TIMEOUT = 600  # seconds; deny if the browser never answers
 
 class GuiState:
     def __init__(self, path: str, model_spec: str | None, mode: str,
-                 grants: list[str] | None = None):
+                 grants: list[str] | None = None, use_sandbox: bool = False):
         self.workspace = Workspace(path)
         self.config = Config.load()
+        if use_sandbox:
+            from ..execbackend import remote_backend_from_config
+            backend = remote_backend_from_config(self.config.data)
+            if backend is None:
+                raise ToolError("no sandbox configured; run 'silkcode sandbox connect <url>'")
+            backend.health()
+            self.workspace.exec_backend = backend
         self.store = SessionStore()
         self.spec = model_spec or self.config.default_model
         provider_name, provider_cfg, model = self.config.resolve_model(self.spec)
@@ -474,9 +481,10 @@ class GuiHandler(BaseHTTPRequestHandler):
 
 
 def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1",
-            port: int = 8377, grants: list[str] | None = None) -> int:
+            port: int = 8377, grants: list[str] | None = None,
+            use_sandbox: bool = False) -> int:
     try:
-        state = GuiState(path, model_spec, mode, grants=grants)
+        state = GuiState(path, model_spec, mode, grants=grants, use_sandbox=use_sandbox)
     except (ToolError, ConfigError) as exc:
         print(f"error: {exc}")
         return 1

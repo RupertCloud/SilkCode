@@ -44,9 +44,27 @@ and risky commands ask for your approval first (see *Permissions* below).
 ## Models: cloud, local, and onboarding your own
 
 Silk Code ships with built-in providers: `deepseek`, `qwen`, `kimi`, `glm`, `minimax`,
-`openrouter`, `ollama`, `vllm`, `lmstudio`. API keys are read from environment variables
-(`DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`, `GLM_API_KEY`,
-`MINIMAX_API_KEY`, `OPENROUTER_API_KEY`).
+`cloudflare` (Workers AI), `openrouter`, `ollama`, `vllm`, `lmstudio`. API keys are read
+from environment variables (`DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`,
+`GLM_API_KEY`, `MINIMAX_API_KEY`, `CLOUDFLARE_API_TOKEN`, `OPENROUTER_API_KEY`).
+
+**Cloudflare Workers AI** (models on Cloudflare's edge GPUs) needs your account id once:
+
+```bash
+export CLOUDFLARE_API_TOKEN=...        # token with Workers AI permission
+silkcode models add cloudflare --account-id <your-account-id>
+silkcode --model cloudflare                                    # qwen2.5-coder-32b default
+silkcode --model "cloudflare/@cf/meta/llama-3.3-70b-instruct"  # any Workers AI model
+```
+
+**Cloudflare AI Gateway** (caching/analytics proxy in front of any provider) is just an
+OpenAI-compatible endpoint:
+
+```bash
+silkcode models add gateway \
+  --base-url https://gateway.ai.cloudflare.com/v1/<account-id>/<gateway>/compat \
+  --api-key-env CF_AIG_TOKEN --model <model>
+```
 
 ```bash
 silkcode models                            # list providers, keys, local models
@@ -160,6 +178,28 @@ silkcode mcp add fetch --command "uvx mcp-server-fetch"
 silkcode mcp                       # list servers and their tools
 ```
 
+## Remote sandboxes
+
+Run the agent's commands and tests in a disposable cloud container instead of on your
+machine (file edits stay local; the workspace syncs up before each command):
+
+```bash
+# Self-hosted, on any machine/VM that should execute commands:
+silkcode sandbox serve --token <secret>
+silkcode sandbox connect http://<host>:8390 --token <secret>
+
+# Or Cloudflare: deploy sandbox/cloudflare-worker (see its README), then
+silkcode sandbox connect https://silkcode-sandbox.<you>.workers.dev
+
+silkcode --sandbox ~/my-project           # CLI with remote execution
+silkcode gui --sandbox ~/my-project       # GUI with remote execution
+silkcode sandbox                          # status / health check
+```
+
+Both implement the same documented Silk Sandbox Protocol v1 (`/health`, `/sync`,
+`/exec`, bearer-token auth). Remote outputs are labeled `[sandbox]` in the agent's
+tool results. Note: artifacts created remotely are not synced back.
+
 ## Benchmarking
 
 `silkcode benchmark` runs real end-to-end coding tasks (create, fix, extend, refactor —
@@ -211,6 +251,8 @@ silkcode/
 ├── memory.py        project memory (.silkcode/memory.md)
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
+├── execbackend.py   execution backends: local subprocesses or remote sandbox
+├── sandbox_server.py  reference Silk Sandbox Protocol server (self-hosted)
 ├── tools/           read/write/edit, glob/grep, run_command, run_tests, git status/diff/log/commit
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
 ├── permissions.py   risk classification + ask/edit/agent modes

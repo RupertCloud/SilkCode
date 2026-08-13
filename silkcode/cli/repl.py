@@ -78,13 +78,27 @@ def _on_event(kind: str, data) -> None:
 
 
 def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None = None,
-             prompt: str | None = None, grants: list[str] | None = None) -> int:
+             prompt: str | None = None, grants: list[str] | None = None,
+             use_sandbox: bool = False) -> int:
     try:
         workspace = Workspace(path)
     except ToolError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     config = Config.load()
+    if use_sandbox:
+        from ..execbackend import remote_backend_from_config
+        try:
+            backend = remote_backend_from_config(config.data)
+            if backend is None:
+                print("error: no sandbox configured; run 'silkcode sandbox connect <url>'", file=sys.stderr)
+                return 1
+            backend.health()
+            workspace.exec_backend = backend
+            print(f"{DIM}commands run in sandbox: {backend.url}{RESET}")
+        except ToolError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
     store = SessionStore()
 
     spec = model_spec or (resume or {}).get("model") or config.default_model
