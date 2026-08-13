@@ -82,6 +82,21 @@ def git_push(ws: Workspace, remote: str = "origin", branch: str | None = None,
     return f"Pushed {branch} to {remote}." + (f"\n{out.strip()}" if out.strip() else "")
 
 
+def push_if_needed(ws: Workspace) -> str | None:
+    """Push the current branch if it has commits the remote doesn't.
+    Returns a status message, or None when there is nothing to push
+    (no repo, no commits, no remote, or already up to date)."""
+    if _git(ws, "rev-parse", "--verify", "HEAD").startswith("git error"):
+        return None
+    remotes = _git(ws, "remote")
+    if remotes.startswith("git error") or not remotes.strip():
+        return None
+    ahead = _git(ws, "rev-list", "--count", "@{u}..HEAD")
+    if not ahead.startswith("git error") and ahead.strip() == "0":
+        return None  # upstream exists and nothing is ahead
+    return git_push(ws)
+
+
 def git_pull(ws: Workspace, remote: str = "origin", branch: str | None = None) -> str:
     from ..github import git_credential_env
     args = ["pull", remote] + ([branch] if branch else [])

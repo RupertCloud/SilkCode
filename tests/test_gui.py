@@ -179,6 +179,111 @@ def test_gui_github_status_and_grants(gui, monkeypatch):
     assert bad.status_code == 400
 
 
+def test_gui_multiple_sessions(gui, stub_server, monkeypatch):
+    base, state, ws = gui
+    first_id = state.default_session_id
+
+    # create a second session: fresh conversation, listed as open
+    resp = httpx.post(f"{base}/api/session/new", json={})
+    assert resp.status_code == 200
+    second_id = resp.json()["session_id"]
+    assert second_id != first_id
+    sessions = {s["id"]: s for s in resp.json()["sessions"]}
+    assert sessions[first_id]["open"] and sessions[second_id]["open"]
+
+    # each session has its own transcript and agent
+    assert httpx.get(f"{base}/api/transcript", params={"session": second_id}).json() == []
+    assert state.get_session(first_id).agent is not state.get_session(second_id).agent
+
+    # a turn in session 1 doesn't touch session 2 (stub scripted for one turn)
+    resp = httpx.post(f"{base}/api/message", json={"text": "create hello.txt", "session_id": first_id})
+    assert resp.status_code == 200
+    assert wait_until(lambda: not state.get_session(first_id).running and (ws / "hello.txt").exists())
+    assert len(httpx.get(f"{base}/api/transcript", params={"session": first_id}).json()) >= 2
+    assert httpx.get(f"{base}/api/transcript", params={"session": second_id}).json() == []
+
+    # per-session model switching
+    httpx.post(f"{base}/api/providers", json={"name": "alt", "type": "openai_compat",
+                                              "base_url": "https://alt.example/v1", "default_model": "m2"})
+    resp = httpx.post(f"{base}/api/model", json={"spec": "alt", "session_id": second_id})
+    assert resp.json()["model"] == "alt/m2"
+    assert httpx.get(f"{base}/api/state", params={"session": first_id}).json()["model"] == "stub/stub-model"
+
+    # switching back to session 1 restores it as the default
+    resp = httpx.post(f"{base}/api/session", json={"id": first_id})
+    assert resp.json()["session_id"] == first_id
+
+    # unknown session -> 404
+    assert httpx.get(f"{base}/api/state", params={"session": 99999}).status_code == 404
+
+
+def test_gui_push_and_autopush_endpoints(gui, tmp_path):
+    base, state, ws = gui
+    import subprocess
+    origin = tmp_path / "push-origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=ws, check=True)
+    subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=ws, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=ws, check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=ws, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=ws, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=ws, check=True)
+
+    resp = httpx.post(f"{base}/api/push", json={})
+    assert resp.status_code == 200
+    assert resp.json()["result"].startswith("Pushed main")
+
+    assert httpx.get(f"{base}/api/state").json()["auto_push"] is False
+    resp = httpx.post(f"{base}/api/autopush", json={"enabled": True})
+    assert resp.status_code == 200
+    assert resp.json()["auto_push"] is True
+    assert "push" in state.permissions.grants
+
+
+def test_gui_device_flow_signin(gui, monkeypatch):
+    base, state, _ws = gui
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    # not configured: endpoint explains, status reports unavailable
+    status = httpx.get(f"{base}/api/github/status").json()
+    assert status["device_flow_available"] is False
+    resp = httpx.post(f"{base}/api/github/device", json={})
+    assert resp.status_code == 400
+    assert "client id" in resp.json()["error"]
+
+    # configure a client id and mock GitHub's device endpoints
+    state.config.data.setdefault("github", {})["client_id"] = "cid"
+
+    import silkcode.github_oauth as gho
+    def handler(request):
+        if request.url.path == "/login/device/code":
+            return httpx.Response(200, json={"device_code": "d1", "user_code": "WXYZ-9876",
+                                             "verification_uri": "https://github.com/login/device",
+                                             "interval": 1, "expires_in": 900})
+        return httpx.Response(200, json={"access_token": "ghu_gui", "refresh_token": "ghr_gui",
+                                         "expires_in": 28800})
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(gho, "_make_client", lambda: httpx.Client(transport=transport))
+
+    events = state.subscribe()
+    resp = httpx.post(f"{base}/api/github/device", json={})
+    assert resp.status_code == 200
+    assert resp.json()["user_code"] == "WXYZ-9876"
+
+    # background poll completes and broadcasts success
+    assert wait_until(lambda: state.config.data.get("github", {}).get("token") == "ghu_gui")
+    import queue as _queue
+    seen = []
+    try:
+        while True:
+            seen.append(events.get(timeout=1))
+            if any(e.get("type") == "github_connected" for e in seen):
+                break
+    except _queue.Empty:
+        pass
+    assert any(e.get("type") == "github_connected" for e in seen)
+
+
 def test_gui_permission_flow(gui):
     base, state, _ws = gui
     decisions = {}

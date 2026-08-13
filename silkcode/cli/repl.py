@@ -33,6 +33,8 @@ HELP = """Commands:
   /models            list configured providers
   /mode [m]          show or set permission mode: ask | edit | agent
   /diff              show the current git diff
+  /push              push the current branch to the remote
+  /autopush [on|off] automatically push unpushed commits after each turn
   /usage             show token usage for this session
   /revert            revert the files changed in the last turn (checkpoint restore)
   /skills            list installed skills
@@ -79,7 +81,7 @@ def _on_event(kind: str, data) -> None:
 
 def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None = None,
              prompt: str | None = None, grants: list[str] | None = None,
-             use_sandbox: bool = False) -> int:
+             use_sandbox: bool = False, auto_push: bool = False) -> int:
     try:
         workspace = Workspace(path)
     except ToolError as exc:
@@ -122,8 +124,11 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         for server_name, error in mcp.errors.items():
             print(f"{YELLOW}warning: MCP server '{server_name}' failed to start: {error}{RESET}")
 
+    if auto_push:
+        grants = list(grants or []) + ["push"]
     permissions = PermissionManager(mode=(resume or {}).get("mode", mode), asker=_ask_user,
                                     grants=grants)
+    autopush_state = {"on": auto_push}
     from ..agent.loop import DEFAULT_CONTEXT_TOKENS
     agent = Agent(provider, model, workspace, permissions, on_event=_on_event,
                   context=build_context(workspace), mcp=mcp,
@@ -169,7 +174,7 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         if not line:
             continue
         if line.startswith("/"):
-            if _handle_slash(line, agent, config, session, store):
+            if _handle_slash(line, agent, config, session, store, autopush_state):
                 break
             continue
         if not session["title"]:
@@ -178,6 +183,11 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
             print()
             agent.run_turn(line)
             print()
+            if autopush_state["on"]:
+                from ..tools.git import push_if_needed
+                pushed = push_if_needed(agent.workspace)
+                if pushed:
+                    print(f"{DIM}auto-push: {pushed.splitlines()[0]}{RESET}")
         except ProviderError as exc:
             print(f"\n{RED}provider error: {exc}{RESET}")
         except KeyboardInterrupt:
@@ -197,7 +207,8 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
     return 0
 
 
-def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store: SessionStore) -> bool:
+def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store: SessionStore,
+                  autopush_state: dict | None = None) -> bool:
     """Handle a slash command. Returns True when the REPL should exit."""
     parts = line.split(maxsplit=1)
     cmd, arg = parts[0].lower(), (parts[1].strip() if len(parts) > 1 else "")
@@ -233,6 +244,18 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
             print(f"{RED}unknown mode '{arg}'; expected ask, edit, or agent{RESET}")
     elif cmd == "/diff":
         print(git_diff(agent.workspace))
+    elif cmd == "/push":
+        from ..tools.git import git_push
+        print(git_push(agent.workspace))
+    elif cmd == "/autopush":
+        state = autopush_state if autopush_state is not None else {"on": False}
+        if arg in ("on", "off"):
+            state["on"] = arg == "on"
+            if state["on"]:
+                agent.permissions.grants.add("push")
+            print(f"auto-push {arg}")
+        else:
+            print(f"auto-push is {'on' if state['on'] else 'off'}; use /autopush on|off")
     elif cmd == "/usage":
         u = agent.usage
         print(f"tokens: {u.prompt_tokens} prompt + {u.completion_tokens} completion = {u.total_tokens} total")

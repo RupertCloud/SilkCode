@@ -115,9 +115,14 @@ REPL commands: `/model`, `/models`, `/mode`, `/diff`, `/usage`, `/revert`, `/cle
 `silkcode gui` starts the Silk Code daemon and opens a browser app with the project
 explorer, AI conversation, agent activity timeline, git diff / file viewer, model and
 mode selectors, provider onboarding, checkpoint revert, a stop button for running
-turns, and live permission prompts. Sessions are saved to the same store as the CLI —
-resume any session from the GUI's session picker or with `silkcode resume <id>`
-(SRS section 47).
+turns, and live permission prompts.
+
+**Multiple sessions:** open as many conversations as you like (the ＋ button) and
+switch between them with the session picker — each has its own agent, model choice,
+transcript, and checkpoints, and turns can run concurrently (⏳ marks a busy session;
+permission prompts from any session reach you wherever you are). Sessions are saved
+to the same store as the CLI — resume any of them from the picker or with
+`silkcode resume <id>` (SRS section 47).
 
 ## Project instructions, memory, and skills
 
@@ -134,11 +139,22 @@ resume any session from the GUI's session picker or with `silkcode resume <id>`
 
 ## GitHub
 
-Connect once, then the agent can work with your GitHub project:
+Connect once, then the agent can work with your GitHub project. The preferred way is
+**Sign in with GitHub** — install the Silk Code app, approve in the browser, no tokens:
 
 ```bash
-export GITHUB_TOKEN=ghp_...        # personal access token with repo scope
-silkcode connect github            # verifies the token and detects owner/repo
+silkcode connect github            # shows a code, opens github.com/login/device
+```
+
+(or click **Sign in with GitHub** on the GUI's authorization page). Tokens issued this
+way are short-lived, scoped to the repos where the app is installed, and refreshed
+automatically. This requires the Silk Code GitHub App's client id — a one-time
+maintainer registration, see [docs/GITHUB_APP.md](docs/GITHUB_APP.md); until then, or
+if you prefer, a personal access token works exactly as before:
+
+```bash
+export GITHUB_TOKEN=github_pat_...  # fine-grained token: Contents/PRs/Issues rw
+silkcode connect github             # verifies the token and detects owner/repo
 ```
 
 The repository is auto-detected from the workspace's `origin` remote. Agent tools:
@@ -147,6 +163,20 @@ The repository is auto-detected from the workspace's `origin` remote. Agent tool
 `git_pull` (HTTPS remotes authenticate with your token; SSH remotes use your own
 keys). GitHub Enterprise: set `github.api_url` in the config. Prefer MCP?
 `silkcode connect github` prints the equivalent `silkcode mcp add` command.
+
+### Pushing your work
+
+After a session (or any turn), push manually — `/push` in the CLI, the **⇧ Push**
+button in the GUI — or turn on **auto-push** and Silk Code pushes any unpushed
+commits after each turn automatically:
+
+```bash
+silkcode --auto-push ~/my-project        # CLI (implies the push grant)
+silkcode gui --auto-push ~/my-project    # GUI; also a checkbox on the GitHub page
+```
+
+In the CLI, `/autopush on|off` toggles it mid-session. Auto-push only fires when the
+branch actually has commits the remote doesn't.
 
 ### Authorization
 

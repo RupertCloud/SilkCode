@@ -73,7 +73,7 @@ def test_create_pr_tool_uses_current_branch(repo_ws, monkeypatch):
 
 def test_tools_require_token(repo_ws, monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-    with pytest.raises(ToolError, match="no GitHub token"):
+    with pytest.raises(ToolError, match="not connected to GitHub"):
         github_list_issues(repo_ws)
 
 
