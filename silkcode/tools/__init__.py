@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from . import files, git, search, shell, testing
+from . import files, git, search, shell, symbols, testing
+from ..memory import MEMORY_RELPATH, remember
+from ..skills import use_skill
 
 
 @dataclass(frozen=True)
@@ -18,6 +20,9 @@ class Tool:
     # For kind == "command": resolves the effective shell command used for
     # risk classification and permission checks. Defaults to args["command"].
     command_of: Callable | None = None
+    # For kind == "write": resolves the path being modified for permission
+    # checks and checkpoints. Defaults to args["path"].
+    path_of: Callable | None = None
 
 
 def _params(properties: dict, required: list[str]) -> dict:
@@ -122,6 +127,37 @@ _register(Tool(
     func=git.git_commit,
     kind="command",
     command_of=lambda args, ws: "git commit",
+))
+
+_register(Tool(
+    name="symbols",
+    description="List classes and functions (with file:line) in a file or directory. Useful for getting oriented in unfamiliar code.",
+    parameters=_params({
+        "path": {"type": "string", "description": "File or directory to index (default '.')"},
+    }, []),
+    func=symbols.symbols,
+    kind="read",
+))
+
+_register(Tool(
+    name="use_skill",
+    description="Load the full instructions of an installed skill by name. The available skills are listed in your context.",
+    parameters=_params({
+        "name": {"type": "string", "description": "Skill name"},
+    }, ["name"]),
+    func=use_skill,
+    kind="read",
+))
+
+_register(Tool(
+    name="remember",
+    description="Append a note to the project memory (.silkcode/memory.md): architecture decisions, conventions, important commands, known limitations.",
+    parameters=_params({
+        "text": {"type": "string", "description": "The note to remember"},
+    }, ["text"]),
+    func=remember,
+    kind="write",
+    path_of=lambda args, ws: MEMORY_RELPATH,
 ))
 
 _register(Tool(

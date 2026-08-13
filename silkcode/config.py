@@ -40,6 +40,18 @@ BUILTIN_PROVIDERS: dict[str, dict] = {
         "api_key_env": "MOONSHOT_API_KEY",
         "default_model": "kimi-k2-0711-preview",
     },
+    "glm": {
+        "type": "openai_compat",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "api_key_env": "GLM_API_KEY",
+        "default_model": "glm-4.6",
+    },
+    "minimax": {
+        "type": "openai_compat",
+        "base_url": "https://api.minimax.io/v1",
+        "api_key_env": "MINIMAX_API_KEY",
+        "default_model": "MiniMax-M2",
+    },
     "openrouter": {
         "type": "openai_compat",
         "base_url": "https://openrouter.ai/api/v1",
@@ -136,7 +148,8 @@ class Config:
         from .providers.openai_compat import OpenAICompatProvider
 
         order = self.data.get("auto_order") or [
-            "ollama", "deepseek", "qwen", "kimi", "openrouter", "vllm", "lmstudio",
+            "ollama", "deepseek", "qwen", "kimi", "glm", "minimax", "openrouter",
+            "vllm", "lmstudio",
         ]
         for name in order:
             cfg = self.providers.get(name)

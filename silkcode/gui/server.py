@@ -20,7 +20,8 @@ from ..agent import Agent
 from ..config import Config, ConfigError
 from ..permissions import PermissionManager
 from ..providers import ProviderError, build_provider
-from ..repomap import IGNORED_DIRS, repo_map
+from ..context import build_context
+from ..repomap import IGNORED_DIRS
 from ..sessions import SessionStore, new_session
 from ..tools.git import git_diff, git_status
 from ..workspace import ToolError, Workspace
@@ -46,7 +47,7 @@ class GuiState:
             mcp = McpManager(mcp_servers)
         self.permissions = PermissionManager(mode=mode, asker=self._ask_via_gui)
         self.agent = Agent(provider, model, self.workspace, self.permissions,
-                           on_event=self._on_agent_event, context=repo_map(self.workspace),
+                           on_event=self._on_agent_event, context=build_context(self.workspace),
                            mcp=mcp)
         self.session = new_session(self.store.new_id(), title="", model=self.spec,
                                    cwd=str(self.workspace.root), mode=mode)

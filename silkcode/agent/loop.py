@@ -150,7 +150,11 @@ class Agent:
 
     def _run_with_permissions(self, tool, args: dict) -> str:
         if tool.kind == "write":
-            resolved = self.workspace.resolve(str(args.get("path", "")))
+            if tool.path_of is not None:
+                raw_path = str(tool.path_of(args, self.workspace))
+            else:
+                raw_path = str(args.get("path", ""))
+            resolved = self.workspace.resolve(raw_path)
             if not self.permissions.check_write(self.workspace.relative(resolved)):
                 return "User denied permission to modify this file."
             self.checkpoints.snapshot(resolved)

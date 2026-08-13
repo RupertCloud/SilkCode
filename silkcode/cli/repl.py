@@ -9,7 +9,7 @@ from .. import __version__
 from ..agent import Agent
 from ..config import Config, ConfigError
 from ..providers import ProviderError, build_provider
-from ..repomap import repo_map
+from ..context import build_context
 from ..sessions import SessionStore, new_session
 from ..permissions import PermissionManager
 from ..tools.git import git_diff
@@ -35,6 +35,8 @@ HELP = """Commands:
   /diff              show the current git diff
   /usage             show token usage for this session
   /revert            revert the files changed in the last turn (checkpoint restore)
+  /skills            list installed skills
+  /memory            show the project memory
   /mcp               list connected MCP servers and their tools
   /clear             clear the conversation (keeps the session file)
   /sessions          list saved sessions
@@ -108,7 +110,7 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
 
     permissions = PermissionManager(mode=(resume or {}).get("mode", mode), asker=_ask_user)
     agent = Agent(provider, model, workspace, permissions, on_event=_on_event,
-                  context=repo_map(workspace), mcp=mcp)
+                  context=build_context(workspace), mcp=mcp)
 
     if resume:
         session = resume
@@ -226,6 +228,20 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
     elif cmd == "/clear":
         agent.messages = agent.messages[:1]
         print("Conversation cleared.")
+    elif cmd == "/skills":
+        from ..skills import load_skills, skill_dirs
+        skills = load_skills(agent.workspace)
+        if skills:
+            for s in skills.values():
+                print(f"{s.name:<24} {s.description}")
+        else:
+            dirs = " or ".join(str(d) for d in skill_dirs(agent.workspace))
+            print(f"No skills installed. Add markdown files to {dirs}")
+    elif cmd == "/memory":
+        from ..memory import load_memory, memory_path
+        content = load_memory(agent.workspace)
+        print(content if content else f"No project memory yet ({memory_path(agent.workspace)}). "
+              "The agent adds notes with the remember tool.")
     elif cmd == "/mcp":
         if agent.mcp is None:
             print("No MCP servers configured. Add one with: silkcode mcp add <name> --command '...'")

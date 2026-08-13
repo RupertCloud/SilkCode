@@ -43,9 +43,10 @@ and risky commands ask for your approval first (see *Permissions* below).
 
 ## Models: cloud, local, and onboarding your own
 
-Silk Code ships with built-in providers: `deepseek`, `qwen`, `kimi`, `openrouter`,
-`ollama`, `vllm`, `lmstudio`. API keys are read from environment variables
-(`DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`, `OPENROUTER_API_KEY`).
+Silk Code ships with built-in providers: `deepseek`, `qwen`, `kimi`, `glm`, `minimax`,
+`openrouter`, `ollama`, `vllm`, `lmstudio`. API keys are read from environment variables
+(`DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`, `GLM_API_KEY`,
+`MINIMAX_API_KEY`, `OPENROUTER_API_KEY`).
 
 ```bash
 silkcode models                            # list providers, keys, local models
@@ -99,6 +100,19 @@ turns, and live permission prompts. Sessions are saved to the same store as the 
 resume any session from the GUI's session picker or with `silkcode resume <id>`
 (SRS section 47).
 
+## Project instructions, memory, and skills
+
+- **`SILKCODE.md`** at the repository root is loaded automatically into the agent's
+  context — put your project rules there ("Use TypeScript", "run tests after auth
+  changes", ...).
+- **Project memory** lives in `.silkcode/memory.md`: the agent records durable notes
+  with its `remember` tool (checkpointed and revertable like any write); inspect it
+  with `/memory` or edit the file directly.
+- **Skills** are markdown files in `~/.silkcode/skills/` (user) or
+  `<project>/.silkcode/skills/` (project overrides user). Optional frontmatter gives a
+  `name:` and `description:`; the agent sees the list and loads one with `use_skill`
+  when relevant. List them with `/skills`.
+
 ## MCP
 
 Silk Code is an MCP client: connect any MCP server and its tools become available to
@@ -128,6 +142,9 @@ or **Revert** (GUI) restores the last turn's changes (SRS section 28).
 silkcode/
 ├── providers/       ModelProvider abstraction: OpenAI-compatible + Ollama
 ├── repomap.py       compact repository map injected into the model's context
+├── context.py       context assembly: repo map + SILKCODE.md + memory + skills
+├── skills.py        reusable skills loaded from markdown files
+├── memory.py        project memory (.silkcode/memory.md)
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── tools/           read/write/edit, glob/grep, run_command, run_tests, git status/diff/log/commit
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
