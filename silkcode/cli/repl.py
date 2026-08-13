@@ -132,7 +132,9 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
     from ..agent.loop import DEFAULT_CONTEXT_TOKENS
     agent = Agent(provider, model, workspace, permissions, on_event=_on_event,
                   context=build_context(workspace), mcp=mcp,
-                  max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS)
+                  max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS,
+                  session_id=(resume or {}).get("id"),
+                  attribution=config.data.get("attribution", True))
 
     if resume:
         session = resume
@@ -143,6 +145,7 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         print(f"Resumed session #{session['id']}: {session.get('title', '')}")
     else:
         session = new_session(store.new_id(), title="", model=spec, cwd=str(workspace.root), mode=permissions.mode)
+        agent.session_id = session["id"]
 
     if prompt is not None:
         # one-shot mode: run a single turn and exit

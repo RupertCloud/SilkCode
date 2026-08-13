@@ -164,6 +164,24 @@ The repository is auto-detected from the workspace's `origin` remote. Agent tool
 keys). GitHub Enterprise: set `github.api_url` in the config. Prefer MCP?
 `silkcode connect github` prints the equivalent `silkcode mcp add` command.
 
+### Attribution
+
+Commits the **agent** makes register Silk Code as co-author, with provenance you can
+query later:
+
+```text
+Add input validation
+
+Co-Authored-By: Silk Code <agent@silkcode.dev>
+X-Silk-Model: deepseek/deepseek-chat
+X-Silk-Session: 42
+```
+
+You remain the commit author; the trailers record that (and which model) did the
+work — `git log --grep="X-Silk-Model"` finds every agent commit. PRs the agent opens
+get a matching footer. Commits **you** make (or trigger directly, like `/push`) stay
+clean. Opt out with `"attribution": false` in the config.
+
 ### Pushing your work
 
 After a session (or any turn), push manually — `/push` in the CLI, the **⇧ Push**

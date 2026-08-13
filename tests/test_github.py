@@ -71,6 +71,28 @@ def test_create_pr_tool_uses_current_branch(repo_ws, monkeypatch):
                         "body": "desc", "draft": True}
 
 
+def test_create_pr_gets_attribution_footer(repo_ws, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "tok")
+    from silkcode.tools.git import clear_attribution, set_attribution
+    captured = {}
+
+    def handler(request):
+        if request.url.path == "/repos/acme/widgets/pulls" and request.method == "POST":
+            captured.update(json.loads(request.content))
+            return httpx.Response(201, json={"number": 8, "html_url": "u"})
+        return httpx.Response(404, json={"message": "Not Found"})
+
+    mock_github(handler, monkeypatch)
+    set_attribution(model="deepseek/deepseek-chat", session=3)
+    try:
+        github_create_pr(repo_ws, title="T", body="The change.", base="main")
+    finally:
+        clear_attribution()
+    assert "Co-authored with [Silk Code]" in captured["body"]
+    assert "deepseek/deepseek-chat" in captured["body"]
+    assert captured["body"].startswith("The change.")
+
+
 def test_tools_require_token(repo_ws, monkeypatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     with pytest.raises(ToolError, match="not connected to GitHub"):

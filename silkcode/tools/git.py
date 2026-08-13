@@ -4,8 +4,40 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 
 from ..workspace import Workspace
+
+# Attribution context (SRS section 60, provenance): set per turn by the agent
+# loop in its worker thread, so commits made by the agent register Silk Code
+# as co-author with the model that did the work. Human-initiated commits
+# (outside an agent turn) carry no trailers. Thread-local so concurrent
+# sessions attribute their own model correctly.
+_attribution = threading.local()
+
+CO_AUTHOR = "Co-Authored-By: Silk Code <agent@silkcode.dev>"
+
+
+def set_attribution(model: str, session: int | None = None) -> None:
+    _attribution.info = {"model": model, "session": session}
+
+
+def clear_attribution() -> None:
+    _attribution.info = None
+
+
+def get_attribution() -> dict | None:
+    return getattr(_attribution, "info", None)
+
+
+def _with_trailers(message: str) -> str:
+    info = get_attribution()
+    if not info:
+        return message
+    trailers = [CO_AUTHOR, f"X-Silk-Model: {info['model']}"]
+    if info.get("session"):
+        trailers.append(f"X-Silk-Session: {info['session']}")
+    return message.rstrip() + "\n\n" + "\n".join(trailers)
 
 
 def _git(ws: Workspace, *args: str, env: dict | None = None, timeout: int = 60) -> str:
@@ -52,7 +84,7 @@ def git_commit(ws: Workspace, message: str, add_all: bool = True) -> str:
         staged = _git(ws, "add", "-A")
         if staged.startswith("git error"):
             return staged
-    out = _git(ws, "commit", "-m", message)
+    out = _git(ws, "commit", "-m", _with_trailers(message))
     if out.startswith("git error"):
         return out
     head = _git(ws, "log", "-1", "--oneline")

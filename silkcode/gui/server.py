@@ -84,6 +84,8 @@ class AgentSession:
             on_event=lambda kind, payload: state._on_agent_event(self, kind, payload),
             context=state.context, mcp=state.mcp,
             max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS,
+            session_id=self.id,
+            attribution=state.config.data.get("attribution", True),
         )
         if data.get("messages"):
             self.agent.messages = data["messages"]

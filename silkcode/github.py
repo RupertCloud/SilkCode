@@ -242,6 +242,12 @@ def _client_for(ws: Workspace) -> tuple[GitHubClient, str, str]:
 
 def github_create_pr(ws: Workspace, title: str, body: str = "", base: str = "main",
                      head: str | None = None, draft: bool = True) -> str:
+    from .tools.git import get_attribution
+    info = get_attribution()
+    if info:
+        body = (body.rstrip() + "\n\n---\n"
+                f"_Co-authored with [Silk Code](https://github.com/RupertCloud/SilkCode) "
+                f"({info['model']})_").lstrip("\n")
     client, owner, repo = _client_for(ws)
     if not head:
         # --show-current also works on a branch with no commits yet
