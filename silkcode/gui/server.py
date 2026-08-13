@@ -247,11 +247,13 @@ class GuiState:
     # ---- GitHub authorization (SRS sections 30-31, 60) ---------------------
 
     def github_status(self) -> dict:
-        from ..github import DEFAULT_API_URL, GitHubClient, detect_repo, token_from_env
+        from ..github import DEFAULT_API_URL, GitHubClient, detect_repo, get_token
+        from ..github_oauth import client_id_from
         github_cfg = self.config.data.get("github") or {}
         status: dict = {
             "token_env": github_cfg.get("token_env", "GITHUB_TOKEN"),
             "token_stored": bool(github_cfg.get("token")),
+            "device_flow_available": bool(client_id_from(self.config.data)),
             "connected": False,
             "login": None,
             "repo": None,
@@ -262,7 +264,7 @@ class GuiState:
             status["repo"] = f"{owner}/{repo}"
         except ToolError:
             pass
-        token = token_from_env(self.config.data)
+        token = get_token(self.config)
         if token:
             try:
                 client = GitHubClient(token, github_cfg.get("api_url", DEFAULT_API_URL))
@@ -283,6 +285,31 @@ class GuiState:
         github_cfg["token"] = token
         self.config.save()
         return self.github_status()
+
+    def github_device_start(self) -> dict:
+        """Begin device-flow sign-in; authorization completes in a background
+        thread and a 'github_connected' event is broadcast on success."""
+        from ..github_oauth import DeviceFlow, DeviceFlowError, client_id_from, store_token
+        client_id = client_id_from(self.config.data)
+        if not client_id:
+            raise ConfigError(
+                "Sign in with GitHub is not set up: the Silk Code GitHub App client id is "
+                "missing. Maintainers: see docs/GITHUB_APP.md. You can also paste a token below."
+            )
+        flow = DeviceFlow(client_id)
+        info = flow.start()
+
+        def wait_for_authorization():
+            try:
+                data = flow.poll(info["device_code"], int(info.get("interval", 5)),
+                                 int(info.get("expires_in", 900)))
+                store_token(self.config, data)
+                self.broadcast({"type": "github_connected"})
+            except DeviceFlowError as exc:
+                self.broadcast({"type": "github_error", "message": str(exc)})
+
+        threading.Thread(target=wait_for_authorization, daemon=True).start()
+        return {"user_code": info["user_code"], "verification_uri": info["verification_uri"]}
 
     def set_grants(self, grants: list) -> dict:
         from ..permissions import GRANTABLE
@@ -461,6 +488,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             elif route == "/api/github/token":
                 self._json(st.set_github_token(str(body.get("token", ""))))
+            elif route == "/api/github/device":
+                self._json(st.github_device_start())
             elif route == "/api/github/grants":
                 grants = body.get("grants")
                 if not isinstance(grants, list):

@@ -179,6 +179,50 @@ def test_gui_github_status_and_grants(gui, monkeypatch):
     assert bad.status_code == 400
 
 
+def test_gui_device_flow_signin(gui, monkeypatch):
+    base, state, _ws = gui
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    # not configured: endpoint explains, status reports unavailable
+    status = httpx.get(f"{base}/api/github/status").json()
+    assert status["device_flow_available"] is False
+    resp = httpx.post(f"{base}/api/github/device", json={})
+    assert resp.status_code == 400
+    assert "client id" in resp.json()["error"]
+
+    # configure a client id and mock GitHub's device endpoints
+    state.config.data.setdefault("github", {})["client_id"] = "cid"
+
+    import silkcode.github_oauth as gho
+    def handler(request):
+        if request.url.path == "/login/device/code":
+            return httpx.Response(200, json={"device_code": "d1", "user_code": "WXYZ-9876",
+                                             "verification_uri": "https://github.com/login/device",
+                                             "interval": 1, "expires_in": 900})
+        return httpx.Response(200, json={"access_token": "ghu_gui", "refresh_token": "ghr_gui",
+                                         "expires_in": 28800})
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(gho, "_make_client", lambda: httpx.Client(transport=transport))
+
+    events = state.subscribe()
+    resp = httpx.post(f"{base}/api/github/device", json={})
+    assert resp.status_code == 200
+    assert resp.json()["user_code"] == "WXYZ-9876"
+
+    # background poll completes and broadcasts success
+    assert wait_until(lambda: state.config.data.get("github", {}).get("token") == "ghu_gui")
+    import queue as _queue
+    seen = []
+    try:
+        while True:
+            seen.append(events.get(timeout=1))
+            if any(e.get("type") == "github_connected" for e in seen):
+                break
+    except _queue.Empty:
+        pass
+    assert any(e.get("type") == "github_connected" for e in seen)
+
+
 def test_gui_permission_flow(gui):
     base, state, _ws = gui
     decisions = {}

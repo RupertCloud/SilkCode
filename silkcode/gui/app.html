@@ -127,8 +127,10 @@
   <div class="modal">
     <h3>GitHub authorization</h3>
     <div class="prompt" id="gh-status">checking…</div>
-    <label>Personal access token (repo scope) — stored in your Silk Code config</label>
-    <input id="gh-token" type="password" placeholder="ghp_… (leave empty to keep current)">
+    <button class="primary" id="gh-signin" style="width:100%;margin:2px 0 6px">Sign in with GitHub</button>
+    <div class="prompt" id="gh-device" style="display:none"></div>
+    <label>Or paste a personal access token — stored in your Silk Code config</label>
+    <input id="gh-token" type="password" placeholder="github_pat_… (leave empty to keep current)">
     <label style="margin-top:12px">Authorize the agent for this session (no per-action prompts):</label>
     <div style="display:flex;gap:14px;margin:6px 0 2px">
       <label><input type="checkbox" id="grant-pull"> pull</label>
@@ -244,6 +246,14 @@ function handleEvent(ev) {
   }
   else if (ev.type === "permission_request") { permQueue.push(ev); showNextPermission(); }
   else if (ev.type === "reload") { init(); }
+  else if (ev.type === "github_connected") {
+    $("gh-device").style.display = "none";
+    refreshGithubStatus().catch(() => {});
+  }
+  else if (ev.type === "github_error") {
+    $("gh-device").style.display = "";
+    $("gh-device").textContent = "Sign-in failed: " + ev.message;
+  }
 }
 
 // ---- permissions ----------------------------------------------------------
@@ -393,6 +403,11 @@ async function refreshGithubStatus() {
   $("gh-status").textContent = bits.join("\n");
   for (const g of GRANTS) $("grant-" + g).checked = s.grants.includes(g);
   $("github-btn").textContent = s.connected ? `GitHub ✓ ${s.login}` : "GitHub";
+  $("gh-signin").style.display = s.connected ? "none" : "";
+  $("gh-signin").disabled = !s.device_flow_available;
+  $("gh-signin").textContent = s.device_flow_available
+    ? "Sign in with GitHub"
+    : "Sign in with GitHub (app not registered — see docs/GITHUB_APP.md)";
 }
 
 $("github-btn").onclick = async () => {
@@ -400,6 +415,17 @@ $("github-btn").onclick = async () => {
   refreshGithubStatus().catch(() => { $("gh-status").textContent = "status unavailable"; });
 };
 $("gh-cancel").onclick = () => $("github-modal").classList.remove("open");
+$("gh-signin").onclick = async () => {
+  try {
+    const info = await api("/api/github/device", {});
+    const box = $("gh-device");
+    box.style.display = "";
+    box.innerHTML = `1. Open <a href="${esc(info.verification_uri)}" target="_blank" style="color:var(--accent)">${esc(info.verification_uri)}</a><br>` +
+                    `2. Enter code: <b style="font-size:16px;letter-spacing:2px">${esc(info.user_code)}</b><br>` +
+                    `3. Click Authorize — this page updates automatically`;
+    window.open(info.verification_uri, "_blank");
+  } catch (err) { alert(err.message); }
+};
 $("gh-save").onclick = async () => {
   try {
     const token = $("gh-token").value.trim();

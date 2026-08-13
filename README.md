@@ -134,11 +134,22 @@ resume any session from the GUI's session picker or with `silkcode resume <id>`
 
 ## GitHub
 
-Connect once, then the agent can work with your GitHub project:
+Connect once, then the agent can work with your GitHub project. The preferred way is
+**Sign in with GitHub** — install the Silk Code app, approve in the browser, no tokens:
 
 ```bash
-export GITHUB_TOKEN=ghp_...        # personal access token with repo scope
-silkcode connect github            # verifies the token and detects owner/repo
+silkcode connect github            # shows a code, opens github.com/login/device
+```
+
+(or click **Sign in with GitHub** on the GUI's authorization page). Tokens issued this
+way are short-lived, scoped to the repos where the app is installed, and refreshed
+automatically. This requires the Silk Code GitHub App's client id — a one-time
+maintainer registration, see [docs/GITHUB_APP.md](docs/GITHUB_APP.md); until then, or
+if you prefer, a personal access token works exactly as before:
+
+```bash
+export GITHUB_TOKEN=github_pat_...  # fine-grained token: Contents/PRs/Issues rw
+silkcode connect github             # verifies the token and detects owner/repo
 ```
 
 The repository is auto-detected from the workspace's `origin` remote. Agent tools:

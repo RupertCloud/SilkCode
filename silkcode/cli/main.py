@@ -288,10 +288,12 @@ def cmd_connect(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="silkcode connect")
     parser.add_argument("service", choices=["github"])
     parser.add_argument("path", nargs="?", default=".", help="workspace to check the git remote in")
-    parser.add_argument("--token-env", help="environment variable holding the token (default GITHUB_TOKEN)")
+    parser.add_argument("--token-env", help="environment variable holding a token (default GITHUB_TOKEN)")
+    parser.add_argument("--client-id", help="GitHub App client id for device-flow sign-in (saved to config)")
     args = parser.parse_args(argv)
 
-    from ..github import DEFAULT_API_URL, GitHubClient, detect_repo, token_from_env
+    from ..github import DEFAULT_API_URL, GitHubClient, detect_repo, get_token
+    from ..github_oauth import DeviceFlow, DeviceFlowError, client_id_from, store_token
     from ..workspace import ToolError, Workspace
 
     config = Config.load()
@@ -299,17 +301,47 @@ def cmd_connect(argv: list[str]) -> int:
         config.data.setdefault("github", {})["token_env"] = args.token_env
         config.save()
         print(f"GitHub token will be read from ${args.token_env}")
+    if args.client_id:
+        config.data.setdefault("github", {})["client_id"] = args.client_id
+        config.save()
+        print("GitHub App client id saved.")
 
-    token = token_from_env(config.data)
-    env = (config.data.get("github") or {}).get("token_env", "GITHUB_TOKEN")
+    token = get_token(config)
     if not token:
-        print(f"Not connected: ${env} is not set.")
-        print("Create a GitHub personal access token (repo scope) at https://github.com/settings/tokens")
-        print(f"then: export {env}=ghp_...   and run 'silkcode connect github' again.")
-        print("\nAlternative: use GitHub's MCP server instead:")
-        print("  silkcode mcp add github --command 'npx -y @modelcontextprotocol/server-github' \\")
-        print(f"      --env GITHUB_PERSONAL_ACCESS_TOKEN=$" + env)
-        return 1
+        client_id = client_id_from(config.data)
+        if client_id:
+            # Sign in with GitHub (device flow) - no tokens to create or paste.
+            try:
+                flow = DeviceFlow(client_id)
+                info = flow.start()
+                print(f"\nSign in with GitHub:")
+                print(f"  1. Open {info['verification_uri']}")
+                print(f"  2. Enter code: {info['user_code']}")
+                print("  3. Click Authorize\n")
+                try:
+                    import webbrowser
+                    webbrowser.open(info["verification_uri"])
+                except Exception:
+                    pass
+                print("Waiting for authorization ...")
+                data = flow.poll(info["device_code"], int(info.get("interval", 5)),
+                                 int(info.get("expires_in", 900)))
+                store_token(config, data)
+                token = data["access_token"]
+                print("Authorized.")
+            except DeviceFlowError as exc:
+                print(f"Sign-in failed: {exc}", file=sys.stderr)
+                return 1
+        else:
+            print("Not connected. Two options:\n")
+            print("A) Sign in with GitHub (recommended, no tokens):")
+            print("   The Silk Code GitHub App needs a client id. Maintainers: register it once")
+            print("   (see docs/GITHUB_APP.md), then everyone can just run 'silkcode connect github'.")
+            print("   If you have the client id: silkcode connect github --client-id <id>\n")
+            print("B) Personal access token:")
+            print("   Create one at https://github.com/settings/personal-access-tokens (Contents,")
+            print("   Pull requests, Issues: read/write), then: export GITHUB_TOKEN=... and rerun.")
+            return 1
 
     api_url = (config.data.get("github") or {}).get("api_url", DEFAULT_API_URL)
     try:

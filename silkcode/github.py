@@ -33,6 +33,33 @@ def token_from_env(config_data: dict | None = None) -> str | None:
     return os.environ.get(env) or github_cfg.get("token")
 
 
+def get_token(config) -> str | None:
+    """Resolve the GitHub token, refreshing an expired device-flow token
+    in place when a refresh token and client id are available."""
+    import time as _time
+    github_cfg = config.data.get("github") or {}
+    env_token = os.environ.get(github_cfg.get("token_env", "GITHUB_TOKEN"))
+    if env_token:
+        return env_token
+    token = github_cfg.get("token")
+    if not token:
+        return None
+    expires_at = github_cfg.get("token_expires_at")
+    if expires_at and _time.time() > expires_at:
+        from .github_oauth import DeviceFlow, DeviceFlowError, client_id_from, store_token
+        refresh_token = github_cfg.get("refresh_token")
+        client_id = client_id_from(config.data)
+        if refresh_token and client_id:
+            try:
+                data = DeviceFlow(client_id).refresh(refresh_token)
+                store_token(config, data)
+                return data["access_token"]
+            except DeviceFlowError:
+                return None
+        return None
+    return token
+
+
 def git_credential_env() -> dict | None:
     """Environment that lets git push/pull authenticate to github.com over
     HTTPS with the configured token. Returns None when no token is set (git
@@ -40,7 +67,7 @@ def git_credential_env() -> dict | None:
     from .config import Config, config_dir
 
     config = Config.load()
-    token = token_from_env(config.data)
+    token = get_token(config)
     if not token:
         return None
     askpass = config_dir() / "git-askpass.sh"
@@ -202,11 +229,10 @@ class GitHubClient:
 def _client_for(ws: Workspace) -> tuple[GitHubClient, str, str]:
     from .config import Config
     config = Config.load()
-    token = token_from_env(config.data)
+    token = get_token(config)
     if not token:
-        env = (config.data.get("github") or {}).get("token_env", "GITHUB_TOKEN")
-        raise ToolError(f"no GitHub token: set ${env} (a personal access token) and retry, "
-                        "or run 'silkcode connect github' to check your setup")
+        raise ToolError("not connected to GitHub: run 'silkcode connect github' "
+                        "(sign in with GitHub) or set $GITHUB_TOKEN")
     api_url = (config.data.get("github") or {}).get("api_url", DEFAULT_API_URL)
     owner, repo = detect_repo(ws)
     return GitHubClient(token, api_url), owner, repo
