@@ -80,6 +80,7 @@
   <span id="status-dot" title="agent status"></span>
   <span class="spacer"></span>
   <label>Session <select id="session-select"></select></label>
+  <button id="new-session" title="Start a new conversation">＋</button>
   <label>Model <select id="model-select"></select></label>
   <button id="add-model">+ Add model</button>
   <button id="github-btn">GitHub</button>
@@ -177,7 +178,8 @@ const api = async (path, body) => {
 };
 
 let streamEl = null;          // assistant bubble currently being streamed into
-const permQueue = [];         // pending permission requests
+let currentSessionId = null;  // the session shown in this tab
+const permQueue = [];         // pending permission requests (all sessions)
 
 function addMsg(kind, text) {
   const div = document.createElement("div");
@@ -223,6 +225,19 @@ function renderEntry(e) {
 }
 
 function handleEvent(ev) {
+  // permission requests must be answerable from any tab; everything else is
+  // filtered to the session this tab is showing
+  if (ev.type === "permission_request") {
+    if (ev.session && ev.session !== currentSessionId) {
+      ev.prompt = `[session #${ev.session}] ` + ev.prompt;
+    }
+    permQueue.push(ev); showNextPermission();
+    return;
+  }
+  if (ev.session !== undefined && ev.session !== null && ev.session !== currentSessionId) {
+    if (ev.type === "turn_done" || ev.type === "user") refreshSessionList();
+    return;
+  }
   if (ev.type === "user") { streamEl = null; addMsg("user", ev.text); setRunning(true); }
   else if (ev.type === "text") {
     if (!streamEl) streamEl = addMsg("assistant", "");
@@ -245,8 +260,8 @@ function handleEvent(ev) {
   else if (ev.type === "error") { streamEl = null; addMsg("error", ev.message); }
   else if (ev.type === "turn_done") {
     streamEl = null; setRunning(false); renderUsage(ev.usage); loadDiff(); loadTree();
+    refreshSessionList();
   }
-  else if (ev.type === "permission_request") { permQueue.push(ev); showNextPermission(); }
   else if (ev.type === "reload") { init(); }
   else if (ev.type === "github_connected") {
     $("gh-device").style.display = "none";
@@ -357,17 +372,16 @@ $("model-select").onchange = async (e) => {
     if (!spec) return init();
   }
   try {
-    const state = await api("/api/model", {spec});
+    const state = await api("/api/model", {spec, session_id: currentSessionId});
     $("session").textContent = "session #" + state.session_id;
     await loadProviders(state.spec);
   } catch (err) { alert(err.message); init(); }
 };
 
 $("mode-select").onchange = (e) => api("/api/mode", {mode: e.target.value}).catch(err => alert(err.message));
-$("stop").onclick = () => api("/api/stop", {}).catch(() => {});
+$("stop").onclick = () => api("/api/stop", {session_id: currentSessionId}).catch(() => {});
 
-async function loadSessions(currentId) {
-  const sessions = await api("/api/sessions");
+function renderSessions(sessions, currentId) {
   const sel = $("session-select");
   sel.innerHTML = "";
   if (!sessions.some(s => s.id === currentId)) {
@@ -378,19 +392,38 @@ async function loadSessions(currentId) {
   for (const s of sessions) {
     const opt = document.createElement("option");
     opt.value = s.id;
-    opt.textContent = `#${s.id} ${s.title || "(untitled)"}`.slice(0, 48);
+    const mark = s.running ? "⏳ " : (s.open ? "● " : "");
+    opt.textContent = (`#${s.id} ${mark}${s.title || "(new)"}`).slice(0, 48);
     sel.appendChild(opt);
   }
   sel.value = currentId;
 }
 
+async function refreshSessionList() {
+  try {
+    const state = await api("/api/state?session=" + currentSessionId);
+    renderSessions(state.sessions, currentSessionId);
+  } catch (e) {}
+}
+
 $("session-select").onchange = async (e) => {
-  try { await api("/api/session", {id: parseInt(e.target.value, 10)}); }
-  catch (err) { alert(err.message); init(); }
+  try {
+    const state = await api("/api/session", {id: parseInt(e.target.value, 10)});
+    currentSessionId = state.session_id;
+    init();
+  } catch (err) { alert(err.message); init(); }
+};
+
+$("new-session").onclick = async () => {
+  try {
+    const state = await api("/api/session/new", {});
+    currentSessionId = state.session_id;
+    init();
+  } catch (err) { alert(err.message); }
 };
 $("revert").onclick = async () => {
   try {
-    const data = await api("/api/revert", {});
+    const data = await api("/api/revert", {session_id: currentSessionId});
     addMsg("tool", data.restored.length ? "↩ reverted:\n" + data.restored.join("\n") : "nothing to revert");
     loadDiff(); loadTree();
   } catch (err) { alert(err.message); }
@@ -468,7 +501,8 @@ async function send() {
   const text = $("input").value.trim();
   if (!text) return;
   $("input").value = "";
-  try { await api("/api/message", {text}); } catch (err) { addMsg("error", err.message); }
+  try { await api("/api/message", {text, session_id: currentSessionId}); }
+  catch (err) { addMsg("error", err.message); }
 }
 $("send").onclick = send;
 $("input").addEventListener("keydown", (e) => {
@@ -478,7 +512,8 @@ $("input").addEventListener("keydown", (e) => {
 // ---- init --------------------------------------------------------------------
 
 async function init() {
-  const state = await api("/api/state");
+  const state = await api("/api/state" + (currentSessionId ? "?session=" + currentSessionId : ""));
+  currentSessionId = state.session_id;
   $("cwd").textContent = state.cwd;
   $("mode-select").value = state.mode;
   $("auto-push").checked = !!state.auto_push;
@@ -486,9 +521,9 @@ async function init() {
   setRunning(state.running);
   renderUsage(state.usage);
   await loadProviders(state.spec);
-  await loadSessions(state.session_id);
+  renderSessions(state.sessions, state.session_id);
   refreshGithubStatus().catch(() => {});
-  const transcript = await api("/api/transcript");
+  const transcript = await api("/api/transcript?session=" + state.session_id);
   $("messages").innerHTML = ""; $("timeline").innerHTML = "";
   transcript.forEach(renderEntry);
   loadTree(); loadDiff();

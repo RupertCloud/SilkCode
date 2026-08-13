@@ -179,6 +179,44 @@ def test_gui_github_status_and_grants(gui, monkeypatch):
     assert bad.status_code == 400
 
 
+def test_gui_multiple_sessions(gui, stub_server, monkeypatch):
+    base, state, ws = gui
+    first_id = state.default_session_id
+
+    # create a second session: fresh conversation, listed as open
+    resp = httpx.post(f"{base}/api/session/new", json={})
+    assert resp.status_code == 200
+    second_id = resp.json()["session_id"]
+    assert second_id != first_id
+    sessions = {s["id"]: s for s in resp.json()["sessions"]}
+    assert sessions[first_id]["open"] and sessions[second_id]["open"]
+
+    # each session has its own transcript and agent
+    assert httpx.get(f"{base}/api/transcript", params={"session": second_id}).json() == []
+    assert state.get_session(first_id).agent is not state.get_session(second_id).agent
+
+    # a turn in session 1 doesn't touch session 2 (stub scripted for one turn)
+    resp = httpx.post(f"{base}/api/message", json={"text": "create hello.txt", "session_id": first_id})
+    assert resp.status_code == 200
+    assert wait_until(lambda: not state.get_session(first_id).running and (ws / "hello.txt").exists())
+    assert len(httpx.get(f"{base}/api/transcript", params={"session": first_id}).json()) >= 2
+    assert httpx.get(f"{base}/api/transcript", params={"session": second_id}).json() == []
+
+    # per-session model switching
+    httpx.post(f"{base}/api/providers", json={"name": "alt", "type": "openai_compat",
+                                              "base_url": "https://alt.example/v1", "default_model": "m2"})
+    resp = httpx.post(f"{base}/api/model", json={"spec": "alt", "session_id": second_id})
+    assert resp.json()["model"] == "alt/m2"
+    assert httpx.get(f"{base}/api/state", params={"session": first_id}).json()["model"] == "stub/stub-model"
+
+    # switching back to session 1 restores it as the default
+    resp = httpx.post(f"{base}/api/session", json={"id": first_id})
+    assert resp.json()["session_id"] == first_id
+
+    # unknown session -> 404
+    assert httpx.get(f"{base}/api/state", params={"session": 99999}).status_code == 404
+
+
 def test_gui_push_and_autopush_endpoints(gui, tmp_path):
     base, state, ws = gui
     import subprocess

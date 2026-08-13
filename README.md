@@ -115,9 +115,14 @@ REPL commands: `/model`, `/models`, `/mode`, `/diff`, `/usage`, `/revert`, `/cle
 `silkcode gui` starts the Silk Code daemon and opens a browser app with the project
 explorer, AI conversation, agent activity timeline, git diff / file viewer, model and
 mode selectors, provider onboarding, checkpoint revert, a stop button for running
-turns, and live permission prompts. Sessions are saved to the same store as the CLI —
-resume any session from the GUI's session picker or with `silkcode resume <id>`
-(SRS section 47).
+turns, and live permission prompts.
+
+**Multiple sessions:** open as many conversations as you like (the ＋ button) and
+switch between them with the session picker — each has its own agent, model choice,
+transcript, and checkpoints, and turns can run concurrently (⏳ marks a busy session;
+permission prompts from any session reach you wherever you are). Sessions are saved
+to the same store as the CLI — resume any of them from the picker or with
+`silkcode resume <id>` (SRS section 47).
 
 ## Project instructions, memory, and skills
 
