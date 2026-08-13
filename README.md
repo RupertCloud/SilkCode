@@ -159,6 +159,20 @@ The repository is auto-detected from the workspace's `origin` remote. Agent tool
 keys). GitHub Enterprise: set `github.api_url` in the config. Prefer MCP?
 `silkcode connect github` prints the equivalent `silkcode mcp add` command.
 
+### Pushing your work
+
+After a session (or any turn), push manually — `/push` in the CLI, the **⇧ Push**
+button in the GUI — or turn on **auto-push** and Silk Code pushes any unpushed
+commits after each turn automatically:
+
+```bash
+silkcode --auto-push ~/my-project        # CLI (implies the push grant)
+silkcode gui --auto-push ~/my-project    # GUI; also a checkbox on the GitHub page
+```
+
+In the CLI, `/autopush on|off` toggles it mid-session. Auto-push only fires when the
+branch actually has commits the remote doesn't.
+
 ### Authorization
 
 The GUI has a **GitHub** authorization page: paste a token (verified before it is

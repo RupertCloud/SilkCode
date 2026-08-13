@@ -58,6 +58,9 @@ def _repl_parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument("--sandbox", action="store_true",
                         help="run commands in the configured remote sandbox "
                              "(silkcode sandbox connect <url>)")
+    parser.add_argument("--auto-push", action="store_true",
+                        help="automatically push unpushed commits after each turn "
+                             "(implies the push grant)")
     return parser
 
 
@@ -79,7 +82,8 @@ def cmd_repl(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     from .repl import run_repl
     return run_repl(args.path, args.model, args.mode, prompt=args.prompt,
-                    grants=_parse_grants(args.allow), use_sandbox=args.sandbox)
+                    grants=_parse_grants(args.allow), use_sandbox=args.sandbox,
+                    auto_push=args.auto_push)
 
 
 REVIEW_PROMPT = (
@@ -103,7 +107,8 @@ def cmd_gui(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     from ..gui.server import run_gui
     return run_gui(args.path, args.model, args.mode, host=args.host, port=args.port,
-                   grants=_parse_grants(args.allow), use_sandbox=args.sandbox)
+                   grants=_parse_grants(args.allow), use_sandbox=args.sandbox,
+                   auto_push=args.auto_push)
 
 
 def cmd_models(argv: list[str]) -> int:

@@ -74,6 +74,41 @@ def test_git_push_and_pull_roundtrip(tmp_path, monkeypatch):
     assert (work / "a.txt").read_text() == "v2"
 
 
+def test_push_if_needed(tmp_path, monkeypatch):
+    from silkcode.tools.git import push_if_needed
+    monkeypatch.setenv("SILKCODE_HOME", str(tmp_path / "home"))
+
+    # not a git repo -> nothing to do
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert push_if_needed(Workspace(plain)) is None
+
+    # repo with no remote -> nothing to do
+    lonely = tmp_path / "lonely"
+    lonely.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=lonely, check=True)
+    subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=lonely, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=lonely, check=True)
+    (lonely / "a.txt").write_text("x")
+    git_commit(Workspace(lonely), "init")
+    assert push_if_needed(Workspace(lonely)) is None
+
+    # repo with a remote and unpushed commits -> pushes
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=lonely, check=True)
+    out = push_if_needed(Workspace(lonely))
+    assert out is not None and out.startswith("Pushed main")
+
+    # up to date -> nothing to do
+    assert push_if_needed(Workspace(lonely)) is None
+
+    # new commit -> pushes again
+    (lonely / "b.txt").write_text("y")
+    git_commit(Workspace(lonely), "more")
+    assert push_if_needed(Workspace(lonely)).startswith("Pushed main")
+
+
 def test_git_error_is_single_line(tmp_path):
     out = git_diff(Workspace(tmp_path))  # not a git repository
     assert out.startswith("git error")

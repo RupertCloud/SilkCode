@@ -87,6 +87,7 @@
     <option value="ask">ask</option><option value="edit">edit</option><option value="agent">agent</option>
   </select></label>
   <button id="revert" title="Undo the last turn's file changes">↩ Revert</button>
+  <button id="push-btn" title="Push the current branch to the remote">⇧ Push</button>
   <span class="usage" id="usage"></span>
   <span class="usage" id="session"></span>
 </header>
@@ -138,6 +139,7 @@
       <label><input type="checkbox" id="grant-push"> push</label>
       <label><input type="checkbox" id="grant-merge"> merge</label>
     </div>
+    <label style="margin-top:8px"><input type="checkbox" id="auto-push"> Auto-push after each turn (implies the push grant)</label>
     <div style="color:var(--dim);font-size:12px">Anything not checked keeps its normal approval prompt. Grants reset when the session ends.</div>
     <div class="row">
       <button id="gh-cancel">Close</button>
@@ -253,6 +255,9 @@ function handleEvent(ev) {
   else if (ev.type === "github_error") {
     $("gh-device").style.display = "";
     $("gh-device").textContent = "Sign-in failed: " + ev.message;
+  }
+  else if (ev.type === "push_result") {
+    addMsg("tool", "⇧ " + ev.message.split("\n")[0]);
   }
 }
 
@@ -431,7 +436,15 @@ $("gh-save").onclick = async () => {
     const token = $("gh-token").value.trim();
     if (token) { await api("/api/github/token", {token}); $("gh-token").value = ""; }
     await api("/api/github/grants", {grants: GRANTS.filter(g => $("grant-" + g).checked)});
+    await api("/api/autopush", {enabled: $("auto-push").checked});
     await refreshGithubStatus();
+  } catch (err) { alert(err.message); }
+};
+
+$("push-btn").onclick = async () => {
+  try {
+    const data = await api("/api/push", {});
+    addMsg("tool", "⇧ " + data.result.split("\n")[0]);
   } catch (err) { alert(err.message); }
 };
 
@@ -468,6 +481,7 @@ async function init() {
   const state = await api("/api/state");
   $("cwd").textContent = state.cwd;
   $("mode-select").value = state.mode;
+  $("auto-push").checked = !!state.auto_push;
   $("session").textContent = "session #" + state.session_id;
   setRunning(state.running);
   renderUsage(state.usage);

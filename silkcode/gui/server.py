@@ -32,7 +32,11 @@ PERMISSION_TIMEOUT = 600  # seconds; deny if the browser never answers
 
 class GuiState:
     def __init__(self, path: str, model_spec: str | None, mode: str,
-                 grants: list[str] | None = None, use_sandbox: bool = False):
+                 grants: list[str] | None = None, use_sandbox: bool = False,
+                 auto_push: bool = False):
+        self.auto_push = auto_push
+        if auto_push:
+            grants = list(grants or []) + ["push"]
         self.workspace = Workspace(path)
         self.config = Config.load()
         if use_sandbox:
@@ -150,6 +154,15 @@ class GuiState:
             self.transcript.append({"kind": "error", "text": str(exc)})
         finally:
             self._flush_text()
+            if self.auto_push:
+                from ..tools.git import push_if_needed
+                try:
+                    pushed = push_if_needed(self.workspace)
+                except Exception as exc:
+                    pushed = f"auto-push failed: {exc}"
+                if pushed:
+                    self.transcript.append({"kind": "tool", "name": "auto-push", "args": pushed})
+                    self.broadcast({"type": "push_result", "message": pushed})
             with self.lock:
                 self.running = False
             self._save_session()
@@ -179,6 +192,7 @@ class GuiState:
             "cwd": str(self.workspace.root),
             "session_id": self.session["id"],
             "running": self.running,
+            "auto_push": self.auto_push,
             "usage": self.usage_dict(),
         }
 
@@ -480,6 +494,16 @@ class GuiHandler(BaseHTTPRequestHandler):
                 if st.running:
                     return self._error("cannot revert while the agent is running", 409)
                 self._json({"restored": st.agent.checkpoints.revert_last()})
+            elif route == "/api/push":
+                if st.running:
+                    return self._error("cannot push while the agent is running", 409)
+                from ..tools.git import git_push
+                self._json({"result": git_push(st.workspace)})
+            elif route == "/api/autopush":
+                st.auto_push = bool(body.get("enabled"))
+                if st.auto_push:
+                    st.permissions.grants.add("push")
+                self._json(st.state())
             elif route == "/api/providers":
                 st.add_provider(body)
                 self._json(st.providers_info())
@@ -511,9 +535,10 @@ class GuiHandler(BaseHTTPRequestHandler):
 
 def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1",
             port: int = 8377, grants: list[str] | None = None,
-            use_sandbox: bool = False) -> int:
+            use_sandbox: bool = False, auto_push: bool = False) -> int:
     try:
-        state = GuiState(path, model_spec, mode, grants=grants, use_sandbox=use_sandbox)
+        state = GuiState(path, model_spec, mode, grants=grants, use_sandbox=use_sandbox,
+                         auto_push=auto_push)
     except (ToolError, ConfigError) as exc:
         print(f"error: {exc}")
         return 1

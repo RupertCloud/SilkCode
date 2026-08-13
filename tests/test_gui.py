@@ -179,6 +179,29 @@ def test_gui_github_status_and_grants(gui, monkeypatch):
     assert bad.status_code == 400
 
 
+def test_gui_push_and_autopush_endpoints(gui, tmp_path):
+    base, state, ws = gui
+    import subprocess
+    origin = tmp_path / "push-origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=ws, check=True)
+    subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=ws, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=ws, check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(origin)], cwd=ws, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=ws, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=ws, check=True)
+
+    resp = httpx.post(f"{base}/api/push", json={})
+    assert resp.status_code == 200
+    assert resp.json()["result"].startswith("Pushed main")
+
+    assert httpx.get(f"{base}/api/state").json()["auto_push"] is False
+    resp = httpx.post(f"{base}/api/autopush", json={"enabled": True})
+    assert resp.status_code == 200
+    assert resp.json()["auto_push"] is True
+    assert "push" in state.permissions.grants
+
+
 def test_gui_device_flow_signin(gui, monkeypatch):
     base, state, _ws = gui
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
