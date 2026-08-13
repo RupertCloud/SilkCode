@@ -101,6 +101,14 @@ class AgentSession:
             self.transcript.append({"kind": "assistant", "text": "".join(self._text_buffer)})
             self._text_buffer = []
 
+    def transcript_snapshot(self) -> list[dict]:
+        """Transcript including any assistant text still streaming, so
+        switching to a running session shows its partial output."""
+        snapshot = list(self.transcript)
+        if self._text_buffer:
+            snapshot.append({"kind": "assistant", "text": "".join(self._text_buffer)})
+        return snapshot
+
     def usage_dict(self) -> dict:
         return {
             "prompt_tokens": self.agent.usage.prompt_tokens,
@@ -313,8 +321,10 @@ class GuiState:
     # ---- queries / mutations ----------------------------------------------
 
     def state(self, session_id: int | None = None) -> dict:
+        from .. import __version__
         session = self.get_session(session_id)
         return {
+            "version": __version__,
             "model": f"{session.provider_name}/{session.model}",
             "spec": session.spec,
             "mode": session.permissions.mode,
@@ -528,13 +538,14 @@ class GuiHandler(BaseHTTPRequestHandler):
             if route == "/":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")  # never serve a stale UI
                 self.send_header("Content-Length", str(len(self.html)))
                 self.end_headers()
                 self.wfile.write(self.html)
             elif route == "/api/state":
                 self._json(st.state(sid))
             elif route == "/api/transcript":
-                self._json(st.get_session(sid).transcript)
+                self._json(st.get_session(sid).transcript_snapshot())
             elif route == "/api/tree":
                 self._json(st.tree())
             elif route == "/api/file":
@@ -669,7 +680,13 @@ def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1
         return 1
     GuiHandler.state = state
     GuiHandler.html = (Path(__file__).parent / "app.html").read_bytes()
-    server = ThreadingHTTPServer((host, port), GuiHandler)
+    try:
+        server = ThreadingHTTPServer((host, port), GuiHandler)
+    except OSError as exc:
+        print(f"error: cannot listen on {host}:{port} ({exc}).")
+        print("An older Silk Code GUI may still be running - stop it (Ctrl+C in its")
+        print(f"terminal) or start this one on another port: silkcode gui --port {port + 1}")
+        return 1
     url = f"http://{host}:{port}"
     print(f"Silk Code GUI: {url}")
     print(f"workspace: {state.workspace.root}")
