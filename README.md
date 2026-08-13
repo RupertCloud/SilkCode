@@ -120,8 +120,15 @@ silkcode connect github                               # set up GitHub access
 silkcode config                                       # show configuration
 ```
 
-REPL commands: `/model`, `/models`, `/mode`, `/diff`, `/usage`, `/revert`, `/clear`,
-`/sessions`, `/help`, `/exit`.
+REPL commands: `/model`, `/models`, `/mode`, `/project`, `/diff`, `/usage`, `/revert`,
+`/clear`, `/sessions`, `/help`, `/exit`.
+
+**Open a different project mid-session:** `/project` prompts you to pick a project for
+the session — either a GitHub repository you have access to (cloned for you into
+`~/.silkcode/projects/`) or a directory you type in. Passing a spec directly skips the
+prompt: `/project /path/to/other` or `/project github:acme/widget`. The session's files,
+git status/diff, and commands then refer to that project (SRS: new sessions ask for a
+project).
 
 ## GUI
 
@@ -132,10 +139,13 @@ turns, and live permission prompts.
 
 **Multiple sessions:** open as many conversations as you like (the ＋ button) and
 switch between them with the session picker — each has its own agent, model choice,
-transcript, and checkpoints, and turns can run concurrently (⏳ marks a busy session;
-permission prompts from any session reach you wherever you are). Sessions are saved
-to the same store as the CLI — resume any of them from the picker or with
-`silkcode resume <id>` (SRS section 47).
+workspace (project), transcript, and checkpoints, and turns can run concurrently
+(⏳ marks a busy session; permission prompts from any session reach you wherever you
+are). The ＋ button first asks which **project** to run the new session on: pick a
+GitHub repository (cloned for you into `~/.silkcode/projects/`) or type a local
+directory, so different sessions can work on different codebases side by side.
+Sessions are saved to the same store as the CLI — resume any of them from the picker
+or with `silkcode resume <id>` (SRS section 47).
 
 ## Project instructions, memory, and skills
 

@@ -135,6 +135,39 @@ class GitHubClient:
         data = self._request("GET", "/user")
         return data.get("login", "?")
 
+    def list_repositories(self) -> list[dict]:
+        """Repositories the authenticated user can read, most recently pushed first.
+
+        Complements the auto-detected 'origin' remote so the user can open a
+        different project in a new session (SRS: new sessions ask for a project).
+        """
+        user = self.whoami()
+        repos: list[dict] = []
+        for owner in (user, None):  # first repos owned by the user, then others (orgs/forks)
+            try:
+                data = self._request(
+                    "GET", "/user/repos",
+                    params={"per_page": 50, "sort": "pushed", "visibility": "all"},
+                )
+            except ToolError:
+                continue
+            if not isinstance(data, list):
+                continue
+            for r in data:
+                full = r.get("full_name", "")
+                if not full:
+                    continue
+                repos.append({"full_name": full, "description": r.get("description") or ""})
+        # dedupe, most-recently-pushed first
+        seen: set[str] = set()
+        out: list[dict] = []
+        for r in repos:
+            if r["full_name"] in seen:
+                continue
+            seen.add(r["full_name"])
+            out.append(r)
+        return out
+
     def create_pull_request(self, owner: str, repo: str, title: str, head: str,
                             base: str, body: str = "", draft: bool = True) -> str:
         data = self._request("POST", f"/repos/{owner}/{repo}/pulls", json={
@@ -236,6 +269,27 @@ def _client_for(ws: Workspace) -> tuple[GitHubClient, str, str]:
     api_url = (config.data.get("github") or {}).get("api_url", DEFAULT_API_URL)
     owner, repo = detect_repo(ws)
     return GitHubClient(token, api_url), owner, repo
+
+
+def cli_client_for_repos() -> GitHubClient:
+    """Build a GitHub client from config alone (no workspace needed), used by
+    the project picker to list repositories."""
+    from .config import Config
+    config = Config.load()
+    token = get_token(config)
+    if not token:
+        raise ToolError("not connected to GitHub: run 'silkcode connect github' "
+                        "(sign in with GitHub) or set $GITHUB_TOKEN")
+    api_url = (config.data.get("github") or {}).get("api_url", DEFAULT_API_URL)
+    return GitHubClient(token, api_url)
+
+
+def list_github_repos() -> list[dict]:
+    """Repositories the user can open in a new session, or [] if not connected."""
+    try:
+        return cli_client_for_repos().list_repositories()
+    except ToolError:
+        return []
 
 
 # ---- agent tools -----------------------------------------------------------
