@@ -106,3 +106,42 @@ def test_grants_bypass_prompts():
 def test_grants_filtered_to_grantable():
     pm = PermissionManager("ask", grants=["push", "bogus", "rm -rf"])
     assert pm.grants == {"push"}
+
+
+def test_allow_all_approves_everything_without_prompting():
+    calls = []
+
+    def asker(p):
+        calls.append(p)
+        return "no"
+
+    pm = PermissionManager("ask", asker=asker)
+    # before: everything prompts and the asker denies
+    assert pm.check_write("a.py") is False
+    assert pm.check_command("npm install left-pad") is False
+    assert pm.check_command("rm -rf build") is False
+    assert pm.check_mcp("server.read") is False
+    assert len(calls) == 4
+
+    pm.allow_all()
+    assert pm.check_write("b.py") is True
+    assert pm.check_command("npm install right-pad") is True
+    assert pm.check_command("git push origin main") is True       # HIGH, but user said yes to all
+    assert pm.check_command("rm -rf dist") is True
+    assert pm.check_mcp("server.write") is True
+    assert len(calls) == 4  # no further prompts after allow_all
+
+
+def test_allow_all_also_works_in_agent_mode():
+    calls = []
+
+    def asker(p):
+        calls.append(p)
+        return "no"
+
+    pm = PermissionManager("agent", asker=asker)
+    assert pm.check_command("npm install x") is True       # agent mode: no prompt
+    assert pm.check_command("rm -rf build") is False       # HIGH still prompts
+    pm.allow_all()
+    assert pm.check_command("rm -rf dist") is True         # HIGH now auto-approved
+    assert len(calls) == 1

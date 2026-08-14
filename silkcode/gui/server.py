@@ -85,7 +85,9 @@ class AgentSession:
 
         permissions = PermissionManager(
             mode=data.get("mode") or state.mode,
-            asker=lambda prompt, sid=self.id: state._ask_via_gui(prompt, sid),
+            # note: read self.permissions inside the lambda (call time), not as a
+            # default arg - it doesn't exist yet while we are constructing it
+            asker=lambda prompt, sid=self.id: state._ask_via_gui(prompt, sid, self.permissions),
         )
         permissions.grants = state.shared_grants  # one grant set for the whole app
         self.permissions = permissions
@@ -282,10 +284,11 @@ class GuiState:
             self.broadcast({"type": "tool_result", "name": data["name"],
                             "output": first[:200], "session": session.id})
 
-    def _ask_via_gui(self, prompt: str, session_id: int | None = None) -> str:
+    def _ask_via_gui(self, prompt: str, session_id: int | None = None,
+                     pm: "PermissionManager | None" = None) -> str:
         req_id = uuid.uuid4().hex
         ev = threading.Event()
-        self.pending[req_id] = {"event": ev, "decision": "no", "prompt": prompt}
+        self.pending[req_id] = {"event": ev, "decision": "no", "prompt": prompt, "pm": pm}
         self.broadcast({"type": "permission_request", "id": req_id, "prompt": prompt,
                         "session": session_id})
         ev.wait(PERMISSION_TIMEOUT)
@@ -295,9 +298,16 @@ class GuiState:
         entry = self.pending.get(req_id)
         if entry is None:
             return False
-        if decision not in ("yes", "no", "always"):
+        if decision == "all":
+            # "Yes to all": approve this request and every later one this session.
+            entry["decision"] = "yes"
+            pm = entry.get("pm")
+            if pm is not None:
+                pm.allow_all()
+        elif decision not in ("yes", "no", "always"):
             decision = "no"
-        entry["decision"] = decision
+        else:
+            entry["decision"] = decision
         entry["event"].set()
         return True
 
@@ -473,6 +483,9 @@ class GuiState:
                     on_progress=on_progress,
                     on_event=on_event,
                     should_stop=lambda: status["_stop"].is_set(),
+                    # the worker shares the session's permission manager, so it
+                    # asks the user (same modal) and honors "yes to all"
+                    worker_permissions=session.permissions,
                 )
                 status["result"] = asdict(result)
                 self.broadcast({"type": "swarm_done", "session": session.id,

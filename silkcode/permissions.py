@@ -100,7 +100,9 @@ class PermissionManager:
     - agent: file writes and MEDIUM commands allowed; HIGH commands prompt.
 
     HIGH-risk commands always prompt, in every mode, and cannot be
-    permanently allowed for the session.
+    permanently allowed for the session - unless the user explicitly picks
+    "yes to all" (see allow_all), which approves every request for the rest
+    of the session.
     """
 
     MODES = ("ask", "edit", "agent")
@@ -114,9 +116,18 @@ class PermissionManager:
         self.grants: set[str] = {g for g in (grants or []) if g in GRANTABLE}
         self._always_write = False
         self._always_commands: set[str] = set()
+        self._always_all = False
+
+    def allow_all(self) -> None:
+        """Approve every permission request for the rest of the session.
+
+        Set by the GUI's "Yes to all" button. Overrides the per-command and
+        per-write caches and even HIGH-risk prompts - the user asked for no
+        further prompts this session."""
+        self._always_all = True
 
     def check_write(self, path: str) -> bool:
-        if self.mode in ("edit", "agent") or self._always_write:
+        if self._always_all or self.mode in ("edit", "agent") or self._always_write:
             return True
         decision = self.asker(f"Allow modifying file: {path}")
         if decision == "always":
@@ -125,6 +136,8 @@ class PermissionManager:
         return decision == "yes"
 
     def check_command(self, command: str) -> bool:
+        if self._always_all:
+            return True
         risk = classify_command(command)
         if risk == Risk.LOW:
             return True
@@ -146,7 +159,7 @@ class PermissionManager:
 
     def check_mcp(self, qualified_name: str) -> bool:
         """External MCP tools are treated like medium-risk commands."""
-        if self.mode == "agent" or qualified_name in self._always_commands:
+        if self._always_all or self.mode == "agent" or qualified_name in self._always_commands:
             return True
         decision = self.asker(f"Call MCP tool: {qualified_name}")
         if decision == "always":

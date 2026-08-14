@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from silkcode.permissions import PermissionManager
 from silkcode.swarm import (
     _parse_critic,
     format_swarm_report,
@@ -236,6 +237,42 @@ def test_run_swarm_max_iterations(tmp_path, stub_server, monkeypatch):
 def test_run_swarm_validates_target():
     with pytest.raises(ValueError):
         run_swarm(Workspace("."), "stub", target=11.0)
+
+
+def test_run_swarm_worker_uses_provided_permissions(tmp_path, stub_server, monkeypatch):
+    """When worker_permissions is given, the worker asks the user (asker is
+    consulted for a MEDIUM command) instead of auto-approving in agent mode."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("SILKCODE_HOME", str(home))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _make_repo(repo, buggy=True)
+
+    prompts = []
+    scripted = [
+        sse_response(content="tests fail", usage={"prompt_tokens": 5, "completion_tokens": 1}),
+        sse_response(content=json.dumps({"critique": "c", "suggestions": [
+            {"title": "run a command", "detail": "somebinary --flag"}]}),
+                     usage={"prompt_tokens": 5, "completion_tokens": 1}),
+        sse_response(tool_calls=[("run_command", json.dumps({"command": "somebinary --flag"}))],
+                     usage={"prompt_tokens": 5, "completion_tokens": 1}),
+        sse_response(content="done", usage={"prompt_tokens": 5, "completion_tokens": 1}),
+    ]
+    server = stub_server(scripted)
+    server.thread.start()
+    try:
+        _config(home, server)
+        perms = PermissionManager("ask", asker=lambda p: prompts.append(p) or "yes")
+        result = run_swarm(Workspace(str(repo)), worker_spec="stub",
+                           max_iterations=1, worker_permissions=perms)
+    finally:
+        server.httpd.shutdown()
+        server.httpd.server_close()
+
+    assert result.status == "max-iterations"
+    # the MEDIUM-risk command prompted through the provided manager
+    assert any("somebinary --flag" in p for p in prompts), prompts
 
 
 def test_run_swarm_skips_tester_when_tests_pass(tmp_path, stub_server, monkeypatch):

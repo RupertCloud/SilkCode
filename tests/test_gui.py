@@ -310,6 +310,42 @@ def test_gui_permission_flow(gui):
     assert result["decision"] == "yes"
 
 
+def test_gui_permission_yes_to_all(gui):
+    """'Yes to all' approves the pending request AND flips the session-wide
+    flag, so later writes/commands (including the swarm worker's) never prompt."""
+    base, state, _ws = gui
+    session = state.get_session()
+    decisions = {}
+
+    def fake_broadcast(event):
+        if event.get("type") == "permission_request":
+            decisions["id"] = event["id"]
+
+    state.subscribers.clear()
+    original = state.broadcast
+    state.broadcast = lambda ev: (fake_broadcast(ev), original(ev))
+
+    result = {}
+
+    def ask():
+        result["decision"] = state._ask_via_gui("Run command: rm -rf build",
+                                                session.id, session.permissions)
+
+    t = threading.Thread(target=ask, daemon=True)
+    t.start()
+    assert wait_until(lambda: "id" in decisions)
+    resp = httpx.post(f"{base}/api/permission", json={"id": decisions["id"], "decision": "all"})
+    assert resp.status_code == 200
+    t.join(timeout=5)
+    assert result["decision"] == "yes"  # the pending request itself was approved
+
+    # the flag is set on the session's manager: nothing prompts any more
+    assert session.permissions._always_all is True
+    assert session.permissions.check_write("anything.py") is True
+    assert session.permissions.check_command("git push origin main") is True
+    assert session.permissions.check_mcp("server.write") is True
+
+
 def test_gui_swarm_end_to_end(gui, stub_server, monkeypatch):
     base, state, ws = gui
     # give the workspace a failing test so the swarm has something to fix

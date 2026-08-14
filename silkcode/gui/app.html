@@ -135,7 +135,8 @@
     <div class="prompt" id="perm-prompt"></div>
     <div class="row">
       <button class="danger" data-decision="no">Deny</button>
-      <button data-decision="always">Always (this session)</button>
+      <button data-decision="always" title="Approve this kind of request (all writes, or this command) for the rest of the session">Always (this session)</button>
+      <button data-decision="all" title="Approve every permission request for the rest of this session - no more prompts">Yes to all</button>
       <button class="primary" data-decision="yes">Allow</button>
     </div>
   </div>
@@ -214,6 +215,8 @@
       Three agents — <b>tester</b> (investigates failures), <b>critic</b> (prioritized suggestions),
       <b>worker</b> (implements them) — iterate on this project, scoring it 0–10 each round
       (test suite + hygiene), until it reaches the target, the score stalls, or you stop it.
+      The worker asks you before modifying files or running commands — pick
+      <b>Yes to all</b> to approve everything for the rest of the session.
     </div>
 
     <div id="swarm-pipeline" style="display:flex;align-items:center;gap:6px;justify-content:center;margin:6px 0 10px;font-size:12px">
@@ -416,6 +419,9 @@ document.querySelectorAll("#perm-modal [data-decision]").forEach(btn => {
     const req = permQueue.shift();
     $("perm-modal").classList.remove("open");
     try { await api("/api/permission", {id: req.id, decision: btn.dataset.decision}); } catch (e) {}
+    if (btn.dataset.decision === "all") {
+      addMsg("tool", "✓ Yes to all — every permission request is auto-approved for the rest of this session.");
+    }
     showNextPermission();
   };
 });
