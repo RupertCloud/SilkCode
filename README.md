@@ -9,9 +9,11 @@ CLI or a local GUI.
 
 > **The coding environment belongs to the developer. The AI model is replaceable.**
 
-The full specification is in [SRS.md](SRS.md). This implementation is V0.1: the Python
-agent runtime, the CLI, and the GUI (a local web app served by the Silk Code daemon —
-designed to be wrapped in Tauri later, per SRS sections 67-68).
+The full specification is in [SRS.md](SRS.md). The prioritized roadmap — what
+to build next and why — is in [NEXT_STEPS.md](NEXT_STEPS.md). This implementation
+is V0.1: the Python agent runtime, the CLI, and the GUI (a local web app served
+by the Silk Code daemon — designed to be wrapped in Tauri later, per SRS
+sections 67-68).
 
 ## Install
 
@@ -112,6 +114,8 @@ silkcode -p "add input validation to the API" .       # one-shot, non-interactiv
 silkcode gui [path] [--port N]                        # local GUI
 silkcode review [path]                                # AI review of uncommitted changes
 silkcode models [add|pull|default]                    # provider/model management
+silkcode swarm [path] [--model M] [...]               # multi-agent improvement loop
+silkcode update [--branch B]                          # pull updates, hot-apply them
 silkcode sessions                                     # list saved sessions
 silkcode resume <id>                                  # continue a session (GUI or CLI)
 silkcode test [path] [--command CMD]                  # run the project's tests (auto-detected)
@@ -135,7 +139,8 @@ project).
 `silkcode gui` starts the Silk Code daemon and opens a browser app with the project
 explorer, AI conversation, agent activity timeline, git diff / file viewer, model and
 mode selectors, provider onboarding, checkpoint revert, a stop button for running
-turns, and live permission prompts.
+turns, live permission prompts, a **🐝 Swarm** button (multi-agent improvement loop,
+see below), and a **↻ Update** button (self-update, see below).
 
 **Multiple sessions:** open as many conversations as you like (the ＋ button) and
 switch between them with the session picker — each has its own agent, model choice,
@@ -146,6 +151,54 @@ GitHub repository (cloned for you into `~/.silkcode/projects/`) or type a local
 directory, so different sessions can work on different codebases side by side.
 Sessions are saved to the same store as the CLI — resume any of them from the picker
 or with `silkcode resume <id>` (SRS section 47).
+
+## Improvement swarm
+
+`silkcode swarm` runs a multi-agent improvement loop against a project until it
+scores 10/10, the score stalls, or a cap is reached. Each iteration scores the
+workspace 0–10 — test suite up to 8, code hygiene up to 2 (no TODO/FIXME markers,
+no debug leftovers) — then three agents work on it:
+
+* **tester** (read-only) investigates test failures;
+* **critic** (read-only) returns prioritized suggestions as JSON;
+* **worker** implements the suggestions and re-runs the tests.
+
+```bash
+silkcode swarm ~/my-project --model deepseek              # target 10/10 by default
+silkcode swarm . --model M --critic-model M2 --tester-model M3
+silkcode swarm . --target 8 --max-iterations 5 --stall-limit 2
+silkcode swarm . --max-tokens 200000 --no-skip-tester --test-command "pytest tests/"
+```
+
+Stops when the target is reached, after `--stall-limit` flat rounds, at
+`--max-iterations`, or when the `--max-tokens` budget is spent. When the test
+suite is already green, the read-only tester is skipped (2 agents per round
+instead of 3) unless you pass `--no-skip-tester`. Scores and per-iteration
+traces are saved under `~/.silkcode/swarm/`.
+
+In the GUI, the **🐝 Swarm** button runs the same loop with live progress, a
+score-history chart, a pipeline phase indicator, and per-role token stats. The
+worker asks you before modifying files or running commands — pick **Yes to all**
+on a permission prompt to let it run unattended for the rest of the session.
+
+## Self-update
+
+`silkcode update` fast-forwards the installed checkout to the latest code from
+its git remote (refuses on a dirty tree or non-fast-forward; `--force` overrides
+that, `--install` also re-runs `pip install -e .` for new dependencies):
+
+```bash
+silkcode update               # pull the latest code
+silkcode update --branch B    # update to a specific branch
+```
+
+A running GUI daemon watches the checkout's HEAD and, once new code lands (and
+it is idle — no session or swarm running), re-execs itself with the same
+arguments so the update goes live without a manual restart. Sessions are
+persisted on disk and survive the restart; the browser reloads automatically.
+This works for git-checkout installs (a clone or `pip install -e .`); wheel
+installs carry no git metadata, so update those with `pip install -U silkcode`.
+The GUI's **↻ Update** header button does the same thing.
 
 ## Project instructions, memory, and skills
 
@@ -308,6 +361,12 @@ medium-risk commands (installs, branch switches) need approval unless you are in
 Modes (SRS section 31): `ask` (approve everything), `edit` (file edits are free,
 commands ask), `agent` (autonomous except high-risk).
 
+The GUI's permission prompt also offers **Always** (approve this kind of request
+for the session — all writes, or one command) and **Yes to all** (approve every
+request for the rest of the session, including high-risk commands, with no
+further prompts). The swarm's worker agent shares the same prompt flow, so it
+asks the user the same way instead of auto-approving.
+
 Before every automated file modification Silk Code snapshots the file; `/revert` (CLI)
 or **Revert** (GUI) restores the last turn's changes (SRS section 28).
 
@@ -326,7 +385,9 @@ silkcode/
 ├── sandbox_server.py  reference Silk Sandbox Protocol server (self-hosted)
 ├── tools/           read/write/edit, glob/grep, run_command, run_tests, git status/diff/log/commit
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
-├── permissions.py   risk classification + ask/edit/agent modes
+├── swarm.py         multi-agent improvement loop (tester/critic/worker, 0-10 scoring)
+├── update.py        self-update: pull from git, hot-apply via GUI daemon restart
+├── permissions.py   risk classification + ask/edit/agent modes + "yes to all"
 ├── checkpoints.py   snapshot-before-modify, revert per turn
 ├── sessions.py      persistence shared by CLI and GUI
 ├── config.py        provider registry and model resolution
