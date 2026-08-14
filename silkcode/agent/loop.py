@@ -60,6 +60,20 @@ class Agent:
         self._base_system = system
         self.messages: list[dict] = [{"role": "system", "content": system}]
 
+    def set_workspace(self, workspace: "Workspace", context: str) -> None:
+        """Point this agent at a different project. The conversation (including
+        checkpoints and attribution) is kept; the system prompt is regenerated
+        with the new root and context so the model orients on the new project."""
+        self.workspace = workspace
+        system = SYSTEM_PROMPT.format(root=workspace.root, platform=platform.platform())
+        if context:
+            system += "\n" + context
+        self._base_system = system
+        if self.messages and self.messages[0].get("role") == "system":
+            self.messages[0]["content"] = system
+        self.trimmed_messages = 0  # stale trim note refers to the old project
+        self.checkpoints.begin()
+
     def run_turn(self, user_input: str) -> str:
         from ..tools.git import clear_attribution, set_attribution
         if self.attribution:

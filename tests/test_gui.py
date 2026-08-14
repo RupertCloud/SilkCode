@@ -308,3 +308,37 @@ def test_gui_permission_flow(gui):
     assert resp.status_code == 200
     t.join(timeout=5)
     assert result["decision"] == "yes"
+
+
+def test_gui_new_session_pointed_at_local_project(gui):
+    base, state, default_ws = gui
+    first_id = state.default_session_id
+    other = default_ws.parent / "other-repo"
+    other.mkdir()
+    (other / "OTHER.md").write_text("other project\n")
+
+    # a session created with a project spec points at that workspace
+    resp = httpx.post(f"{base}/api/session/new", json={"project": str(other)})
+    assert resp.status_code == 200
+    sid = resp.json()["session_id"]
+    session = state.get_session(sid)
+    assert session.workspace.root == other.resolve()
+    assert session.workspace.root != default_ws.resolve()
+
+    # tree/file/state all reflect the session's project
+    tree = httpx.get(f"{base}/api/tree", params={"session": sid}).json()
+    assert any(e["path"] == "OTHER.md" for e in tree)
+    default_tree = httpx.get(f"{base}/api/tree", params={"session": first_id}).json()
+    assert "OTHER.md" not in [e["path"] for e in default_tree]
+
+    content = httpx.get(f"{base}/api/file", params={"path": "OTHER.md", "session": sid}).json()
+    assert content["content"] == "other project\n"
+
+    st = httpx.get(f"{base}/api/state", params={"session": sid}).json()
+    assert st["cwd"].endswith("other-repo")
+    assert st["session_id"] == sid
+
+    # a session with no project spec still uses the default workspace
+    plain = httpx.post(f"{base}/api/session/new", json={}).json()
+    plain_session = state.get_session(plain["session_id"])
+    assert plain_session.workspace.root == default_ws.resolve()
