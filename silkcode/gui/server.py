@@ -13,7 +13,9 @@ from __future__ import annotations
 import json
 import queue
 import threading
+import time
 import uuid
+from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -157,6 +159,7 @@ class GuiState:
         self.subscribers: list[queue.Queue] = []
         self.pending: dict[str, dict] = {}
         self.sessions: dict[int, AgentSession] = {}
+        self.swarms: dict[int, dict] = {}  # session id -> swarm status
         first = self.new_session()
         self.default_session_id = first.id
 
@@ -301,6 +304,8 @@ class GuiState:
         with self.lock:
             if session.running:
                 return False
+            if self.swarms.get(session.id, {}).get("running"):
+                return False  # the swarm owns this workspace right now
             session.running = True
         if not session.data.get("title"):
             session.data["title"] = text[:60]
@@ -359,6 +364,7 @@ class GuiState:
             "cwd": str(session.workspace.root),
             "session_id": session.id,
             "running": session.running,
+            "swarm_running": bool(self.swarms.get(session.id, {}).get("running")),
             "auto_push": self.auto_push,
             "usage": session.usage_dict(),
             "sessions": self.sessions_summary(),
@@ -381,6 +387,112 @@ class GuiState:
         self.mode = mode
         for session in self.sessions.values():
             session.permissions.mode = mode
+
+    # ---- improvement swarm (silkcode.swarm) --------------------------------
+
+    def swarm_status(self, session_id: int | None = None) -> dict:
+        """Public swarm status for a session (never includes internal fields)."""
+        session = self.get_session(session_id)
+        status = self.swarms.get(session.id)
+        if not status:
+            return {"running": False, "log": [], "result": None, "error": None}
+        return {
+            "running": status["running"],
+            "log": list(status["log"]),
+            "result": status["result"],
+            "error": status["error"],
+        }
+
+    def start_swarm(self, params: dict, session_id: int | None = None) -> dict:
+        """Launch the tester/critic/worker swarm on a session's workspace.
+
+        Runs in a background thread; progress is streamed to the browser via
+        SSE events (swarm_progress / swarm_done / swarm_error)."""
+        session = self.get_session(session_id)
+        with self.lock:
+            if session.running:
+                raise ToolError("the agent is running in this session; stop it first")
+            if self.swarms.get(session.id, {}).get("running"):
+                raise ToolError("a swarm is already running in this session")
+
+        worker_spec = str(params.get("model") or session.spec or self.spec)
+        critic_spec = str(params["critic_model"]).strip() if params.get("critic_model") else None
+        tester_spec = str(params["tester_model"]).strip() if params.get("tester_model") else None
+        for spec in (worker_spec, critic_spec, tester_spec):
+            if spec:
+                self.config.resolve_model(spec)  # validate before starting
+        try:
+            target = float(params.get("target") or 10.0)
+            max_iterations = int(params.get("max_iterations") or 0)
+            stall_limit = int(params.get("stall_limit") or 3)
+            max_tokens = int(params.get("max_tokens") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"bad swarm option: {exc}") from exc
+        test_command = str(params.get("test_command") or "").strip() or None
+
+        status = {
+            "running": True,
+            "session": session.id,
+            "started": time.time(),
+            "log": [],
+            "result": None,
+            "error": None,
+            "_stop": threading.Event(),
+        }
+        self.swarms[session.id] = status
+
+        def run() -> None:
+            from ..swarm import run_swarm
+
+            def on_progress(line: str) -> None:
+                status["log"].append(line)
+                self.broadcast({"type": "swarm_progress", "session": session.id, "line": line})
+
+            def on_event(kind: str, data: dict) -> None:
+                if kind == "score":
+                    self.broadcast({"type": "swarm_score", "session": session.id, **data})
+                elif kind == "phase":
+                    self.broadcast({"type": "swarm_phase", "session": session.id,
+                                    "role": data.get("role")})
+
+            try:
+                result = run_swarm(
+                    session.workspace,
+                    worker_spec=worker_spec,
+                    critic_spec=critic_spec,
+                    tester_spec=tester_spec,
+                    target=target,
+                    max_iterations=max_iterations,
+                    stall_limit=stall_limit,
+                    max_tokens=max_tokens,
+                    test_command=test_command,
+                    on_progress=on_progress,
+                    on_event=on_event,
+                    should_stop=lambda: status["_stop"].is_set(),
+                )
+                status["result"] = asdict(result)
+                self.broadcast({"type": "swarm_done", "session": session.id,
+                                "result": status["result"]})
+            except Exception as exc:  # keep the daemon alive, report to the UI
+                status["error"] = str(exc)
+                self.broadcast({"type": "swarm_error", "session": session.id,
+                                "message": str(exc)})
+            finally:
+                status["running"] = False
+                status["_stop"] = None
+
+        threading.Thread(target=run, daemon=True).start()
+        return self.swarm_status(session.id)
+
+    def stop_swarm(self, session_id: int | None = None) -> dict:
+        session = self.get_session(session_id)
+        status = self.swarms.get(session.id)
+        if status and status.get("running"):
+            stop_event = status.get("_stop")
+            if stop_event is not None:
+                stop_event.set()
+            return {"ok": True}
+        return {"ok": False, "error": "no swarm running in this session"}
 
     # ---- GitHub authorization (SRS sections 30-31, 60) ---------------------
 
@@ -689,6 +801,12 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/session":
                 session = st.load_session(int(body.get("id", 0)))
                 self._json(st.state(session.id))
+            elif route == "/api/swarm/start":
+                self._json(st.start_swarm(body, sid))
+            elif route == "/api/swarm/stop":
+                self._json(st.stop_swarm(sid))
+            elif route == "/api/swarm/status":
+                self._json(st.swarm_status(sid))
             elif route == "/api/github/token":
                 self._json(st.set_github_token(str(body.get("token", ""))))
             elif route == "/api/github/device":

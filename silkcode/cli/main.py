@@ -10,6 +10,7 @@ Commands:
     silkcode sessions                                      list saved sessions
     silkcode resume <id>                                   resume a session in the REPL
     silkcode config                                        show configuration
+    silkcode swarm [path] [--model M] [...]                multi-agent improvement loop
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
         "mcp": cmd_mcp,
         "connect": cmd_connect,
         "benchmark": cmd_benchmark,
+        "swarm": cmd_swarm,
         "sandbox": cmd_sandbox,
     }
     if argv and argv[0] in commands:
@@ -286,6 +288,61 @@ def cmd_benchmark(argv: list[str]) -> int:
         return 1
     print()
     print(format_results(results))
+    return 0
+
+
+def cmd_swarm(argv: list[str]) -> int:
+    """Run the multi-agent improvement swarm (tester + critic + worker) until
+    the workspace scores 10/10, the score stalls, or a cap is reached."""
+    parser = argparse.ArgumentParser(
+        prog="silkcode swarm",
+        description="Multi-agent improvement loop: tester, critic and worker agents "
+                    "iterate until the workspace scores 10/10 (or the loop stalls).")
+    parser.add_argument("path", nargs="?", default=".",
+                        help="workspace directory (default: current)")
+    parser.add_argument("--model", "-m", help="model for all roles (default: config default)")
+    parser.add_argument("--critic-model", help="model for the critic role (default: --model)")
+    parser.add_argument("--tester-model", help="model for the tester role (default: --model)")
+    parser.add_argument("--target", type=float, default=10.0,
+                        help="score to reach before stopping (default: 10)")
+    parser.add_argument("--max-iterations", type=int, default=0,
+                        help="hard cap on iterations; 0 = run without end (default: 0)")
+    parser.add_argument("--stall-limit", type=int, default=3,
+                        help="stop after this many non-improving iterations (default: 3)")
+    parser.add_argument("--max-tokens", type=int, default=0,
+                        help="stop once this many model tokens are spent; 0 = no budget (default: 0)")
+    parser.add_argument("--no-skip-tester", action="store_true",
+                        help="always run the tester, even when the tests already pass "
+                             "(default: tester is skipped on a green suite)")
+    parser.add_argument("--test-command", help="explicit test command (auto-detected when omitted)")
+    args = parser.parse_args(argv)
+
+    from ..swarm import format_swarm_report, run_swarm
+    from ..workspace import ToolError, Workspace
+    try:
+        ws = Workspace(args.path)
+    except ToolError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    try:
+        result = run_swarm(
+            ws,
+            worker_spec=args.model or Config.load().default_model,
+            critic_spec=args.critic_model,
+            tester_spec=args.tester_model,
+            target=args.target,
+            max_iterations=args.max_iterations,
+            stall_limit=args.stall_limit,
+            max_tokens=args.max_tokens,
+            skip_tester_when_tests_pass=not args.no_skip_tester,
+            test_command=args.test_command,
+            on_progress=print,
+        )
+    except (ConfigError, ValueError, ToolError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print()
+    print(format_swarm_report(result))
     return 0
 
 

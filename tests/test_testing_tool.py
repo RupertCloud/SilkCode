@@ -31,7 +31,9 @@ def test_detect_pytest_from_tests_dir(tmp_path):
     tests = tmp_path / "tests"
     tests.mkdir()
     (tests / "test_x.py").write_text("def test_x(): pass")
-    assert detect_test_command(Workspace(tmp_path)) == "pytest"
+    command = detect_test_command(Workspace(tmp_path))
+    # 'pytest' when the binary is on PATH, else the current interpreter
+    assert command == "pytest" or command.endswith("-m pytest")
 
 
 def test_detect_nothing(tmp_path):

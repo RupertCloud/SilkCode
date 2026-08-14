@@ -6,3 +6,4 @@ dist/
 build/
 .silkcode/
 .venv/
+.DS_Store
