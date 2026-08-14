@@ -51,6 +51,83 @@ def test_edit_missing_string(ws):
         edit_file(ws, "a.py", "zzz", "yyy")
 
 
+# ---- optimistic concurrency (stale-base check) -----------------------------
+
+def test_edit_stale_base_detected(ws):
+    """A file changed on disk since read_file -> edit refuses, tells to re-read."""
+    write_file(ws, "a.py", "x = 1\ny = 2\n")
+    read_file(ws, "a.py")
+    # another agent/editor changes the file behind our back
+    (ws.root / "a.py").write_text("x = 100\ny = 2\n")
+    with pytest.raises(ToolError, match="changed on disk"):
+        edit_file(ws, "a.py", "y = 2", "y = 3")
+
+
+def test_write_stale_base_detected(ws):
+    write_file(ws, "a.py", "x = 1\n")
+    read_file(ws, "a.py")
+    (ws.root / "a.py").write_text("x = 999\n")
+    with pytest.raises(ToolError, match="changed on disk"):
+        write_file(ws, "a.py", "x = 2\n")
+
+
+def test_stale_base_cleared_by_reread(ws):
+    """Re-reading the file refreshes the fingerprint, so the retry succeeds."""
+    write_file(ws, "a.py", "x = 1\ny = 2\n")
+    read_file(ws, "a.py")
+    (ws.root / "a.py").write_text("x = 100\ny = 2\n")
+    read_file(ws, "a.py")  # agent follows the error's advice: re-read
+    edit_file(ws, "a.py", "y = 2", "y = 3")
+    assert "y = 3" in read_file(ws, "a.py")
+
+
+def test_sequential_edits_ok(ws):
+    """Each successful edit refreshes the fingerprint, so edit chains work."""
+    write_file(ws, "a.py", "x = 1\ny = 2\n")
+    read_file(ws, "a.py")
+    edit_file(ws, "a.py", "x = 1", "x = 2")
+    edit_file(ws, "a.py", "y = 2", "y = 3")
+    assert "x = 2" in read_file(ws, "a.py") and "y = 3" in read_file(ws, "a.py")
+
+
+def test_edit_without_prior_read_ok(ws):
+    """No recorded fingerprint (file never read) -> no stale check, write allowed."""
+    (ws.root / "a.py").write_text("x = 1\n")  # created by another process
+    edit_file(ws, "a.py", "x = 1", "x = 2")
+    assert "x = 2" in read_file(ws, "a.py")
+
+
+def test_edit_deleted_since_read_detected(ws):
+    write_file(ws, "a.py", "x = 1\n")
+    read_file(ws, "a.py")
+    (ws.root / "a.py").unlink()  # vanished since we read it
+    with pytest.raises(ToolError, match="changed on disk"):
+        edit_file(ws, "a.py", "x = 1", "x = 2")
+
+
+def test_two_sessions_same_file(ws):
+    """The scenario this exists for: session B edits after session A already did."""
+    session_a, session_b = {}, {}  # each session owns a fingerprint registry
+    write_file(ws, "a.py", "x = 1\n", _registry=session_a)
+    read_file(ws, "a.py", _registry=session_b)              # session B reads the original
+    write_file(ws, "a.py", "x = 2\n", _registry=session_a)  # session A edits first
+    with pytest.raises(ToolError, match="changed on disk"):
+        edit_file(ws, "a.py", "x = 1", "x = 3", _registry=session_b)  # B's edit is stale
+
+
+def test_own_write_does_not_mask_another_sessions_stale_base(ws):
+    """A's write refreshes A's registry but must NOT clear B's stale base."""
+    session_a, session_b = {}, {}
+    write_file(ws, "a.py", "x = 1\n", _registry=session_a)
+    read_file(ws, "a.py", _registry=session_b)              # B reads v1
+    write_file(ws, "a.py", "x = 2\n", _registry=session_a)  # A writes v2
+    # A can keep editing v2 (its own base is current)...
+    edit_file(ws, "a.py", "x = 2", "x = 3", _registry=session_a)
+    # ...but B is still told to re-read before touching the file.
+    with pytest.raises(ToolError, match="changed on disk"):
+        edit_file(ws, "a.py", "x = 1", "x = 9", _registry=session_b)
+
+
 def test_glob(ws):
     write_file(ws, "src/a.py", "")
     write_file(ws, "src/deep/b.py", "")

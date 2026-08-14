@@ -54,6 +54,9 @@ class Agent:
         self.stop_requested = False
         self.max_context_tokens = max_context_tokens
         self.trimmed_messages = 0
+        # Per-owner optimistic-concurrency registry for the file tools: this
+        # agent's reads/writes never mask another session's stale base.
+        self._fp_registry: dict = {}
         system = SYSTEM_PROMPT.format(root=workspace.root, platform=platform.platform())
         if context:
             system += "\n" + context
@@ -237,4 +240,6 @@ class Agent:
                 command = str(args.get("command") or "")
             if command and not self.permissions.check_command(command):
                 return "User denied permission to run this command."
+        if getattr(tool, "owner_aware", False):
+            return tool.func(self.workspace, _registry=self._fp_registry, **args)
         return tool.func(self.workspace, **args)

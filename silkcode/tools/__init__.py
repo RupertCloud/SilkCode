@@ -33,6 +33,10 @@ class Tool:
     # For kind == "write": resolves the path being modified for permission
     # checks and checkpoints. Defaults to args["path"].
     path_of: Callable | None = None
+    # True when the tool keeps per-owner file fingerprints (the file tools):
+    # the agent loop passes the Agent's registry so concurrent sessions on the
+    # same workspace detect each other's changes instead of clobbering them.
+    owner_aware: bool = False
 
 
 def _params(properties: dict, required: list[str]) -> dict:
@@ -56,6 +60,7 @@ _register(Tool(
     }, ["path"]),
     func=files.read_file,
     kind="read",
+    owner_aware=True,
 ))
 
 _register(Tool(
@@ -67,6 +72,7 @@ _register(Tool(
     }, ["path", "content"]),
     func=files.write_file,
     kind="write",
+    owner_aware=True,
 ))
 
 _register(Tool(
@@ -80,6 +86,7 @@ _register(Tool(
     }, ["path", "old_string", "new_string"]),
     func=files.edit_file,
     kind="write",
+    owner_aware=True,
 ))
 
 _register(Tool(
