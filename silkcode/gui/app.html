@@ -98,6 +98,7 @@
   <button id="add-model">+ Add model</button>
   <button id="github-btn">GitHub</button>
   <button id="swarm-btn" title="Multi-agent improvement loop: tester, critic and worker iterate until this project scores 10/10">🐝 Swarm</button>
+  <button id="update-btn" title="Pull the latest Silk Code from git; the daemon restarts itself with the new code">↻ Update</button>
   <label>Mode <select id="mode-select">
     <option value="ask">ask</option><option value="edit">edit</option><option value="agent">agent</option>
   </select></label>
@@ -391,6 +392,15 @@ function handleEvent(ev) {
     setSwarmRunning(false);
     setSwarmPhase(null);
     swarmLog("error: " + ev.message);
+  }
+  else if (ev.type === "update_progress") {
+    addMsg("tool", "↻ " + ev.line);
+  }
+  else if (ev.type === "restarting") {
+    const b = $("version-banner");
+    b.textContent = "↻ Update applied — restarting the daemon with the new code…";
+    b.style.display = "block";
+    setTimeout(() => location.reload(), 1800);
   }
 }
 
@@ -777,6 +787,27 @@ $("sw-stop").onclick = async () => {
   try {
     const r = await api("/api/swarm/stop", {session_id: currentSessionId});
     swarmLog(r.ok ? "stop requested — finishing the current step…" : r.error);
+  } catch (err) { alert(err.message); }
+};
+
+// ---- self-update ----------------------------------------------------------
+
+$("update-btn").onclick = async () => {
+  if (!confirm("Pull the latest Silk Code from git? The daemon will restart "
+               + "itself with the new code (~2s).")) return;
+  try {
+    addMsg("tool", "↻ updating…");
+    const r = await api("/api/update", {});
+    addMsg("tool", "↻ " + (r.detail || r.status));
+    if (r.status === "updated") {
+      // the daemon re-execs shortly; reload once it comes back
+      const b = $("version-banner");
+      b.textContent = "↻ Update applied — restarting the daemon with the new code…";
+      b.style.display = "block";
+      setTimeout(() => location.reload(), 4000);
+    } else if (r.status === "error") {
+      alert("Update failed: " + r.detail);
+    }
   } catch (err) { alert(err.message); }
 };
 

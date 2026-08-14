@@ -11,7 +11,9 @@ Sessions are shared with the CLI, so work started here can be resumed with
 from __future__ import annotations
 
 import json
+import os
 import queue
+import sys
 import threading
 import time
 import uuid
@@ -160,6 +162,8 @@ class GuiState:
         self.pending: dict[str, dict] = {}
         self.sessions: dict[int, AgentSession] = {}
         self.swarms: dict[int, dict] = {}  # session id -> swarm status
+        self._restart_args: list[str] | None = None
+        self._restarting = False
         first = self.new_session()
         self.default_session_id = first.id
 
@@ -494,6 +498,71 @@ class GuiState:
             return {"ok": True}
         return {"ok": False, "error": "no swarm running in this session"}
 
+    # ---- self-update / hot reload -----------------------------------------
+
+    def start_auto_reload(self, restart_args: list[str] | None, interval: float = 3.0) -> bool:
+        """Watch the installed checkout's HEAD; when new code lands (a pull
+        by `silkcode update`, the Update button, or the swarm editing Silk
+        Code itself) and the daemon is idle, re-exec with the same args so
+        the new code goes live without a manual restart.
+
+        Only active when the package is a git checkout and restart args were
+        provided (i.e. the real `silkcode gui` daemon, not tests)."""
+        if not restart_args:
+            return False
+        from ..update import git_repo_root, head_changed, head_commit, restart_argv
+        repo = git_repo_root()
+        if repo is None:
+            return False
+        baseline = head_commit(repo)
+
+        def busy() -> bool:
+            with self.lock:
+                if any(s.running for s in self.sessions.values()):
+                    return True
+                return any(sw.get("running") for sw in self.swarms.values())
+
+        def loop() -> None:
+            while not self._restarting:
+                time.sleep(interval)
+                if self._restarting:
+                    break
+                try:
+                    if not head_changed(repo, baseline):
+                        continue
+                    if busy():
+                        continue  # let the agent/swarm finish first
+                except Exception:
+                    continue
+                self._restarting = True
+                self.broadcast({"type": "restarting"})
+                time.sleep(0.5)  # let the browser see the event
+                os.execv(sys.executable, restart_argv(self._restart_args or []))
+
+        threading.Thread(target=loop, daemon=True).start()
+        return True
+
+    def update_service(self, params: dict | None = None) -> dict:
+        """Pull the latest Silk Code from git (fast-forward only).
+
+        The running daemon then notices the new HEAD and restarts itself
+        with the new code (see start_auto_reload). Refuses while a swarm is
+        running so an in-flight run is never interrupted."""
+        from ..update import git_repo_root, update_installation
+        repo = git_repo_root()
+        if repo is None:
+            raise ToolError("not a git checkout; update with: pip install -U silkcode")
+        with self.lock:
+            if any(sw.get("running") for sw in self.swarms.values()):
+                raise ToolError("a swarm is running in this session; stop it before updating")
+        branch = str(params.get("branch") or "").strip() or None if params else None
+
+        def on_progress(line: str) -> None:
+            self.broadcast({"type": "update_progress", "line": line})
+
+        result = update_installation(repo=repo, branch=branch, on_progress=on_progress)
+        return result
+
     # ---- GitHub authorization (SRS sections 30-31, 60) ---------------------
 
     def github_status(self, session_id: int | None = None) -> dict:
@@ -807,6 +876,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json(st.stop_swarm(sid))
             elif route == "/api/swarm/status":
                 self._json(st.swarm_status(sid))
+            elif route == "/api/update":
+                self._json(st.update_service(body))
             elif route == "/api/github/token":
                 self._json(st.set_github_token(str(body.get("token", ""))))
             elif route == "/api/github/device":
@@ -831,7 +902,8 @@ class GuiHandler(BaseHTTPRequestHandler):
 
 def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1",
             port: int = 8377, grants: list[str] | None = None,
-            use_sandbox: bool = False, auto_push: bool = False) -> int:
+            use_sandbox: bool = False, auto_push: bool = False,
+            restart_args: list[str] | None = None) -> int:
     try:
         state = GuiState(path, model_spec, mode, grants=grants, use_sandbox=use_sandbox,
                          auto_push=auto_push)
@@ -847,6 +919,8 @@ def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1
         print("An older Silk Code GUI may still be running - stop it (Ctrl+C in its")
         print(f"terminal) or start this one on another port: silkcode gui --port {port + 1}")
         return 1
+    if restart_args:
+        state.start_auto_reload(restart_args)
     url = f"http://{host}:{port}"
     print(f"Silk Code GUI: {url}")
     print(f"workspace: {state.workspace.root}")

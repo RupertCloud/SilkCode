@@ -405,6 +405,25 @@ def test_gui_swarm_stop_requests_stop(gui, stub_server, monkeypatch):
         server.httpd.server_close()
 
 
+def test_gui_update_endpoint_refuses_non_git(gui, monkeypatch):
+    base, state, ws = gui
+    # simulate a wheel install (no git metadata): update is refused with 400
+    import silkcode.update as upd
+    monkeypatch.setattr(upd, "git_repo_root", lambda *a, **k: None)
+    resp = httpx.post(f"{base}/api/update", json={})
+    assert resp.status_code == 400
+    assert "pip install" in resp.json()["error"]
+
+
+def test_gui_update_refuses_while_swarm_running(gui, monkeypatch):
+    base, state, ws = gui
+    # a swarm is "running" -> update must refuse without touching the repo
+    state.swarms[state.default_session_id] = {"running": True}
+    resp = httpx.post(f"{base}/api/update", json={})
+    assert resp.status_code == 400
+    assert "swarm" in resp.json()["error"]
+
+
 def test_gui_new_session_pointed_at_local_project(gui):
     base, state, default_ws = gui
     first_id = state.default_session_id

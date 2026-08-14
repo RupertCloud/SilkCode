@@ -11,6 +11,7 @@ Commands:
     silkcode resume <id>                                   resume a session in the REPL
     silkcode config                                        show configuration
     silkcode swarm [path] [--model M] [...]                multi-agent improvement loop
+    silkcode update [--branch B]                           pull updates and hot-apply them
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         "connect": cmd_connect,
         "benchmark": cmd_benchmark,
         "swarm": cmd_swarm,
+        "update": cmd_update,
         "sandbox": cmd_sandbox,
     }
     if argv and argv[0] in commands:
@@ -108,9 +110,25 @@ def cmd_gui(argv: list[str]) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args(argv)
     from ..gui.server import run_gui
+    # Normalized launch args so the daemon can re-exec itself with the same
+    # configuration after a self-update (silkcode update / GUI Update button).
+    restart_args = ["gui", args.path or "."]
+    if args.model:
+        restart_args += ["--model", args.model]
+    restart_args += ["--mode", args.mode]
+    if args.host != "127.0.0.1":
+        restart_args += ["--host", args.host]
+    if args.port != 8377:
+        restart_args += ["--port", str(args.port)]
+    if args.allow:
+        restart_args += ["--allow", args.allow]
+    if args.sandbox:
+        restart_args += ["--sandbox"]
+    if args.auto_push:
+        restart_args += ["--auto-push"]
     return run_gui(args.path, args.model, args.mode, host=args.host, port=args.port,
                    grants=_parse_grants(args.allow), use_sandbox=args.sandbox,
-                   auto_push=args.auto_push)
+                   auto_push=args.auto_push, restart_args=restart_args)
 
 
 def cmd_models(argv: list[str]) -> int:
@@ -289,6 +307,41 @@ def cmd_benchmark(argv: list[str]) -> int:
     print()
     print(format_results(results))
     return 0
+
+
+def cmd_update(argv: list[str]) -> int:
+    """Update the installed Silk Code from its git remote (no manual restart
+    needed: a running GUI daemon hot-applies the new code by re-execing
+    itself once the pull lands)."""
+    import subprocess as _subprocess
+    parser = argparse.ArgumentParser(prog="silkcode update")
+    parser.add_argument("--branch", help="branch to update to (default: current tracked branch)")
+    parser.add_argument("--force", action="store_true",
+                        help="update even with a dirty working tree")
+    parser.add_argument("--install", action="store_true",
+                        help="also run 'pip install -e .' after pulling (for new dependencies)")
+    args = parser.parse_args(argv)
+
+    from ..update import git_repo_root, update_installation
+    repo = git_repo_root()
+    if repo is None:
+        print("error: silkcode is not installed from a git checkout.", file=sys.stderr)
+        print("Update it with: pip install -U silkcode", file=sys.stderr)
+        return 1
+    result = update_installation(repo=repo, branch=args.branch, force=args.force,
+                                 on_progress=print)
+    if args.install and result["status"] == "updated":
+        print("installing editable package ...")
+        proc = _subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."],
+                               cwd=repo, capture_output=True, text=True, timeout=600)
+        if proc.returncode != 0:
+            print(f"error: pip install failed: {proc.stderr.strip()[-300:]}", file=sys.stderr)
+            return 1
+    print(result["detail"])
+    if result["status"] == "updated":
+        print("The GUI daemon (if running) will restart itself with the new code automatically.")
+        return 0
+    return 0 if result["status"] == "up-to-date" else 1
 
 
 def cmd_swarm(argv: list[str]) -> int:
