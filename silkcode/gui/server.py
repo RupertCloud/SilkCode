@@ -766,11 +766,18 @@ class GuiHandler(BaseHTTPRequestHandler):
 
     def _json(self, data, status: int = 200) -> None:
         body = json.dumps(data).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            # The client went away before we could reply (e.g. it double-fired
+            # a request and closed the connection). Nothing to deliver; just
+            # let the request handler finish quietly instead of crashing the
+            # server thread with a traceback.
+            pass
 
     def _error(self, message: str, status: int = 400) -> None:
         self._json({"error": message}, status)

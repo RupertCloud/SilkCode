@@ -772,6 +772,9 @@ $("swarm-btn").onclick = () => {
 };
 $("sw-cancel").onclick = () => $("swarm-modal").classList.remove("open");
 $("sw-start").onclick = async () => {
+  const btn = $("sw-start");
+  if (btn.disabled) return;
+  btn.disabled = true;
   try {
     const body = {
       model: $("sw-model").value.trim() || undefined,
@@ -791,6 +794,7 @@ $("sw-start").onclick = async () => {
     setSwarmPhase(null);
     swarmLog("swarm started…");
   } catch (err) { alert(err.message); }
+  btn.disabled = false;
 };
 $("sw-stop").onclick = async () => {
   try {
