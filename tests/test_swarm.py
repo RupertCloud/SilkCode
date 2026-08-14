@@ -15,7 +15,15 @@ from conftest import sse_response
 
 
 def _make_repo(tmp_path, buggy=True):
-    """A tiny repo with a pytest suite that fails until mathutil.py exists."""
+    """A tiny repo with a pytest suite that fails until mathutil.py exists.
+
+    The empty root conftest.py is what real flat-layout projects carry: it
+    puts the project root on sys.path for the `pytest` command the swarm
+    runs. Without it the suite fails to import even when the code is correct
+    (plain `pytest` does not add the working directory to sys.path — only
+    `python -m pytest` does).
+    """
+    (tmp_path / "conftest.py").write_text("")
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_math.py").write_text(
         "def test_add():\n"

@@ -32,6 +32,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
+          # tag the commit we actually built and tested; without this a
+          # manually dispatched release tags the default branch instead
+          target_commitish: ${{ github.sha }}
           files: dist/*
           generate_release_notes: true
           body: |
