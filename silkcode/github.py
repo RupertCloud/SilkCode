@@ -141,31 +141,20 @@ class GitHubClient:
         Complements the auto-detected 'origin' remote so the user can open a
         different project in a new session (SRS: new sessions ask for a project).
         """
-        user = self.whoami()
-        repos: list[dict] = []
-        for owner in (user, None):  # first repos owned by the user, then others (orgs/forks)
-            try:
-                data = self._request(
-                    "GET", "/user/repos",
-                    params={"per_page": 50, "sort": "pushed", "visibility": "all"},
-                )
-            except ToolError:
-                continue
-            if not isinstance(data, list):
-                continue
-            for r in data:
-                full = r.get("full_name", "")
-                if not full:
-                    continue
-                repos.append({"full_name": full, "description": r.get("description") or ""})
-        # dedupe, most-recently-pushed first
-        seen: set[str] = set()
+        data = self._request(
+            "GET", "/user/repos",
+            params={"per_page": 100, "sort": "pushed", "visibility": "all"},
+        )
+        if not isinstance(data, list):
+            return []
         out: list[dict] = []
-        for r in repos:
-            if r["full_name"] in seen:
+        seen: set[str] = set()
+        for r in data:
+            full = r.get("full_name", "")
+            if not full or full in seen:
                 continue
-            seen.add(r["full_name"])
-            out.append(r)
+            seen.add(full)
+            out.append({"full_name": full, "description": r.get("description") or ""})
         return out
 
     def create_pull_request(self, owner: str, repo: str, title: str, head: str,

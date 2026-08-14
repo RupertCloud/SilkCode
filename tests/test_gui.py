@@ -313,6 +313,9 @@ def test_gui_permission_flow(gui):
 def test_gui_swarm_end_to_end(gui, stub_server, monkeypatch):
     base, state, ws = gui
     # give the workspace a failing test so the swarm has something to fix
+    # (the empty root conftest.py puts the project root on sys.path for the
+    # plain `pytest` command the swarm runs, as real flat-layout repos do)
+    (ws / "conftest.py").write_text("")
     (ws / "tests").mkdir()
     (ws / "tests" / "test_math.py").write_text(
         "def test_add():\n    from mathutil import add\n    assert add(1, 2) == 3\n")
@@ -365,6 +368,7 @@ def test_gui_swarm_end_to_end(gui, stub_server, monkeypatch):
 
 def test_gui_swarm_stop_requests_stop(gui, stub_server, monkeypatch):
     base, state, ws = gui
+    (ws / "conftest.py").write_text("")
     (ws / "tests").mkdir()
     (ws / "tests" / "test_math.py").write_text(
         "def test_add():\n    from mathutil import add\n    assert add(1, 2) == 3\n")

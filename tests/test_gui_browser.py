@@ -130,9 +130,12 @@ def test_composer_always_visible_and_sessions_switch(browser, gui_url):
         f"composer pushed out of the viewport: {box}"
     assert page.is_visible("#send")
 
-    # create a second session: clean conversation
+    # create a second session: the + button now asks for a project first;
+    # confirming with nothing selected reuses the current project
     first_label = page.input_value("#session-select")
     page.click("#new-session")
+    page.wait_for_selector("#project-modal.open")
+    page.click("#project-confirm")
     page.wait_for_function(
         "sel => document.querySelector('#session-select').value !== sel", arg=first_label)
     assert page.locator("#messages .msg").count() == 0
