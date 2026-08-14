@@ -3,9 +3,20 @@
 from __future__ import annotations
 
 import json
+import shlex
+import shutil
+import sys
 
 from ..workspace import ToolError, Workspace
 from . import shell
+
+
+def _pytest_command() -> str:
+    """Run pytest via the current interpreter when the binary is not on PATH
+    (e.g. inside a virtualenv that only has the module installed)."""
+    if shutil.which("pytest"):
+        return "pytest"
+    return f"{shlex.quote(sys.executable)} -m pytest"
 
 
 def detect_test_command(ws: Workspace) -> str | None:
@@ -25,14 +36,14 @@ def detect_test_command(ws: Workspace) -> str | None:
     if (root / "pubspec.yaml").is_file():
         return "flutter test"
     if (root / "pytest.ini").is_file() or (root / "conftest.py").is_file():
-        return "pytest"
+        return _pytest_command()
     pyproject = root / "pyproject.toml"
     if pyproject.is_file() and "pytest" in pyproject.read_text(errors="replace"):
-        return "pytest"
+        return _pytest_command()
     for directory in ("tests", "test"):
         d = root / directory
         if d.is_dir() and (list(d.glob("test_*.py")) or list(d.glob("*_test.py"))):
-            return "pytest"
+            return _pytest_command()
     return None
 
 
