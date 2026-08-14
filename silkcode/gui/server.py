@@ -26,6 +26,7 @@ from ..agent import Agent
 from ..agent.loop import DEFAULT_CONTEXT_TOKENS
 from ..config import Config, ConfigError
 from ..context import build_context
+from ..lock import LockError, acquire, release
 from ..permissions import PermissionManager
 from ..providers import ProviderError, build_provider
 from ..project import record_recent_project, resolve_project
@@ -83,6 +84,22 @@ class AgentSession:
         cwd = data.get("cwd") or str(state.workspace.root)
         self.workspace = state._resolve_workspace(cwd)
 
+        # Advisory per-workspace lock: one writer at a time per project. A
+        # second session on the same project is told "already in use" up front
+        # and its file writes are refused until the lock goes stale.
+        self.lock_owner = f"session-{self.id}"
+        self.lock_conflict: str | None = None
+        try:
+            acquire(self.workspace.root, self.lock_owner)
+        except LockError as exc:
+            self.lock_conflict = str(exc)
+            notice = (f"⚠ This project is already open in {self.lock_conflict} — "
+                      "edits are refused until that session closes or the lock goes stale.")
+            self.transcript.append({"kind": "notice", "text": notice})
+            state.broadcast({"type": "notice", "text": notice, "session": self.id})
+        except OSError:
+            pass  # cannot create the lock file (e.g. read-only fs): locking is off
+
         permissions = PermissionManager(
             mode=data.get("mode") or state.mode,
             # note: read self.permissions inside the lambda (call time), not as a
@@ -99,6 +116,7 @@ class AgentSession:
             max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS,
             session_id=self.id,
             attribution=state.config.data.get("attribution", True),
+            lock_owner=self.lock_owner,
         )
         if data.get("messages"):
             self.agent.messages = data["messages"]
@@ -267,6 +285,14 @@ class GuiState:
         with self.lock:
             if q in self.subscribers:
                 self.subscribers.remove(q)
+
+    def release_all_locks(self) -> None:
+        """Release the advisory workspace lock of every open session (shutdown)."""
+        for session in self.sessions.values():
+            try:
+                release(session.workspace.root, session.lock_owner)
+            except Exception:
+                pass
 
     def _on_agent_event(self, session: AgentSession, kind: str, data) -> None:
         if kind == "text":
@@ -484,8 +510,10 @@ class GuiState:
                     on_event=on_event,
                     should_stop=lambda: status["_stop"].is_set(),
                     # the worker shares the session's permission manager, so it
-                    # asks the user (same modal) and honors "yes to all"
+                    # asks the user (same modal) and honors "yes to all"; it
+                    # also writes under the session's workspace lock
                     worker_permissions=session.permissions,
+                    worker_owner=session.lock_owner,
                 )
                 status["result"] = asdict(result)
                 self.broadcast({"type": "swarm_done", "session": session.id,
@@ -951,4 +979,5 @@ def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1
         print("\nstopping")
     finally:
         server.server_close()
+        state.release_all_locks()
     return 0

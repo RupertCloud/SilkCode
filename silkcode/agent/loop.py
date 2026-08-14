@@ -40,6 +40,7 @@ class Agent:
         max_context_tokens: int = DEFAULT_CONTEXT_TOKENS,
         session_id: int | None = None,
         attribution: bool = True,
+        lock_owner: str | None = None,
     ):
         self.provider = provider
         self.model = model
@@ -50,6 +51,9 @@ class Agent:
         self.mcp = mcp
         self.session_id = session_id
         self.attribution = attribution
+        # Owner identity for the advisory per-workspace lock (e.g. "session-3").
+        # None means the agent does not hold/refresh the workspace lock.
+        self._lock_owner = lock_owner
         self.usage = Usage()
         self.stop_requested = False
         self.max_context_tokens = max_context_tokens
@@ -241,5 +245,6 @@ class Agent:
             if command and not self.permissions.check_command(command):
                 return "User denied permission to run this command."
         if getattr(tool, "owner_aware", False):
-            return tool.func(self.workspace, _registry=self._fp_registry, **args)
+            return tool.func(self.workspace, _registry=self._fp_registry,
+                             _owner=self._lock_owner, **args)
         return tool.func(self.workspace, **args)

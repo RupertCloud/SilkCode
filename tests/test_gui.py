@@ -11,6 +11,9 @@ import pytest
 from conftest import sse_response
 
 from silkcode.gui.server import GuiHandler, GuiState
+from silkcode.lock import owner_of
+from silkcode.tools.files import write_file
+from silkcode.workspace import ToolError
 
 
 @pytest.fixture
@@ -191,8 +194,10 @@ def test_gui_multiple_sessions(gui, stub_server, monkeypatch):
     sessions = {s["id"]: s for s in resp.json()["sessions"]}
     assert sessions[first_id]["open"] and sessions[second_id]["open"]
 
-    # each session has its own transcript and agent
-    assert httpx.get(f"{base}/api/transcript", params={"session": second_id}).json() == []
+    # each session has its own transcript and agent; the second session on the
+    # same project carries only the workspace-lock notice, not a conversation
+    second_transcript = httpx.get(f"{base}/api/transcript", params={"session": second_id}).json()
+    assert second_transcript and all(e["kind"] == "notice" for e in second_transcript)
     assert state.get_session(first_id).agent is not state.get_session(second_id).agent
 
     # a turn in session 1 doesn't touch session 2 (stub scripted for one turn)
@@ -200,7 +205,9 @@ def test_gui_multiple_sessions(gui, stub_server, monkeypatch):
     assert resp.status_code == 200
     assert wait_until(lambda: not state.get_session(first_id).running and (ws / "hello.txt").exists())
     assert len(httpx.get(f"{base}/api/transcript", params={"session": first_id}).json()) >= 2
-    assert httpx.get(f"{base}/api/transcript", params={"session": second_id}).json() == []
+    # session 2's transcript is still only the lock notice - the turn didn't leak
+    second_after = httpx.get(f"{base}/api/transcript", params={"session": second_id}).json()
+    assert all(e["kind"] == "notice" for e in second_after)
 
     # per-session model switching
     httpx.post(f"{base}/api/providers", json={"name": "alt", "type": "openai_compat",
@@ -308,6 +315,23 @@ def test_gui_permission_flow(gui):
     assert resp.status_code == 200
     t.join(timeout=5)
     assert result["decision"] == "yes"
+
+
+def test_gui_second_session_same_project_locked(gui):
+    """A second session on the same project gets 'already in use': its agent
+    cannot write, the first session's can, and a notice lands in its transcript."""
+    base, state, ws = gui
+    s1 = state.get_session()
+    s2 = state.new_session()  # same default workspace
+    assert s2.lock_conflict is not None and "session-1" in s2.lock_conflict
+    assert owner_of(s1.workspace.root) == s1.lock_owner
+    # the notice is visible in the second session's transcript
+    assert any(e.get("kind") == "notice" for e in s2.transcript)
+    # session 1 (lock owner) writes fine; session 2 is refused
+    write_file(s1.workspace, "ok.py", "x = 1\n", _owner=s1.lock_owner)
+    assert (ws / "ok.py").read_text() == "x = 1\n"
+    with pytest.raises(ToolError, match="workspace locked"):
+        write_file(s2.workspace, "nope.py", "x = 1\n", _owner=s2.lock_owner)
 
 
 def test_gui_permission_yes_to_all(gui):

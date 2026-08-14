@@ -13,6 +13,10 @@ mask another session's stale base. Callers that don't pass a registry (tests,
 direct calls) share a module-level anonymous one. Files that were never read
 are written without a check (best-effort); races across processes/machines
 are caught by git at merge time.
+
+Writes are also subject to the advisory per-workspace lock (see silkcode/lock.py):
+an agent that carries an `_owner` (a GUI session) refuses to write while another
+owner holds a fresh lock, and refreshes the lock on each successful write.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import hashlib
 import threading
 from pathlib import Path
 
+from ..lock import acquire, is_stale, read_lock
 from ..workspace import ToolError, Workspace
 
 MAX_READ_CHARS = 50_000
@@ -59,8 +64,25 @@ def _check_stale(registry: dict, ws: Workspace, path: Path) -> None:
         )
 
 
+def _check_locked(ws: Workspace, owner: str | None) -> None:
+    """Refuse writes when another owner holds a fresh workspace lock.
+
+    Advisory: no lock file, or a stale one, means the workspace is free.
+    The owner's own writes pass (and refresh the lock afterwards).
+    """
+    lock = read_lock(ws.root)
+    if lock is None or is_stale(lock):
+        return
+    if lock.get("owner") != owner:
+        raise ToolError(
+            f"workspace locked by {lock['owner']} (pid {lock.get('pid')}) — "
+            "another session is editing this project; edits are refused until "
+            "it closes or the lock goes stale."
+        )
+
+
 def read_file(ws: Workspace, path: str, offset: int = 1, limit: int = 1000,
-              _registry: dict | None = None) -> str:
+              _registry: dict | None = None, _owner: str | None = None) -> str:
     registry = _registry if _registry is not None else _ANON_REGISTRY
     p = ws.resolve(path)
     if not p.is_file():
@@ -85,21 +107,26 @@ def read_file(ws: Workspace, path: str, offset: int = 1, limit: int = 1000,
 
 
 def write_file(ws: Workspace, path: str, content: str,
-               _registry: dict | None = None) -> str:
+               _registry: dict | None = None, _owner: str | None = None) -> str:
     registry = _registry if _registry is not None else _ANON_REGISTRY
     p = ws.resolve(path)
     _check_stale(registry, ws, p)
+    _check_locked(ws, _owner)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content)
     _record(registry, ws, p, content)
+    if _owner:
+        acquire(ws.root, _owner)  # refresh the lock: this session is active
     return f"Wrote {len(content)} characters to {ws.relative(p)}"
 
 
 def edit_file(ws: Workspace, path: str, old_string: str, new_string: str,
-              replace_all: bool = False, _registry: dict | None = None) -> str:
+              replace_all: bool = False, _registry: dict | None = None,
+              _owner: str | None = None) -> str:
     registry = _registry if _registry is not None else _ANON_REGISTRY
     p = ws.resolve(path)
     _check_stale(registry, ws, p)  # before the existence check: a read-then-deleted file is "changed"
+    _check_locked(ws, _owner)
     if not p.is_file():
         raise ToolError(f"File not found: {path}")
     text = p.read_text()
@@ -116,4 +143,6 @@ def edit_file(ws: Workspace, path: str, old_string: str, new_string: str,
         text = text.replace(old_string, new_string, 1)
     p.write_text(text)
     _record(registry, ws, p, text)
+    if _owner:
+        acquire(ws.root, _owner)  # refresh the lock: this session is active
     return f"Replaced {count if replace_all else 1} occurrence(s) in {ws.relative(p)}"

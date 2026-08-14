@@ -297,7 +297,8 @@ def _provider_for(config: Config, cache: dict, spec: str):
 
 def _make_agent(ws: Workspace, provider, model: str, cfg: dict, role_prompt: str,
                 read_only: bool, on_event=None,
-                worker_permissions: PermissionManager | None = None) -> Agent:
+                worker_permissions: PermissionManager | None = None,
+                owner: str | None = None) -> Agent:
     # tester/critic are read-only: they never touch files, so deny everything.
     # the worker uses the caller-provided permission manager (e.g. the GUI
     # session's, so it can ask the user) or falls back to full agent mode.
@@ -313,6 +314,7 @@ def _make_agent(ws: Workspace, provider, model: str, cfg: dict, role_prompt: str
         on_event=on_event,
         context=context,
         max_context_tokens=cfg.get("context_tokens") or 60_000,
+        lock_owner=owner,
     )
 
 
@@ -332,6 +334,7 @@ def run_swarm(
     on_event: SwarmEventHandler | None = None,
     should_stop: Callable[[], bool] | None = None,
     worker_permissions: PermissionManager | None = None,
+    worker_owner: str | None = None,
 ) -> SwarmResult:
     """Run the tester/critic/worker loop until the target score is reached.
 
@@ -340,6 +343,10 @@ def run_swarm(
     of auto-approving. When omitted the worker runs in full agent mode
     (writes and MEDIUM commands allowed; HIGH commands auto-denied). The
     tester and critic are always read-only and never prompt.
+
+    `worker_owner` (optional) is the advisory-lock owner the worker writes
+    under (e.g. the GUI session id), so its writes are allowed while that
+    session holds the workspace lock.
 
     Efficiency controls:
       - `max_tokens` caps total model tokens; the swarm stops with status
@@ -481,7 +488,8 @@ def run_swarm(
                 worker = _make_agent(ws, worker_provider, worker_model, worker_cfg,
                                      SWARM_WORKER_PROMPT, read_only=False,
                                      on_event=on_worker_event,
-                                     worker_permissions=worker_permissions)
+                                     worker_permissions=worker_permissions,
+                                     owner=worker_owner)
                 worker_out = worker.run_turn(_worker_prompt(parsed, score))
                 role_tokens["worker"] += worker.usage.total_tokens
                 total_tokens += worker.usage.total_tokens

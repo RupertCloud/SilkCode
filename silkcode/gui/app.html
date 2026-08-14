@@ -40,6 +40,7 @@
   .msg.user { background: var(--user); align-self: flex-end; }
   .msg.assistant { background: var(--panel2); align-self: flex-start; }
   .msg.error { background: #4a2529; color: var(--err); align-self: stretch; font-family: var(--mono); font-size: 12px; }
+.msg.notice { background: #3a3220; color: #e8c766; align-self: stretch; font-family: var(--mono); font-size: 12px; }
   .msg.tool { background: transparent; border: 1px dashed var(--border); color: var(--dim); font-family: var(--mono); font-size: 12px; align-self: flex-start; padding: 4px 10px; }
   /* the chat bar is its own persistent grid row: it can never be pushed out or squeezed */
   #composer { grid-column: 2; grid-row: 3; display: flex; flex-shrink: 0; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--panel); }
@@ -310,6 +311,7 @@ function renderEntry(e) {
   if (e.kind === "user") addMsg("user", e.text);
   else if (e.kind === "assistant") addMsg("assistant", e.text);
   else if (e.kind === "tool") { addToolMsg(e.name, e.args); addActivity(e.name, e.args); }
+  else if (e.kind === "notice") addMsg("notice", e.text);
   else if (e.kind === "error") addMsg("error", e.text);
 }
 
@@ -347,6 +349,7 @@ function handleEvent(ev) {
     }
   }
   else if (ev.type === "error") { streamEl = null; addMsg("error", ev.message); }
+  else if (ev.type === "notice") { addMsg("notice", ev.text); refreshSessionList(); }
   else if (ev.type === "turn_done") {
     streamEl = null; setRunning(false); renderUsage(ev.usage); loadDiff(); loadTree();
     refreshSessionList();
