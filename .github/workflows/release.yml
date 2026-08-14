@@ -3,6 +3,11 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to create (e.g. v0.1.0)"
+        required: true
 
 permissions:
   contents: write
@@ -18,24 +23,28 @@ jobs:
       - run: pip install -e ".[dev]" build
       - run: pytest -q
       - run: python -m build
-      - name: Version without the leading v
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Resolve tag and version
+        run: |
+          TAG="${{ github.event.inputs.version || github.ref_name }}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
       - name: Create GitHub release with wheel and sdist
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
           files: dist/*
           generate_release_notes: true
           body: |
             Install without building from source:
 
             ```bash
-            pip install https://github.com/RupertCloud/SilkCode/releases/download/${{ github.ref_name }}/silkcode-${{ env.VERSION }}-py3-none-any.whl
+            pip install https://github.com/RupertCloud/SilkCode/releases/download/${{ env.TAG }}/silkcode-${{ env.VERSION }}-py3-none-any.whl
             ```
 
             Or with [pipx](https://pipx.pypa.io) for an isolated install:
 
             ```bash
-            pipx install https://github.com/RupertCloud/SilkCode/releases/download/${{ github.ref_name }}/silkcode-${{ env.VERSION }}-py3-none-any.whl
+            pipx install https://github.com/RupertCloud/SilkCode/releases/download/${{ env.TAG }}/silkcode-${{ env.VERSION }}-py3-none-any.whl
             ```
 
             Homepage: https://silkcode.web.app
