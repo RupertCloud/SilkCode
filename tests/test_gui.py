@@ -310,6 +310,101 @@ def test_gui_permission_flow(gui):
     assert result["decision"] == "yes"
 
 
+def test_gui_swarm_end_to_end(gui, stub_server, monkeypatch):
+    base, state, ws = gui
+    # give the workspace a failing test so the swarm has something to fix
+    (ws / "tests").mkdir()
+    (ws / "tests" / "test_math.py").write_text(
+        "def test_add():\n    from mathutil import add\n    assert add(1, 2) == 3\n")
+
+    fix = "def add(a, b):\n    return a + b\n"
+    scripted = [
+        sse_response(content="The test fails: mathutil.add is missing.",
+                     usage={"prompt_tokens": 10, "completion_tokens": 3}),
+        sse_response(content=json.dumps({"critique": "add missing", "suggestions": [
+            {"title": "Implement mathutil.add", "detail": "Create mathutil.py"}]}),
+                     usage={"prompt_tokens": 10, "completion_tokens": 3}),
+        sse_response(tool_calls=[("write_file", json.dumps({"path": "mathutil.py", "content": fix}))],
+                     usage={"prompt_tokens": 10, "completion_tokens": 3}),
+        sse_response(content="Implemented and verified.",
+                     usage={"prompt_tokens": 10, "completion_tokens": 3}),
+    ]
+    server = stub_server(scripted)
+    server.thread.start()
+    try:
+        # point the config at the fresh server so the swarm's own Config.load() uses it
+        import silkcode.config as cfgmod
+        cfg = cfgmod.Config.load()
+        cfg.data["providers"]["stub"]["base_url"] = server.base_url
+        cfg.save()
+
+        resp = httpx.post(f"{base}/api/swarm/start", json={"target": 10})
+        assert resp.status_code == 200
+        assert resp.json()["running"] is True
+        sid = state.default_session_id
+
+        # a normal turn is refused while the swarm owns the workspace
+        assert httpx.post(f"{base}/api/message", json={"text": "hi", "session_id": sid}).status_code == 409
+        assert httpx.post(f"{base}/api/swarm/start", json={}).status_code == 400
+
+        assert wait_until(lambda: not state.swarm_status(sid)["running"])
+        st = state.swarm_status(sid)
+        assert st["result"]["status"] == "done"
+        assert st["result"]["final_score"] == 10.0
+        assert st["result"]["iterations"] == 2
+        assert (ws / "mathutil.py").read_text() == fix
+        assert any("score: 2.0" in line or "score: 10.0" in line for line in st["log"])
+
+        # stopping with no swarm running reports ok: false
+        stop = httpx.post(f"{base}/api/swarm/stop", json={"session_id": sid}).json()
+        assert stop["ok"] is False
+    finally:
+        server.httpd.shutdown()
+        server.httpd.server_close()
+
+
+def test_gui_swarm_stop_requests_stop(gui, stub_server, monkeypatch):
+    base, state, ws = gui
+    (ws / "tests").mkdir()
+    (ws / "tests" / "test_math.py").write_text(
+        "def test_add():\n    from mathutil import add\n    assert add(1, 2) == 3\n")
+
+    scripted = [
+        sse_response(content="The test fails: mathutil.add is missing.",
+                     usage={"prompt_tokens": 10, "completion_tokens": 3}),
+        sse_response(content=json.dumps({"critique": "c", "suggestions": [
+            {"title": "fix", "detail": "fix it"}]}), usage={"prompt_tokens": 10, "completion_tokens": 3}),
+        sse_response(content="Refusing to do anything.",
+                     usage={"prompt_tokens": 10, "completion_tokens": 3}),
+        sse_response(content="Tester still failing.", usage={"prompt_tokens": 10, "completion_tokens": 3}),
+        sse_response(content=json.dumps({"critique": "c", "suggestions": [
+            {"title": "fix", "detail": "fix it"}]}), usage={"prompt_tokens": 10, "completion_tokens": 3}),
+        sse_response(content="Refusing to do anything.",
+                     usage={"prompt_tokens": 10, "completion_tokens": 3}),
+    ]
+    server = stub_server(scripted)
+    server.thread.start()
+    try:
+        import silkcode.config as cfgmod
+        cfg = cfgmod.Config.load()
+        cfg.data["providers"]["stub"]["base_url"] = server.base_url
+        cfg.save()
+
+        resp = httpx.post(f"{base}/api/swarm/start", json={"max_iterations": 5})
+        assert resp.status_code == 200
+        sid = state.default_session_id
+        assert wait_until(lambda: state.swarm_status(sid)["running"])
+        # request a stop; the loop should end with status "stopped"
+        stop = httpx.post(f"{base}/api/swarm/stop", json={"session_id": sid}).json()
+        assert stop["ok"] is True
+        assert wait_until(lambda: not state.swarm_status(sid)["running"])
+        st = state.swarm_status(sid)
+        assert st["result"]["status"] == "stopped"
+    finally:
+        server.httpd.shutdown()
+        server.httpd.server_close()
+
+
 def test_gui_new_session_pointed_at_local_project(gui):
     base, state, default_ws = gui
     first_id = state.default_session_id

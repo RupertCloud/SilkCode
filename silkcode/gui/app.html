@@ -87,6 +87,7 @@
   <label>Model <select id="model-select"></select></label>
   <button id="add-model">+ Add model</button>
   <button id="github-btn">GitHub</button>
+  <button id="swarm-btn" title="Multi-agent improvement loop: tester, critic and worker iterate until this project scores 10/10">🐝 Swarm</button>
   <label>Mode <select id="mode-select">
     <option value="ask">ask</option><option value="edit">edit</option><option value="agent">agent</option>
   </select></label>
@@ -191,6 +192,37 @@
     <div class="row">
       <button id="p-cancel">Cancel</button>
       <button class="primary" id="p-save">Add provider</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="swarm-modal">
+  <div class="modal" style="width:560px">
+    <h3>Improvement swarm <span id="swarm-status" style="font-size:12px;color:var(--dim)"></span></h3>
+    <div style="color:var(--dim);font-size:12px;margin-bottom:6px">
+      Three agents — <b>tester</b> (investigates failures), <b>critic</b> (prioritized suggestions),
+      <b>worker</b> (implements them) — iterate on this project, scoring it 0–10 each round
+      (test suite + hygiene), until it reaches the target, the score stalls, or you stop it.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px">
+      <div>
+        <label>Worker model</label><input id="sw-model" placeholder="default">
+        <label>Critic model (optional)</label><input id="sw-critic-model" placeholder="default">
+        <label>Tester model (optional)</label><input id="sw-tester-model" placeholder="default">
+      </div>
+      <div>
+        <label>Target score (0–10)</label><input id="sw-target" type="number" min="0" max="10" step="0.5" value="10">
+        <label>Max iterations (0 = unlimited)</label><input id="sw-max-iter" type="number" min="0" value="0">
+        <label>Stall limit (stop after N flat rounds)</label><input id="sw-stall" type="number" min="1" value="3">
+        <label>Test command (optional)</label><input id="sw-test-cmd" placeholder="auto-detected">
+      </div>
+    </div>
+    <label style="margin-top:10px">Live progress</label>
+    <div id="swarm-log" style="font-family:var(--mono);font-size:12px;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px;height:190px;overflow:auto;white-space:pre-wrap;margin-top:2px">(not started)</div>
+    <div class="row">
+      <button id="sw-cancel">Close</button>
+      <button class="danger" id="sw-stop" style="display:none">Stop</button>
+      <button class="primary" id="sw-start">Start swarm</button>
     </div>
   </div>
 </div>
@@ -303,6 +335,24 @@ function handleEvent(ev) {
   }
   else if (ev.type === "push_result") {
     addMsg("tool", "⇧ " + ev.message.split("\n")[0]);
+  }
+  else if (ev.type === "swarm_progress") {
+    swarmLog(ev.line);
+  }
+  else if (ev.type === "swarm_done") {
+    setSwarmRunning(false);
+    swarmLog("");
+    const r = ev.result || {};
+    swarmLog(`== swarm finished: ${r.status || "?"} ==`);
+    swarmLog(`final score: ${r.final_score}/10 (target ${r.target})`);
+    swarmLog(`iterations: ${r.iterations}   tokens: ${r.tokens}   time: ${r.seconds}s`);
+    if (r.detail) swarmLog("detail: " + r.detail);
+    if (r.saved_to) swarmLog("saved: " + r.saved_to);
+    loadDiff(); loadTree();
+  }
+  else if (ev.type === "swarm_error") {
+    setSwarmRunning(false);
+    swarmLog("error: " + ev.message);
   }
 }
 
@@ -577,6 +627,69 @@ $("push-btn").onclick = async () => {
   try {
     const data = await api("/api/push", {});
     addMsg("tool", "⇧ " + data.result.split("\n")[0]);
+  } catch (err) { alert(err.message); }
+};
+
+// ---- improvement swarm ----------------------------------------------------
+
+let swarmRunning = false;
+
+function swarmLog(line) {
+  const log = $("swarm-log");
+  if (log.textContent === "(not started)") log.textContent = "";
+  log.textContent += line + "\n";
+  log.scrollTop = log.scrollHeight;
+}
+
+function setSwarmRunning(running) {
+  swarmRunning = running;
+  $("sw-start").style.display = running ? "none" : "";
+  $("sw-stop").style.display = running ? "" : "none";
+  const st = $("swarm-status");
+  st.textContent = running ? "● running" : "";
+  st.style.color = running ? "var(--warn)" : "var(--dim)";
+  $("swarm-btn").style.borderColor = running ? "var(--warn)" : "";
+}
+
+function renderSwarmStatus(s) {
+  setSwarmRunning(!!s.running);
+  if (s.log && s.log.length) {
+    $("swarm-log").textContent = s.log.join("\n");
+    $("swarm-log").scrollTop = $("swarm-log").scrollHeight;
+  } else if (!s.running && !s.result && !s.error) {
+    $("swarm-log").textContent = "(not started)";
+  }
+  if (s.error) swarmLog("error: " + s.error);
+}
+
+$("swarm-btn").onclick = () => {
+  $("swarm-modal").classList.add("open");
+  api("/api/swarm/status", {session_id: currentSessionId})
+    .then(renderSwarmStatus)
+    .catch(() => {});
+};
+$("sw-cancel").onclick = () => $("swarm-modal").classList.remove("open");
+$("sw-start").onclick = async () => {
+  try {
+    const body = {
+      model: $("sw-model").value.trim() || undefined,
+      critic_model: $("sw-critic-model").value.trim() || undefined,
+      tester_model: $("sw-tester-model").value.trim() || undefined,
+      target: parseFloat($("sw-target").value) || 10,
+      max_iterations: parseInt($("sw-max-iter").value, 10) || 0,
+      stall_limit: parseInt($("sw-stall").value, 10) || 3,
+      test_command: $("sw-test-cmd").value.trim() || undefined,
+      session_id: currentSessionId,
+    };
+    await api("/api/swarm/start", body);
+    setSwarmRunning(true);
+    swarmLog("swarm started…");
+  } catch (err) { alert(err.message); }
+};
+$("sw-stop").onclick = async () => {
+  try {
+    const r = await api("/api/swarm/stop", {session_id: currentSessionId});
+    swarmLog(r.ok ? "stop requested — finishing the current step…" : r.error);
   } catch (err) { alert(err.message); }
 };
 

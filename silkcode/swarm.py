@@ -308,11 +308,14 @@ def run_swarm(
     min_score_delta: float = 0.5,
     test_command: str | None = None,
     on_progress: ProgressFn = lambda s: None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> SwarmResult:
     """Run the tester/critic/worker loop until the target score is reached.
 
-    Returns a SwarmResult; it never raises for agent errors - those are
-    recorded in the result's status/detail. Config errors still raise.
+    `should_stop` (optional) is polled before each iteration; when it returns
+    True the swarm stops with status "stopped". Returns a SwarmResult; it
+    never raises for agent errors - those are recorded in the result's
+    status/detail. Config errors still raise.
     """
     if not 0.0 <= target <= 10.0:
         raise ValueError("target must be between 0 and 10")
@@ -345,6 +348,9 @@ def run_swarm(
             on_progress(f"  worker   {_summarize(output, 140)}")
 
     while max_iterations == 0 or iteration < max_iterations:
+        if should_stop is not None and should_stop():
+            status, detail = "stopped", "swarm stopped by the user"
+            break
         iteration += 1
         on_progress(f"--- iteration {iteration} ---")
         score = score_workspace(ws, test_command=test_command)
