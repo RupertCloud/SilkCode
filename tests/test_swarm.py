@@ -228,3 +228,134 @@ def test_run_swarm_max_iterations(tmp_path, stub_server, monkeypatch):
 def test_run_swarm_validates_target():
     with pytest.raises(ValueError):
         run_swarm(Workspace("."), "stub", target=11.0)
+
+
+def test_run_swarm_skips_tester_when_tests_pass(tmp_path, stub_server, monkeypatch):
+    """With a green suite (only hygiene points missing), the tester is never
+    called: critic + worker only, and per-role tokens are tracked."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("SILKCODE_HOME", str(home))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _make_repo(repo, buggy=False)          # tests pass -> score 8 + 2 hygiene = 10? no:
+    (repo / "app.py").write_text("# TODO: remove me\nprint('x')\n")  # hygiene 1 -> score 9
+
+    scripted = [
+        # iteration 1: tester skipped, critic suggests removing the TODO
+        sse_response(content=json.dumps({"critique": "TODO left behind", "suggestions": [
+            {"title": "Remove the TODO marker", "detail": "Delete the TODO comment in app.py"}]}),
+                     usage={"prompt_tokens": 20, "completion_tokens": 6}),
+        sse_response(tool_calls=[("edit_file", json.dumps(
+            {"path": "app.py", "old_string": "# TODO: remove me\n", "new_string": ""}))],
+                     usage={"prompt_tokens": 20, "completion_tokens": 6}),
+        sse_response(content="Removed the TODO.", usage={"prompt_tokens": 10, "completion_tokens": 3}),
+    ]
+    server = stub_server(scripted)
+    server.thread.start()
+    try:
+        _config(home, server)
+        result = run_swarm(Workspace(str(repo)), worker_spec="stub")
+    finally:
+        server.httpd.shutdown()
+        server.httpd.server_close()
+
+    assert result.status == "done"
+    assert result.final_score == 10.0
+    assert result.scores == [9.0, 10.0]
+    # exactly 3 model requests: critic, worker(write), worker(done) - no tester
+    assert len(server.requests) == 3
+    assert result.role_tokens["tester"] == 0
+    assert result.role_tokens["critic"] > 0
+    assert result.role_tokens["worker"] > 0
+
+
+def test_run_swarm_skips_worker_when_nothing_to_do(tmp_path, stub_server, monkeypatch):
+    """Green suite + full hygiene -> 10/10 immediately; no agents run at all."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("SILKCODE_HOME", str(home))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _make_repo(repo, buggy=False)
+
+    server = stub_server([])  # no scripted responses: nothing may be requested
+    server.thread.start()
+    try:
+        _config(home, server)
+        result = run_swarm(Workspace(str(repo)), worker_spec="stub")
+    finally:
+        server.httpd.shutdown()
+        server.httpd.server_close()
+
+    assert result.status == "done"
+    assert result.final_score == 10.0
+    assert result.iterations == 1
+    assert result.tokens == 0
+    assert len(server.requests) == 0
+
+
+def test_run_swarm_token_budget(tmp_path, stub_server, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("SILKCODE_HOME", str(home))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _make_repo(repo, buggy=True)
+
+    scripted = [
+        sse_response(content="The test fails: mathutil.add is missing.",
+                     usage={"prompt_tokens": 40, "completion_tokens": 12}),
+    ]
+    server = stub_server(scripted)
+    server.thread.start()
+    try:
+        _config(home, server)
+        result = run_swarm(Workspace(str(repo)), worker_spec="stub", max_tokens=10)
+    finally:
+        server.httpd.shutdown()
+        server.httpd.server_close()
+
+    assert result.status == "token-budget"
+    assert "budget" in result.detail
+    assert result.tokens >= 10  # the tester alone blew the budget
+    assert result.role_tokens["tester"] >= 10
+
+
+def test_run_swarm_structured_events(tmp_path, stub_server, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("SILKCODE_HOME", str(home))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _make_repo(repo, buggy=True)
+
+    fix = "def add(a, b):\n    return a + b\n"
+    scripted = [
+        sse_response(content="The test fails: mathutil.add is missing.",
+                     usage={"prompt_tokens": 40, "completion_tokens": 12}),
+        sse_response(content=json.dumps({"critique": "c", "suggestions": [
+            {"title": "Implement mathutil.add", "detail": "Create mathutil.py"}]}),
+                     usage={"prompt_tokens": 50, "completion_tokens": 20}),
+        sse_response(tool_calls=[("write_file", json.dumps({"path": "mathutil.py", "content": fix}))],
+                     usage={"prompt_tokens": 60, "completion_tokens": 15}),
+        sse_response(content="Done.", usage={"prompt_tokens": 30, "completion_tokens": 5}),
+    ]
+    server = stub_server(scripted)
+    server.thread.start()
+    try:
+        _config(home, server)
+        events = []
+        result = run_swarm(Workspace(str(repo)), worker_spec="stub",
+                           on_event=lambda kind, data: events.append((kind, data)))
+    finally:
+        server.httpd.shutdown()
+        server.httpd.server_close()
+
+    kinds = [k for k, _ in events]
+    assert "iteration" in kinds and "score" in kinds and "phase" in kinds and "log" in kinds
+    score_events = [d for k, d in events if k == "score"]
+    assert [d["score"] for d in score_events] == [2.0, 10.0]
+    phases = [d["role"] for k, d in events if k == "phase"]
+    assert phases == ["tester", "critic", "worker"]
+    assert result.status == "done"

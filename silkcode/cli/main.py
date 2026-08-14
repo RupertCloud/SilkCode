@@ -309,6 +309,11 @@ def cmd_swarm(argv: list[str]) -> int:
                         help="hard cap on iterations; 0 = run without end (default: 0)")
     parser.add_argument("--stall-limit", type=int, default=3,
                         help="stop after this many non-improving iterations (default: 3)")
+    parser.add_argument("--max-tokens", type=int, default=0,
+                        help="stop once this many model tokens are spent; 0 = no budget (default: 0)")
+    parser.add_argument("--no-skip-tester", action="store_true",
+                        help="always run the tester, even when the tests already pass "
+                             "(default: tester is skipped on a green suite)")
     parser.add_argument("--test-command", help="explicit test command (auto-detected when omitted)")
     args = parser.parse_args(argv)
 
@@ -328,6 +333,8 @@ def cmd_swarm(argv: list[str]) -> int:
             target=args.target,
             max_iterations=args.max_iterations,
             stall_limit=args.stall_limit,
+            max_tokens=args.max_tokens,
+            skip_tester_when_tests_pass=not args.no_skip_tester,
             test_command=args.test_command,
             on_progress=print,
         )

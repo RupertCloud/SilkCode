@@ -157,12 +157,21 @@ class SwarmResult:
     scores: list[float]
     final_score: float
     target: float
-    status: str                       # done | stalled | max-iterations | error
+    status: str                       # done | stalled | max-iterations | token-budget | stopped | error
     detail: str
     tokens: int = 0
     seconds: float = 0.0
     saved_to: str | None = None
     traces: str | None = None
+    role_tokens: dict = None          # {"tester": n, "critic": n, "worker": n}
+
+
+# Structured events emitted via on_event(kind, data):
+#   ("iteration", {"iteration": n})
+#   ("score",     {"score": f, "tests": f, "hygiene": f, "detail": str, "iteration": n})
+#   ("phase",     {"role": "tester"|"critic"|"worker"})
+#   ("log",       {"line": str})                 # mirrors on_progress
+SwarmEventHandler = Callable[[str, dict], None]
 
 
 def _clip(text: str, limit: int = CLIP_CHARS) -> str:
@@ -306,21 +315,40 @@ def run_swarm(
     max_iterations: int = 0,          # 0 = run without end (until target/stall)
     stall_limit: int = 3,             # stop after N non-improving iterations
     min_score_delta: float = 0.5,
+    max_tokens: int = 0,              # 0 = no token budget; else stop once exceeded
     test_command: str | None = None,
+    skip_tester_when_tests_pass: bool = True,
     on_progress: ProgressFn = lambda s: None,
+    on_event: SwarmEventHandler | None = None,
     should_stop: Callable[[], bool] | None = None,
 ) -> SwarmResult:
     """Run the tester/critic/worker loop until the target score is reached.
 
+    Efficiency controls:
+      - `max_tokens` caps total model tokens; the swarm stops with status
+        "token-budget" once the cap is exceeded (checked before each round).
+      - `skip_tester_when_tests_pass` (default True) skips the read-only
+        tester whenever the test suite is already green or there is no test
+        command - the critic still runs to suggest hygiene improvements, so
+        an all-green repo costs 2 agents per round instead of 3.
+      - the worker is skipped when the critic returns no suggestions and the
+        tests already pass (nothing left to implement).
+      - per-role token usage is tracked (result.role_tokens) so you can see
+        where the budget goes.
+
     `should_stop` (optional) is polled before each iteration; when it returns
-    True the swarm stops with status "stopped". Returns a SwarmResult; it
-    never raises for agent errors - those are recorded in the result's
-    status/detail. Config errors still raise.
+    True the swarm stops with status "stopped". `on_event` receives
+    structured events ("iteration", "score", "phase", "log") for live
+    visualization. Returns a SwarmResult; it never raises for agent errors -
+    those are recorded in the result's status/detail. Config errors still
+    raise.
     """
     if not 0.0 <= target <= 10.0:
         raise ValueError("target must be between 0 and 10")
     if stall_limit < 1:
         raise ValueError("stall_limit must be >= 1")
+    if max_tokens < 0:
+        raise ValueError("max_tokens must be >= 0")
     critic_spec = critic_spec or worker_spec
     tester_spec = tester_spec or worker_spec
     config = Config.load()
@@ -334,29 +362,49 @@ def run_swarm(
     previous: list[str] = []
     traces: list[dict] = []
     total_tokens = 0
+    role_tokens = {"tester": 0, "critic": 0, "worker": 0}
     best = -1.0
     stall = 0
     iteration = 0
     status, detail = "max-iterations", "iteration cap reached"
 
+    def emit(kind: str, data: dict) -> None:
+        if on_event is not None:
+            on_event(kind, data)
+
     def on_worker_event(kind: str, data: object) -> None:
         if kind == "tool_start":
             name = (data or {}).get("name", "?")
-            on_progress(f"  worker -> {name}")
+            line = f"  worker -> {name}"
+            on_progress(line)
+            emit("log", {"line": line})
         elif kind == "tool_result":
             output = (data or {}).get("output", "")
-            on_progress(f"  worker   {_summarize(output, 140)}")
+            line = f"  worker   {_summarize(output, 140)}"
+            on_progress(line)
+            emit("log", {"line": line})
+
+    def progress(line: str) -> None:
+        on_progress(line)
+        emit("log", {"line": line})
 
     while max_iterations == 0 or iteration < max_iterations:
         if should_stop is not None and should_stop():
             status, detail = "stopped", "swarm stopped by the user"
             break
+        if max_tokens and total_tokens >= max_tokens:
+            status = "token-budget"
+            detail = f"token budget of {max_tokens} exhausted ({total_tokens} used)"
+            break
         iteration += 1
-        on_progress(f"--- iteration {iteration} ---")
+        emit("iteration", {"iteration": iteration})
+        progress(f"--- iteration {iteration} ---")
         score = score_workspace(ws, test_command=test_command)
         scores.append(score.score)
-        on_progress(f"score: {score.score:.1f}/10 "
-                    f"(tests {score.tests:.1f}/8, hygiene {score.hygiene:.1f}/2) - {score.detail}")
+        emit("score", {"score": score.score, "tests": score.tests, "hygiene": score.hygiene,
+                       "detail": score.detail, "iteration": iteration})
+        progress(f"score: {score.score:.1f}/10 "
+                 f"(tests {score.tests:.1f}/8, hygiene {score.hygiene:.1f}/2) - {score.detail}")
         if score.score >= target:
             status, detail = "done", f"reached target score {target:.1f}/10"
             break
@@ -370,29 +418,63 @@ def run_swarm(
             detail = f"score stuck at {best:.1f}/10 for {stall_limit} consecutive iterations"
             break
 
+        tester = critic = worker = None
         try:
-            tester = _make_agent(ws, tester_provider, tester_model, tester_cfg,
-                                 SWARM_TESTER_PROMPT, read_only=True)
-            tester_report = tester.run_turn(_tester_prompt(score))
-            total_tokens += tester.usage.total_tokens
-            on_progress(f"tester: {_summarize(tester_report)}")
+            tests_pass = score.tests >= 8.0 or score.test_command is None
+            if skip_tester_when_tests_pass and tests_pass:
+                tester_report = (
+                    "No test command detected - the critic should suggest adding a "
+                    "test framework so the swarm can score the test suite."
+                    if score.test_command is None else
+                    "The test suite passes; there is nothing to investigate. "
+                    "Focus on hygiene and robustness improvements instead."
+                )
+                progress("tester: skipped (tests already pass)")
+            else:
+                emit("phase", {"role": "tester"})
+                tester = _make_agent(ws, tester_provider, tester_model, tester_cfg,
+                                     SWARM_TESTER_PROMPT, read_only=True)
+                tester_report = tester.run_turn(_tester_prompt(score))
+                role_tokens["tester"] += tester.usage.total_tokens
+                total_tokens += tester.usage.total_tokens
+                progress(f"tester: {_summarize(tester_report)}")
+            if max_tokens and total_tokens >= max_tokens:
+                status, detail = ("token-budget",
+                                  f"token budget of {max_tokens} exhausted ({total_tokens} used)")
+                break
 
+            emit("phase", {"role": "critic"})
             critic = _make_agent(ws, critic_provider, critic_model, critic_cfg,
                                  SWARM_CRITIC_PROMPT, read_only=True)
             critic_out = critic.run_turn(
                 _critic_prompt(score, tester_report, _diff_summary(ws), previous))
+            role_tokens["critic"] += critic.usage.total_tokens
             total_tokens += critic.usage.total_tokens
             parsed = _parse_critic(critic_out)
             suggestions = parsed.get("suggestions") or []
             previous.extend(item.get("title", "") for item in suggestions if item.get("title"))
-            on_progress(f"critic: {len(suggestions)} suggestion(s)")
+            progress(f"critic: {len(suggestions)} suggestion(s)")
+            if max_tokens and total_tokens >= max_tokens:
+                status, detail = ("token-budget",
+                                  f"token budget of {max_tokens} exhausted ({total_tokens} used)")
+                break
 
-            worker = _make_agent(ws, worker_provider, worker_model, worker_cfg,
-                                 SWARM_WORKER_PROMPT, read_only=False,
-                                 on_event=on_worker_event)
-            worker_out = worker.run_turn(_worker_prompt(parsed, score))
-            total_tokens += worker.usage.total_tokens
-            on_progress(f"worker: {_summarize(worker_out)}")
+            if suggestions or not tests_pass:
+                emit("phase", {"role": "worker"})
+                worker = _make_agent(ws, worker_provider, worker_model, worker_cfg,
+                                     SWARM_WORKER_PROMPT, read_only=False,
+                                     on_event=on_worker_event)
+                worker_out = worker.run_turn(_worker_prompt(parsed, score))
+                role_tokens["worker"] += worker.usage.total_tokens
+                total_tokens += worker.usage.total_tokens
+                progress(f"worker: {_summarize(worker_out)}")
+            else:
+                worker_out = "No suggestions and tests pass - nothing to implement."
+                progress(f"worker: skipped ({worker_out.lower()})")
+            if max_tokens and total_tokens >= max_tokens:
+                status, detail = ("token-budget",
+                                  f"token budget of {max_tokens} exhausted ({total_tokens} used)")
+                break
         except ProviderError as exc:
             status, detail = "error", f"agent failed: {exc}"
             break
@@ -400,9 +482,10 @@ def run_swarm(
         traces.append({
             "iteration": iteration,
             "score": score.score,
-            "tester": tester.messages,
-            "critic": critic.messages,
-            "worker": worker.messages,
+            "tester": tester.messages if tester is not None else [],
+            "critic": critic.messages if critic is not None else [],
+            "worker": worker.messages if worker is not None else [],
+            "role_tokens": dict(role_tokens),
         })
 
     # Persist scores and per-iteration traces (mirrors benchmark output layout).
@@ -422,6 +505,7 @@ def run_swarm(
         "scores": scores,
         "final_score": scores[-1] if scores else 0.0,
         "tokens": total_tokens,
+        "role_tokens": role_tokens,
         "seconds": round(time.monotonic() - started, 1),
         "worker_spec": worker_spec,
         "critic_spec": critic_spec,
@@ -440,7 +524,20 @@ def run_swarm(
         seconds=round(time.monotonic() - started, 1),
         saved_to=str(out_path),
         traces=str(trace_dir),
+        role_tokens=role_tokens,
     )
+
+
+def _score_bars(scores: list[float], width: int = 40) -> list[str]:
+    """ASCII bar chart of the score history, one line per iteration."""
+    if not scores:
+        return ["  (no iterations)"]
+    lines = []
+    for i, s in enumerate(scores, 1):
+        filled = round(min(max(s, 0.0), 10.0) / 10.0 * width)
+        bar = "█" * filled + "░" * (width - filled)
+        lines.append(f"  it{i:<3} {s:>4.1f}  {bar}")
+    return lines
 
 
 def format_swarm_report(result: SwarmResult) -> str:
@@ -449,8 +546,17 @@ def format_swarm_report(result: SwarmResult) -> str:
         f"iterations: {result.iterations}",
         f"final score: {result.final_score:.1f}/10 (target {result.target:.1f})",
         "score history: " + (" -> ".join(f"{s:.1f}" for s in result.scores) or "-"),
-        f"tokens: {result.tokens}   time: {result.seconds}s",
+        "score chart:",
     ]
+    lines.extend(_score_bars(result.scores))
+    if result.role_tokens:
+        rt = result.role_tokens
+        lines.append(f"tokens by role: tester {rt.get('tester', 0)}, "
+                     f"critic {rt.get('critic', 0)}, worker {rt.get('worker', 0)} "
+                     f"(total {result.tokens})")
+    else:
+        lines.append(f"tokens: {result.tokens}")
+    lines.append(f"time: {result.seconds}s")
     if result.detail:
         lines.append(f"detail: {result.detail}")
     if result.saved_to:

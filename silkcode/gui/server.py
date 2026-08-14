@@ -425,6 +425,7 @@ class GuiState:
             target = float(params.get("target") or 10.0)
             max_iterations = int(params.get("max_iterations") or 0)
             stall_limit = int(params.get("stall_limit") or 3)
+            max_tokens = int(params.get("max_tokens") or 0)
         except (TypeError, ValueError) as exc:
             raise ConfigError(f"bad swarm option: {exc}") from exc
         test_command = str(params.get("test_command") or "").strip() or None
@@ -447,6 +448,13 @@ class GuiState:
                 status["log"].append(line)
                 self.broadcast({"type": "swarm_progress", "session": session.id, "line": line})
 
+            def on_event(kind: str, data: dict) -> None:
+                if kind == "score":
+                    self.broadcast({"type": "swarm_score", "session": session.id, **data})
+                elif kind == "phase":
+                    self.broadcast({"type": "swarm_phase", "session": session.id,
+                                    "role": data.get("role")})
+
             try:
                 result = run_swarm(
                     session.workspace,
@@ -456,8 +464,10 @@ class GuiState:
                     target=target,
                     max_iterations=max_iterations,
                     stall_limit=stall_limit,
+                    max_tokens=max_tokens,
                     test_command=test_command,
                     on_progress=on_progress,
+                    on_event=on_event,
                     should_stop=lambda: status["_stop"].is_set(),
                 )
                 status["result"] = asdict(result)
