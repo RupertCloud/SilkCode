@@ -154,7 +154,15 @@ def _models_list() -> int:
         needs_key = bool(cfg.get("api_key_env") or cfg.get("api_key"))
         key_status = "key: set" if key else ("key: MISSING ($" + cfg.get("api_key_env", "?") + ")" if needs_key else "key: not required")
         default = cfg.get("default_model") or "-"
-        print(f"{name:<12} {cfg.get('base_url', ''):<55} default: {default:<24} {key_status}")
+        timeout = cfg.get("timeout")
+        timeout_status = ""
+        if timeout:
+            try:
+                shown = int(timeout) if float(timeout).is_integer() else float(timeout)
+            except (TypeError, ValueError):
+                shown = timeout
+            timeout_status = f"timeout: {shown}s"
+        print(f"{name:<12} {cfg.get('base_url', ''):<55} default: {default:<24} {key_status} {timeout_status}")
         if cfg.get("type") == "ollama":
             provider = build_provider(name, cfg, api_key=key)
             local = provider.list_models()
