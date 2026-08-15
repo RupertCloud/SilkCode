@@ -1,6 +1,7 @@
 """Advisory per-workspace lock tests (silkcode/lock.py) + file-tool integration."""
 
 import json
+import os
 import time
 
 import pytest
@@ -48,6 +49,45 @@ def test_stale_lock_taken_over(tmp_path):
     assert is_stale(read_lock(tmp_path))
     acquire(tmp_path, "session-2")  # stale -> takeover
     assert owner_of(tmp_path) == "session-2"
+
+
+def test_dead_owner_lock_is_stale_immediately(tmp_path):
+    """A lock whose owner process is gone must not block anyone for the whole
+    staleness window - a dead process can never write again."""
+    acquire(tmp_path, "session-1")
+    lock = read_lock(tmp_path)
+    lock["pid"] = 2**31 - 1  # a pid that cannot exist on this system
+    lock["acquired_at"] = time.time()  # fresh timestamp on purpose
+    (tmp_path / LOCK_RELPATH).write_text(json.dumps(lock))
+    assert is_stale(read_lock(tmp_path))
+    acquire(tmp_path, "session-2")  # takeover works despite the fresh timestamp
+    assert owner_of(tmp_path) == "session-2"
+
+
+def test_live_owner_lock_is_not_stale(tmp_path):
+    acquire(tmp_path, "session-1")
+    lock = read_lock(tmp_path)
+    lock["pid"] = os.getpid()  # this test process is alive
+    lock["acquired_at"] = time.time()
+    (tmp_path / LOCK_RELPATH).write_text(json.dumps(lock))
+    assert not is_stale(read_lock(tmp_path))
+    with pytest.raises(LockError, match="locked by session-1"):
+        acquire(tmp_path, "session-2")
+
+
+def test_lock_state_describes_lock_for_gui(tmp_path):
+    from silkcode.lock import lock_state
+    assert lock_state(tmp_path) == {"held": False}
+    acquire(tmp_path, "session-1")
+    lock = read_lock(tmp_path)
+    lock["pid"] = 2**31 - 1  # dead owner
+    (tmp_path / LOCK_RELPATH).write_text(json.dumps(lock))
+    st = lock_state(tmp_path)
+    assert st["held"] is True
+    assert st["owner"] == "session-1"
+    assert st["alive"] is False
+    assert st["stale"] is True
+    assert st["age"] is not None
 
 
 def test_release_only_by_owner(tmp_path):

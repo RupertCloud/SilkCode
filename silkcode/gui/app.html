@@ -95,6 +95,7 @@
   <span class="spacer"></span>
   <label>Session <select id="session-select"></select></label>
   <button id="new-session" title="Start a new conversation">＋</button>
+  <button id="close-session" title="Stop and close this session; releases its workspace lock so another session can take over the project">✕</button>
   <label>Model <select id="model-select"></select></label>
   <button id="add-model">+ Add model</button>
   <button id="github-btn">GitHub</button>
@@ -110,6 +111,7 @@
 </header>
 
 <div id="version-banner">⚠ The Silk Code server is running an older version. Stop it (Ctrl+C in its terminal) and run <b>silkcode gui</b> again, then reload this page.</div>
+<div id="lock-banner" style="display:none;background:#3a2f1d;color:#e8c87a;padding:6px 12px;font-size:12px"></div>
 <main>
   <section class="pane" id="files"><h2>PROJECT</h2><div id="tree"></div></section>
   <section id="chat">
@@ -869,6 +871,7 @@ async function init() {
   $("session").textContent = "session #" + state.session_id;
   setRunning(state.running);
   renderUsage(state.usage);
+  renderLock(state);
   await loadProviders(state.spec);
   renderSessions(state.sessions, state.session_id);
   refreshGithubStatus().catch(() => {});
@@ -877,6 +880,43 @@ async function init() {
   transcript.forEach(renderEntry);
   loadTree(); loadDiff();
 }
+
+// ---- workspace lock ---------------------------------------------------------
+
+function renderLock(state) {
+  const banner = $("lock-banner");
+  const conflict = state.lock_conflict;
+  if (!conflict) { banner.style.display = "none"; banner.innerHTML = ""; return; }
+  const lock = state.lock || {};
+  banner.style.display = "block";
+  if (lock.stale || lock.alive === false) {
+    // The previous owner's process is gone (or the lock timed out): offer a
+    // one-click takeover instead of waiting for the staleness window.
+    banner.innerHTML = `⚠ ${esc(conflict)} — the owner is no longer running, so this ` +
+      `lock is stale. <button id="takeover-btn" style="margin-left:8px">Take over workspace</button>`;
+    $("takeover-btn").onclick = async () => {
+      try {
+        const r = await api("/api/lock/takeover", {session_id: currentSessionId});
+        if (r.ok) { renderLock({lock_conflict: null}); addMsg("tool", "✓ " + "Workspace lock taken over — edits are enabled."); }
+      } catch (err) { alert(err.message); }
+    };
+  } else {
+    const age = lock.age != null ? ` (${Math.round(lock.age / 60)}m old)` : "";
+    banner.innerHTML = `⚠ ${esc(conflict)} — another live session holds the lock; ` +
+      `edits are refused until it closes${age}.`;
+  }
+}
+
+$("close-session").onclick = async () => {
+  const s = $("session-select").value;
+  if (!confirm(`Close session #${s}? Its conversation is saved and can be resumed later; ` +
+               `its workspace lock is released.`)) return;
+  try {
+    const r = await api("/api/session/close", {session_id: currentSessionId});
+    currentSessionId = r.session_id;
+    init();
+  } catch (err) { alert(err.message); }
+};
 
 const es = new EventSource("/api/events");
 es.onmessage = (e) => handleEvent(JSON.parse(e.data));

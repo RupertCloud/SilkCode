@@ -34,7 +34,7 @@ from ..agent import Agent
 from ..agent.loop import DEFAULT_CONTEXT_TOKENS
 from ..config import Config, ConfigError
 from ..context import build_context
-from ..lock import LockError, acquire, release
+from ..lock import LockError, acquire, lock_state, release
 from ..permissions import PermissionManager
 from ..providers import ProviderError, build_provider
 from ..project import record_recent_project, resolve_project
@@ -250,7 +250,9 @@ class GuiState:
         loaded = {
             s.id: {"id": s.id, "title": s.data.get("title", ""), "model": s.spec,
                    "cwd": str(s.workspace.root), "running": s.running, "open": True,
-                   "instance": s.data.get("instance")}
+                   "instance": s.data.get("instance"),
+                   "lock_conflict": s.lock_conflict,
+                   "lock": lock_state(s.workspace.root)}
             for s in self.sessions.values()
         }
         for saved in self.store.list():
@@ -422,10 +424,54 @@ class GuiState:
             "auto_push": self.auto_push,
             "usage": session.usage_dict(),
             "sessions": self.sessions_summary(),
+            "lock_conflict": session.lock_conflict,
+            "lock": lock_state(session.workspace.root),
         }
 
     def stop(self, session_id: int | None = None) -> None:
         self.get_session(session_id).agent.request_stop()
+
+    def close_session(self, session_id: int | None = None) -> dict:
+        """Stop and close a session: release its workspace lock and drop it from
+        memory so another session can take over the project. The conversation
+        stays saved on disk and can be resumed later. Closing the last open
+        session leaves the daemon with a fresh session on its project (the
+        daemon always has a current session)."""
+        sid = session_id if session_id is not None else self.default_session_id
+        session = self.sessions.get(sid)
+        if session is None:
+            raise ToolError(f"session #{sid} is not open in this daemon")
+        if self.swarms.get(sid, {}).get("running"):
+            raise ToolError("a swarm is running in this session; stop it first")
+        if session.running:
+            session.agent.request_stop()
+            deadline = time.time() + 8.0
+            while time.time() < deadline and session.running:
+                time.sleep(0.05)  # let the running turn wind down
+        try:
+            release(session.workspace.root, session.lock_owner)
+        except Exception:
+            pass  # releasing is best-effort; the lock goes stale on its own
+        del self.sessions[sid]
+        if self.default_session_id == sid:
+            self.default_session_id = max(self.sessions) if self.sessions else self.new_session().id
+        self.broadcast({"type": "session_closed", "session": sid})
+        return {"ok": True, "session_id": self.default_session_id}
+
+    def takeover_lock(self, session_id: int | None = None) -> dict:
+        """Re-try acquiring the session's workspace lock. Succeeds when the
+        previous owner's process is dead (liveness check) or the lock went
+        stale; raises ToolError when another live session still holds it."""
+        session = self.get_session(session_id)
+        try:
+            acquire(session.workspace.root, session.lock_owner)
+        except LockError as exc:
+            raise ToolError(str(exc)) from exc
+        session.lock_conflict = None
+        notice = "Workspace lock taken over — edits are enabled again."
+        session.transcript.append({"kind": "notice", "text": notice})
+        self.broadcast({"type": "notice", "text": notice, "session": session.id})
+        return {"ok": True, "lock_conflict": None}
 
     def switch_model(self, spec: str, session_id: int | None = None) -> None:
         session = self.get_session(session_id)
@@ -944,6 +990,10 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/session":
                 session = st.load_session(int(body.get("id", 0)))
                 self._json(st.state(session.id))
+            elif route == "/api/session/close":
+                self._json(st.close_session(sid))
+            elif route == "/api/lock/takeover":
+                self._json(st.takeover_lock(sid))
             elif route == "/api/swarm/start":
                 self._json(st.start_swarm(body, sid))
             elif route == "/api/swarm/stop":

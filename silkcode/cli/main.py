@@ -177,6 +177,9 @@ def _models_add(argv: list[str]) -> int:
     parser.add_argument("--account-id", help="account id for providers whose URL needs one (Cloudflare)")
     parser.add_argument("--api-key-env", help="environment variable that holds the API key (recommended)")
     parser.add_argument("--api-key", help="API key stored in the config file (prefer --api-key-env)")
+    parser.add_argument("--timeout", type=float, default=None,
+                        help="request timeout in seconds (default 180); raise it for slow "
+                             "providers like DeepSeek that can exceed 3 minutes to first token")
     args = parser.parse_args(argv)
 
     config = Config.load()
@@ -196,6 +199,8 @@ def _models_add(argv: list[str]) -> int:
     if args.api_key:
         cfg["api_key"] = args.api_key
         print("warning: storing the API key in the config file; prefer --api-key-env", file=sys.stderr)
+    if args.timeout is not None:
+        cfg["timeout"] = args.timeout
     config.set_provider(args.name, cfg)
     config.save()
     merged = config.providers[args.name]

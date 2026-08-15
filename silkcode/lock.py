@@ -8,7 +8,9 @@ while another owner holds a fresh lock; reads and everything else proceed.
 Locks go stale after LOCK_STALE_SECONDS without activity and are taken over
 automatically (daemon restart, crashed session, or an owner that stopped
 writing). An owner's own writes refresh the timestamp, so an actively working
-session keeps its lock.
+session keeps its lock. A lock whose owner process is dead is stale
+immediately — a dead process can never write again, so there is no reason to
+wait out the timestamp window.
 
 The lock file lives under the workspace's .silkcode/ dir (git-ignored), so it
 never pollutes the project. Races across processes are still caught by git at
@@ -27,6 +29,27 @@ LOCK_RELPATH = ".silkcode/workspace.lock"
 LOCK_STALE_SECONDS = 30 * 60  # 30 minutes without activity
 
 _lock = threading.Lock()
+
+
+def _pid_alive(pid: int | None) -> bool:
+    """Best-effort liveness probe for a lock owner's process.
+
+    A dead pid means the owner can never write again, so its lock is stale
+    right away instead of blocking everyone for LOCK_STALE_SECONDS. On
+    platforms where we cannot probe safely (Windows: os.kill(pid, 0) is not a
+    harmless existence check there) we fall back to the timestamp rule.
+    """
+    if pid is None:
+        return True  # unknown owner; fall back to the timestamp rule
+    if os.name == "nt":
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OSError):
+        return True  # exists but owned by someone else, or probe failed
+    return True
 
 
 class LockError(RuntimeError):
@@ -48,9 +71,31 @@ def is_stale(lock: dict | None) -> bool:
     if not lock:
         return True
     try:
+        if not _pid_alive(lock.get("pid")):
+            return True  # the owner process is gone; it can never write again
         return time.time() - float(lock.get("acquired_at", 0)) > LOCK_STALE_SECONDS
     except (TypeError, ValueError):
         return True
+
+
+def lock_state(root: Path) -> dict:
+    """Describe the current lock for the GUI: who holds it, how old it is, and
+    whether it is stale (owner process dead, or the timestamp ran out)."""
+    lock = read_lock(root)
+    if not lock:
+        return {"held": False}
+    try:
+        age = time.time() - float(lock.get("acquired_at", 0))
+    except (TypeError, ValueError):
+        age = None
+    return {
+        "held": True,
+        "owner": lock.get("owner"),
+        "pid": lock.get("pid"),
+        "age": age,
+        "alive": _pid_alive(lock.get("pid")),
+        "stale": is_stale(lock),
+    }
 
 
 def acquire(root: Path, owner: str) -> dict:

@@ -671,3 +671,79 @@ def test_gui_survives_dead_client_sockets(gui, mode):
     # the server thread survived and keeps serving normal requests
     resp = httpx.get(f"{base}/api/state")
     assert resp.status_code == 200
+
+
+def test_gui_close_session_releases_lock(gui):
+    """Closing a session stops it and releases its workspace lock; the daemon
+    switches to another session (or a fresh one when it was the last)."""
+    base, state, ws = gui
+    sid = state.default_session_id
+    assert owner_of(ws) == f"session-{sid}"
+
+    # open a second session on the same project so closing the first has a
+    # non-default fallback target
+    second = state.new_session(project=str(ws))
+    assert second.lock_conflict is not None  # first session holds the lock
+
+    resp = httpx.post(f"{base}/api/session/close", json={"session_id": sid})
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    assert sid not in state.sessions
+    # the closed session's lock is gone (owner_of is None: the second session
+    # is read-only and never acquired it)
+    assert owner_of(ws) is None
+    # the daemon switched to the remaining session
+    assert state.default_session_id == second.id
+    assert state.default_session_id in state.sessions
+
+
+def test_gui_close_session_refuses_running_swarm(gui):
+    base, state, _ws = gui
+    sid = state.default_session_id
+    state.swarms[sid] = {"running": True}
+    resp = httpx.post(f"{base}/api/session/close", json={"session_id": sid})
+    assert resp.status_code == 400
+    assert "swarm" in resp.json()["error"]
+
+
+def test_gui_takeover_of_dead_owners_lock(gui, tmp_path):
+    """When the lock's owner process is dead (liveness check), the GUI lets the
+    session take the workspace over with one call instead of waiting for the
+    30-minute staleness window."""
+    import json as _json
+    from silkcode.lock import LOCK_RELPATH, acquire, read_lock
+
+    base, state, _ws = gui
+    ws2 = tmp_path / "other-repo"
+    ws2.mkdir()
+    (ws2 / "README.md").write_text("# other\n")
+
+    acquire(ws2, "session-999")  # a live owner (this test process)
+    session = state.new_session(project=str(ws2))
+    assert session.lock_conflict is not None  # refused at open time
+
+    # the owner "dies": impossible pid, timestamp kept fresh on purpose
+    lock = read_lock(ws2)
+    lock["pid"] = 2**31 - 1
+    (ws2 / LOCK_RELPATH).write_text(_json.dumps(lock))
+
+    resp = httpx.post(f"{base}/api/lock/takeover", json={"session_id": session.id})
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    assert session.lock_conflict is None
+    assert owner_of(ws2) == f"session-{session.id}"
+    # the new owner's writes are accepted
+    from silkcode.tools.files import write_file
+    write_file(session.workspace, "a.py", "x = 1\n", _owner=session.lock_owner)
+    assert (ws2 / "a.py").read_text() == "x = 1\n"
+
+
+def test_gui_takeover_refused_while_live_owner_holds_lock(gui):
+    base, state, ws = gui
+    sid = state.default_session_id  # this live test process owns the workspace
+    session = state.new_session(project=str(ws))  # second session -> conflict
+    assert session.lock_conflict is not None
+    resp = httpx.post(f"{base}/api/lock/takeover", json={"session_id": session.id})
+    assert resp.status_code == 400  # LockError -> 400 error response
+    assert "locked by" in resp.json()["error"]
+    assert session.lock_conflict is not None

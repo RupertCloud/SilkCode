@@ -87,3 +87,17 @@ def test_build_provider_types():
     assert o.base_url == "http://localhost:11434/v1"
     with pytest.raises(ProviderError):
         build_provider("x", {"type": "nope", "base_url": "http://h"})
+
+
+def test_build_provider_timeout_from_config():
+    # default is 180s
+    assert build_provider("x", {"type": "openai_compat", "base_url": "http://h/v1"})._client.timeout.connect == 180.0
+    # a configured 'timeout' overrides it (e.g. slow first token from DeepSeek)
+    p = build_provider("x", {"type": "openai_compat", "base_url": "http://h/v1", "timeout": 600})
+    assert p._client.timeout.connect == 600.0
+    # strings are accepted too (config files are hand-edited)
+    p = build_provider("x", {"type": "openai_compat", "base_url": "http://h/v1", "timeout": "300"})
+    assert p._client.timeout.connect == 300.0
+    # garbage fails loudly instead of silently keeping the default
+    with pytest.raises(ProviderError, match="invalid 'timeout'"):
+        build_provider("x", {"type": "openai_compat", "base_url": "http://h/v1", "timeout": "soon"})

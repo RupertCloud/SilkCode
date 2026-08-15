@@ -19,6 +19,12 @@ def build_provider(name: str, cfg: dict, api_key: str | None = None, client=None
         "default_model": cfg.get("default_model"),
         "api_key": api_key,
     }
+    try:
+        kwargs["timeout"] = float(cfg.get("timeout", 180.0))
+    except (TypeError, ValueError):
+        raise ProviderError(
+            f"Provider '{name}' has an invalid 'timeout' value: {cfg.get('timeout')!r}"
+        )
     if client is not None:
         kwargs["client"] = client
     return cls(**kwargs)
