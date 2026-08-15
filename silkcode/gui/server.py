@@ -6,6 +6,14 @@ sessions can be open at once (SRS section 44) - each has its own agent,
 conversation, and checkpoints; events are tagged with their session id.
 Sessions are shared with the CLI, so work started here can be resumed with
 `silkcode resume <id>` (SRS section 47).
+
+Several daemons can run on the same machine at the same time - each on its
+own address (--host/--port) and pointed at its own project. Session ids are
+allocated atomically across processes (see silkcode.sessions) so instances
+never hand out the same id or clobber each other's session files, and each
+session is tagged with the instance that created it. Opening the same
+project in two instances is allowed; the per-workspace lock makes the
+second one read-only until the first closes.
 """
 
 from __future__ import annotations
@@ -153,10 +161,14 @@ class AgentSession:
 class GuiState:
     def __init__(self, path: str, model_spec: str | None, mode: str,
                  grants: list[str] | None = None, use_sandbox: bool = False,
-                 auto_push: bool = False):
+                 auto_push: bool = False, instance: str | None = None):
         self.auto_push = auto_push
         if auto_push:
             grants = list(grants or []) + ["push"]
+        # Address this daemon listens on (host:port); sessions it creates are
+        # tagged with it so `silkcode sessions` can tell instances apart when
+        # several daemons run on the same machine.
+        self.instance = instance
         self.workspace = Workspace(path)
         self.config = Config.load()
         if use_sandbox:
@@ -212,7 +224,7 @@ class GuiState:
             ws = choice.workspace
             record_recent_project(choice.kind, project, choice.label)
         data = new_session(session_id, title="", model=self.spec,
-                           cwd=str(ws.root), mode=self.mode)
+                           cwd=str(ws.root), mode=self.mode, instance=self.instance)
         session = AgentSession(self, data)
         self.sessions[session.id] = session
         self.default_session_id = session.id
@@ -237,14 +249,16 @@ class GuiState:
     def sessions_summary(self) -> list[dict]:
         loaded = {
             s.id: {"id": s.id, "title": s.data.get("title", ""), "model": s.spec,
-                   "cwd": str(s.workspace.root), "running": s.running, "open": True}
+                   "cwd": str(s.workspace.root), "running": s.running, "open": True,
+                   "instance": s.data.get("instance")}
             for s in self.sessions.values()
         }
         for saved in self.store.list():
             if saved["id"] not in loaded:
                 loaded[saved["id"]] = {"id": saved["id"], "title": saved["title"],
                                        "model": saved["model"], "cwd": saved.get("cwd", ""),
-                                       "running": False, "open": False}
+                                       "running": False, "open": False,
+                                       "instance": saved.get("instance")}
         return sorted(loaded.values(), key=lambda s: s["id"], reverse=True)
 
     # ---- compatibility accessors (default session) -------------------------
@@ -964,28 +978,37 @@ def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1
             port: int = 8377, grants: list[str] | None = None,
             use_sandbox: bool = False, auto_push: bool = False,
             restart_args: list[str] | None = None) -> int:
-    try:
-        state = GuiState(path, model_spec, mode, grants=grants, use_sandbox=use_sandbox,
-                         auto_push=auto_push)
-    except (ToolError, ConfigError) as exc:
-        print(f"error: {exc}")
-        return 1
-    GuiHandler.state = state
-    GuiHandler.html = (Path(__file__).parent / "app.html").read_bytes()
+    # Bind first so we know the real address (--port 0 picks an ephemeral one)
+    # and can label this daemon's sessions with it; a busy address fails fast
+    # with a clear message before any state is created.
     try:
         server = ThreadingHTTPServer((host, port), GuiHandler)
     except OSError as exc:
         print(f"error: cannot listen on {host}:{port} ({exc}).")
-        print("An older Silk Code GUI may still be running - stop it (Ctrl+C in its")
-        print(f"terminal) or start this one on another port: silkcode gui --port {port + 1}")
+        print("Another Silk Code GUI may already be running on this address - every")
+        print("instance needs its own address. Start this one on another port:")
+        print(f"    silkcode gui --port {port + 1} <path>")
         return 1
+    bound_host, bound_port = server.server_address[:2]
+    try:
+        state = GuiState(path, model_spec, mode, grants=grants, use_sandbox=use_sandbox,
+                         auto_push=auto_push, instance=f"{bound_host}:{bound_port}")
+    except (ToolError, ConfigError) as exc:
+        print(f"error: {exc}")
+        server.server_close()
+        return 1
+    GuiHandler.state = state
+    GuiHandler.html = (Path(__file__).parent / "app.html").read_bytes()
     if restart_args:
         state.start_auto_reload(restart_args)
-    url = f"http://{host}:{port}"
+    display_host = "localhost" if bound_host in ("0.0.0.0", "::") else bound_host
+    url = f"http://{display_host}:{bound_port}"
     print(f"Silk Code GUI: {url}")
     print(f"workspace: {state.workspace.root}")
     first = state.get_session()
     print(f"model: {first.provider_name}/{first.model}   session: #{first.id}")
+    print(f"instance: {state.instance}   (run another on a different --host/--port "
+          "for more sessions on this machine)")
     print("Press Ctrl+C to stop.")
     try:
         import webbrowser

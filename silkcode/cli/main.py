@@ -2,7 +2,7 @@
 
 Commands:
     silkcode [path] [--model M] [--mode ask|edit|agent]   interactive REPL
-    silkcode gui [path] [--port N] [--model M]            local web GUI
+    silkcode gui [path] [--port N] [--host H] [--model M] local web GUI
     silkcode models                                        list providers and models
     silkcode models add <name> --base-url URL [...]        onboard a provider/endpoint
     silkcode models pull <model>                           pull a model into Ollama
@@ -12,6 +12,10 @@ Commands:
     silkcode config                                        show configuration
     silkcode swarm [path] [--model M] [...]                multi-agent improvement loop
     silkcode update [--branch B]                           pull updates and hot-apply them
+
+Run several GUI instances on one machine - each on its own --host/--port and
+project. Session ids are unique across instances and every session is tagged
+with the instance that created it (see `silkcode sessions`).
 """
 
 from __future__ import annotations
@@ -605,7 +609,9 @@ def cmd_sessions(argv: list[str]) -> int:
         return 0
     for s in sessions:
         when = datetime.datetime.fromtimestamp(s["updated"]).strftime("%Y-%m-%d %H:%M")
-        print(f"#{s['id']:<5} {when}  {s['model']:<28} {s['title']}")
+        instance = s.get("instance")
+        where = f"  [{instance}]" if instance else ""
+        print(f"#{s['id']:<5} {when}  {s['model']:<28} {s['title']}{where}")
     print("\nResume with: silkcode resume <id>")
     return 0
 

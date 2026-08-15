@@ -152,6 +152,22 @@ directory, so different sessions can work on different codebases side by side.
 Sessions are saved to the same store as the CLI — resume any of them from the picker
 or with `silkcode resume <id>` (SRS section 47).
 
+**Multiple GUI instances on one machine:** run one daemon per project and address —
+each instance gets its own port (and optionally its own bind address):
+
+```bash
+silkcode gui ~/project-a                          # http://127.0.0.1:8377
+silkcode gui ~/project-b --port 8378              # http://127.0.0.1:8378
+silkcode gui ~/project-c --host 0.0.0.0 --port 8379   # reachable from the LAN
+silkcode gui --port 0 ~/scratch                   # OS-assigned port (printed on start)
+```
+
+Instances share the session store but session ids are allocated atomically across
+processes, so two daemons never hand out the same id or overwrite each other's
+session files; each session records the instance (`host:port`) that created it, shown
+by `silkcode sessions`. Opening the *same* project in two instances is allowed — the
+per-workspace lock makes the second one read-only until the first closes.
+
 ## Improvement swarm
 
 `silkcode swarm` runs a multi-agent improvement loop against a project until it

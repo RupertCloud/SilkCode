@@ -527,6 +527,55 @@ def test_gui_new_session_pointed_at_local_project(gui):
     assert plain_session.workspace.root == default_ws.resolve()
 
 
+def test_gui_two_instances_different_ports_and_projects(tmp_path, monkeypatch):
+    """Two daemons on one machine - different addresses (host:port) and
+    different projects - share the session store without id collisions or
+    clobbering, and each session is tagged with the instance that made it."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("SILKCODE_HOME", str(home))
+    repo_a = tmp_path / "repo-a"
+    repo_a.mkdir()
+    repo_b = tmp_path / "repo-b"
+    repo_b.mkdir()
+    (home / "config.json").write_text(json.dumps({
+        "default_model": "stub",
+        "providers": {"stub": {"type": "openai_compat",
+                               "base_url": "http://stub.invalid/v1",
+                               "default_model": "stub-model"}},
+    }))
+
+    daemon_a = GuiState(str(repo_a), None, "edit", instance="127.0.0.1:8377")
+    daemon_b = GuiState(str(repo_b), None, "edit", instance="127.0.0.1:8378")
+
+    # distinct session ids (no cross-daemon clobbering) and no lock conflict
+    # because the projects differ
+    assert daemon_a.default_session_id != daemon_b.default_session_id
+    assert daemon_a.get_session().lock_conflict is None
+    assert daemon_b.get_session().lock_conflict is None
+
+    # each session is tagged with the instance that created it
+    assert daemon_a.get_session().data["instance"] == "127.0.0.1:8377"
+    assert daemon_b.get_session().data["instance"] == "127.0.0.1:8378"
+
+    # saving both must not clobber: each session file holds its own data
+    daemon_a._save_session(daemon_a.get_session())
+    daemon_b._save_session(daemon_b.get_session())
+    from silkcode.sessions import SessionStore
+    store = SessionStore()
+    saved_a = store.load(daemon_a.default_session_id)
+    saved_b = store.load(daemon_b.default_session_id)
+    assert saved_a["cwd"] == str(repo_a.resolve()) and saved_a["instance"] == "127.0.0.1:8377"
+    assert saved_b["cwd"] == str(repo_b.resolve()) and saved_b["instance"] == "127.0.0.1:8378"
+
+    # summaries show the other instance's sessions too, tagged with their own
+    # address so users can tell them apart
+    summary = {s["id"]: s for s in daemon_a.sessions_summary()}
+    assert summary[daemon_a.default_session_id]["instance"] == "127.0.0.1:8377"
+    assert summary[daemon_b.default_session_id]["instance"] == "127.0.0.1:8378"
+    assert summary[daemon_b.default_session_id]["open"] is False
+
+
 def test_json_swallows_dead_socket(gui):
     """_json() must not let a dead client socket escape as an unhandled error.
 
