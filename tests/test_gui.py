@@ -1,10 +1,15 @@
 """GUI daemon API tests: real HTTP server, real agent, scripted model."""
 
+import io
 import json
+import socket
+import struct
+import sys
 import threading
 import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 import pytest
@@ -520,3 +525,100 @@ def test_gui_new_session_pointed_at_local_project(gui):
     plain = httpx.post(f"{base}/api/session/new", json={}).json()
     plain_session = state.get_session(plain["session_id"])
     assert plain_session.workspace.root == default_ws.resolve()
+
+
+def test_json_swallows_dead_socket(gui):
+    """_json() must not let a dead client socket escape as an unhandled error.
+
+    This is the unit-level guarantee behind the GUI fix: a client that
+    disconnects mid-request (e.g. a double-fired swarm start where the loser
+    aborts the connection) must not crash the request handler thread with a
+    socketserver traceback.
+    """
+    class DeadWfile:
+        def write(self, _data):
+            raise BrokenPipeError(32, "Broken pipe")
+
+    class DeadHandler:
+        def __init__(self):
+            self.wfile = DeadWfile()
+
+        def send_response(self, _status):
+            pass
+
+        def send_header(self, _key, _value):
+            pass
+
+        def end_headers(self):
+            pass
+
+    # must not raise
+    GuiHandler._json(DeadHandler(), {"error": "a swarm is already running"}, 400)
+
+
+def _dead_socket_request(host: str, port: int, mode: str) -> None:
+    """Open a raw connection to the GUI server and kill it mid-request.
+
+    mode:
+      "before-request"  - RST immediately after connecting
+      "mid-body"        - send headers + partial body, then RST
+      "after-request"   - send a full request, then FIN without reading
+    """
+    s = socket.create_connection((host, port))
+    if mode == "before-request":
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        s.close()
+        return
+    if mode == "mid-body":
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        s.sendall(b"POST /api/message HTTP/1.1\r\n"
+                  b"Host: 127.0.0.1\r\n"
+                  b"Content-Type: application/json\r\n"
+                  b"Content-Length: 100\r\n\r\n"
+                  b'{"text": "')
+        s.close()
+        return
+    # after-request: full POST, then FIN without reading the reply
+    body = b'{"text": ""}'  # -> fast 400 "empty message", no side effects
+    s.sendall(b"POST /api/message HTTP/1.1\r\n"
+              b"Host: 127.0.0.1\r\n"
+              b"Content-Type: application/json\r\n"
+              b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+    s.shutdown(socket.SHUT_WR)
+    time.sleep(0.2)
+    s.close()
+
+
+@pytest.mark.parametrize("mode", ["before-request", "mid-body", "after-request"])
+def test_gui_survives_dead_client_sockets(gui, mode):
+    """Clients that abort mid-request must not produce socketserver tracebacks.
+
+    Regression for the "Exception occurred during processing of request"
+    tracebacks seen when a browser double-fires a swarm start and the loser
+    disconnects before the server can reply: the error response (or the very
+    next read on the dead connection) used to raise BrokenPipeError /
+    ConnectionResetError out of the request handler.
+    """
+    base, _state, _ws = gui
+    host = urlparse(base).hostname
+    port = urlparse(base).port
+
+    # socketserver prints dead-handler tracebacks to sys.stderr; swap stderr
+    # for just this window so unrelated background-thread noise from other
+    # tests can't cause a false positive.
+    buf = io.StringIO()
+    old = sys.stderr
+    sys.stderr = buf
+    try:
+        _dead_socket_request(host, port, mode)
+        deadline = time.time() + 1.5
+        while time.time() < deadline and not buf.getvalue():
+            time.sleep(0.05)  # give the handler thread time to hit the socket
+    finally:
+        sys.stderr = old
+
+    assert "Exception occurred during processing" not in buf.getvalue()
+
+    # the server thread survived and keeps serving normal requests
+    resp = httpx.get(f"{base}/api/state")
+    assert resp.status_code == 200

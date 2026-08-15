@@ -796,6 +796,18 @@ class GuiHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             return None
 
+    def handle_one_request(self):  # noqa: D102 - see BaseHTTPRequestHandler
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            # The client vanished mid-request (RST before the request line,
+            # RST while uploading the body, or a write to a dead socket).
+            # BaseHTTPRequestHandler only swallows TimeoutError here, so any
+            # other socket error would escape and make socketserver print an
+            # "Exception occurred during processing of request" traceback.
+            # Just close the connection quietly instead.
+            self.close_connection = True
+
     def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
         parsed = urlparse(self.path)
         route = parsed.path
