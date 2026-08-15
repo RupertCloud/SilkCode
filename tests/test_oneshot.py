@@ -68,3 +68,55 @@ def test_oneshot_system_prompt_includes_repo_map(oneshot_env, stub_server, monke
     finally:
         server.httpd.shutdown()
         server.httpd.server_close()
+
+
+def test_reload_command_picks_up_config_changes(tmp_path, monkeypatch, capsys, stub_server):
+    """/reload re-reads the config and rebuilds the provider so a new
+    'timeout' (or other provider setting) applies without restarting."""
+    from silkcode.agent import Agent
+    from silkcode.config import Config, config_dir
+    from silkcode.cli.repl import _reload_command
+    from silkcode.context import build_context
+    from silkcode.permissions import PermissionManager
+    from silkcode.providers import build_provider
+    from silkcode.workspace import Workspace
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("SILKCODE_HOME", str(home))
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("# demo\n")
+
+    scripted = [sse_response(content="ok")]
+    server = stub_server(scripted)
+    server.thread.start()
+    try:
+        (config_dir() / "config.json").write_text(json.dumps({
+            "default_model": "stub",
+            "providers": {"stub": {"type": "openai_compat", "base_url": server.base_url,
+                                   "default_model": "stub-model"}},
+        }))
+        config = Config.load()
+        provider = build_provider("stub", config.providers["stub"], api_key=None)
+        agent = Agent(provider, "stub-model", Workspace(str(workspace)),
+                      PermissionManager(mode="ask"), context=build_context(Workspace(str(workspace))))
+        session = {"model": "stub/stub-model"}
+
+        assert agent.provider._client.timeout.connect == 180.0  # default
+
+        # user edits the config: raises the timeout to 600
+        (config_dir() / "config.json").write_text(json.dumps({
+            "default_model": "stub",
+            "providers": {"stub": {"type": "openai_compat", "base_url": server.base_url,
+                                   "default_model": "stub-model", "timeout": 600}},
+        }))
+        mcp = _reload_command(agent, config, session, None)
+        assert mcp is None
+        assert agent.provider._client.timeout.connect == 600.0
+        out = capsys.readouterr().out
+        assert "config reloaded" in out
+        assert "timeout 600s" in out
+    finally:
+        server.httpd.shutdown()
+        server.httpd.server_close()

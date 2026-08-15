@@ -33,6 +33,8 @@ HELP = """Commands:
   /models            list configured providers
   /mode [m]          show or set permission mode: ask | edit | agent
   /project [spec]    open another project (GitHub repo or local path) for this session
+  /reload            re-read the config and rebuild the provider + MCP (e.g. a new
+                     'timeout' for a slow provider) without losing this conversation
   /diff              show the current git diff
   /push              push the current branch to the remote
   /autopush [on|off] automatically push unpushed commits after each turn
@@ -178,7 +180,9 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         if not line:
             continue
         if line.startswith("/"):
-            if _handle_slash(line, agent, config, session, store, autopush_state):
+            exit_now, mcp = _handle_slash(line, agent, config, session, store,
+                                          autopush_state, mcp)
+            if exit_now:
                 break
             continue
         if not session["title"]:
@@ -212,13 +216,14 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
 
 
 def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store: SessionStore,
-                  autopush_state: dict | None = None) -> bool:
-    """Handle a slash command. Returns True when the REPL should exit."""
+                  autopush_state: dict | None = None, mcp=None) -> tuple[bool, object]:
+    """Handle a slash command. Returns (exit, mcp) — exit is True when the
+    REPL should quit; mcp may be replaced (e.g. by /reload)."""
     parts = line.split(maxsplit=1)
     cmd, arg = parts[0].lower(), (parts[1].strip() if len(parts) > 1 else "")
 
     if cmd in ("/exit", "/quit", "/q"):
-        return True
+        return True, mcp
     if cmd == "/help":
         print(HELP)
     elif cmd == "/model":
@@ -301,9 +306,75 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
             print(f"#{s['id']:<5} {s['model']:<28} {s['title']}")
     elif cmd == "/project":
         _project_command(agent, config, session, arg)
+    elif cmd == "/reload":
+        mcp = _reload_command(agent, config, session, mcp)
     else:
         print(f"Unknown command {cmd}. Try /help")
-    return False
+    return False, mcp
+
+
+def _reload_command(agent: Agent, config: Config, session: dict, mcp) -> object:
+    """Hot-reload what can be reloaded in-process: re-read the config file and
+    rebuild the provider and MCP servers. The conversation, workspace and
+    permissions are kept. Picks up provider changes such as a new 'timeout'
+    for a slow provider. New Python code (from `silkcode update`) still needs
+    a restart — the session is saved after every turn, so /exit and re-run
+    (or `silkcode resume <id>`) to run the new code."""
+    from ..update import git_repo_root
+
+    # 1) re-read the config from disk (providers, timeouts, mcp_servers, ...)
+    fresh = Config.load()
+    config.data = fresh.data
+    config.providers = fresh.providers
+    print(f"{DIM}config reloaded from {config.path}{RESET}")
+
+    # 2) rebuild the provider with this session's model spec so config changes
+    #    (e.g. a raised timeout) apply immediately
+    spec = session.get("model") or f"{agent.provider.name}/{agent.model}"
+    try:
+        provider_name, provider_cfg, model = config.resolve_model(spec)
+        api_key = config.api_key_for(provider_cfg)
+        agent.provider = build_provider(provider_name, provider_cfg, api_key=api_key)
+        agent.model = model
+        from ..agent.loop import DEFAULT_CONTEXT_TOKENS
+        agent.max_context_tokens = provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS
+        session["model"] = spec
+        timeout = provider_cfg.get("timeout")
+        print(f"provider: {provider_name}/{model}"
+              + (f"  ({DIM}timeout {timeout}s{RESET})" if timeout else ""))
+    except ConfigError as exc:
+        print(f"{RED}{exc}{RESET}")
+
+    # 3) reload MCP servers from the (possibly changed) config
+    if mcp is not None:
+        mcp.close()
+    mcp_servers = config.data.get("mcp_servers") or {}
+    new_mcp = None
+    if mcp_servers:
+        from ..mcp import McpManager
+        new_mcp = McpManager(mcp_servers)
+        for server_name, error in new_mcp.errors.items():
+            print(f"{YELLOW}warning: MCP server '{server_name}' failed to start: {error}{RESET}")
+    if new_mcp is not None:
+        agent.mcp = new_mcp
+        print(f"MCP: {len(new_mcp.servers)} server(s) connected")
+    else:
+        agent.mcp = None
+        print("MCP: none configured")
+
+    # 4) tell the user whether the installed code changed since this REPL
+    #    started (they ran `silkcode update` elsewhere); code needs a restart
+    repo = git_repo_root()
+    if repo is not None:
+        try:
+            import subprocess
+            head = subprocess.run(["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+                                  capture_output=True, text=True, timeout=15).stdout.strip()
+            if head:
+                print(f"{DIM}code at {head}; new Python code needs /exit + restart{RESET}")
+        except Exception:
+            pass
+    return new_mcp
 
 
 def _project_command(agent: Agent, config: Config, session: dict, arg: str) -> None:
