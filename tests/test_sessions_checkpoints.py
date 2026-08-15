@@ -21,6 +21,20 @@ def test_session_roundtrip(tmp_path):
     assert listing[0]["id"] == 1
 
 
+def test_active_session_marker_roundtrip(tmp_path):
+    """The GUI records which session was active per daemon instance so a
+    self-update restart can reopen it instead of collapsing to a fresh empty
+    conversation."""
+    store = SessionStore(tmp_path)
+    assert store.active_session("127.0.0.1:8377") is None
+    store.set_active("127.0.0.1:8377", 42)
+    assert store.active_session("127.0.0.1:8377") == 42
+    # instances are isolated: one daemon's marker does not leak into another's
+    assert store.active_session("127.0.0.1:8378") is None
+    store.set_active("127.0.0.1:8377", 7)
+    assert store.active_session("127.0.0.1:8377") == 7
+
+
 def test_new_session_records_instance(tmp_path):
     """The GUI tags sessions with the daemon address that created them, so
     `silkcode sessions` can tell instances apart when several daemons run on

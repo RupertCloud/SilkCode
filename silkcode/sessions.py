@@ -115,6 +115,32 @@ class SessionStore:
             })
         return sorted(sessions, key=lambda s: s["updated"], reverse=True)
 
+    # ---- active-session marker (per daemon instance) ------------------------
+
+    def _active_path(self, instance: str) -> Path:
+        safe = "".join(c if c.isalnum() else "_" for c in instance)
+        return self.dir / f"active.{safe}.json"
+
+    def active_session(self, instance: str | None) -> int | None:
+        """The session id that was active in `instance` (a daemon's host:port)
+        before it stopped/restarted, or None. The GUI reopens this session on
+        startup so a self-update restart does not collapse the view to a fresh
+        empty conversation."""
+        if not instance:
+            return None
+        try:
+            return int(json.loads(self._active_path(instance).read_text())["session_id"])
+        except (OSError, ValueError, KeyError):
+            return None
+
+    def set_active(self, instance: str | None, session_id: int) -> None:
+        if not instance:
+            return
+        try:
+            self._active_path(instance).write_text(json.dumps({"session_id": session_id}))
+        except OSError:
+            pass  # best-effort; a read-only store just skips session restore
+
 
 def new_session(session_id: int, title: str, model: str, cwd: str, mode: str,
                 instance: str | None = None) -> dict:

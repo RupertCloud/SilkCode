@@ -747,3 +747,36 @@ def test_gui_takeover_refused_while_live_owner_holds_lock(gui):
     assert resp.status_code == 400  # LockError -> 400 error response
     assert "locked by" in resp.json()["error"]
     assert session.lock_conflict is not None
+
+
+def test_gui_restores_active_session_after_restart(tmp_path, monkeypatch):
+    """A self-update restart reopens the session that was active before the
+    daemon stopped, instead of collapsing the view to a fresh empty session."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("SILKCODE_HOME", str(home))
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("# demo\n")
+    (home / "config.json").write_text(json.dumps({
+        "default_model": "stub",
+        "providers": {"stub": {"type": "openai_compat",
+                               "base_url": "http://stub.invalid/v1",
+                               "default_model": "stub-model"}},
+    }))
+
+    instance = "127.0.0.1:8377"
+    daemon = GuiState(str(workspace), None, "edit", instance=instance)
+    # the daemon's default session is the active one after startup
+    assert daemon.store.active_session(instance) == daemon.default_session_id
+
+    # simulate the user switching to another session, then the daemon dying
+    # (self-update re-exec) and coming back with the same instance address
+    other = daemon.new_session()
+    daemon.load_session(other.id)
+    daemon.save_all_sessions()  # the restart path persists open sessions
+    assert daemon.store.active_session(instance) == other.id
+
+    restarted = GuiState(str(workspace), None, "edit", instance=instance)
+    assert restarted.default_session_id == other.id
+    assert other.id in restarted.sessions

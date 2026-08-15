@@ -196,10 +196,44 @@ class GuiState:
         self.swarms: dict[int, dict] = {}  # session id -> swarm status
         self._restart_args: list[str] | None = None
         self._restarting = False
-        first = self.new_session()
-        self.default_session_id = first.id
+        self._restore_active_session()
+        if not self.sessions:
+            self.new_session()
 
     # ---- sessions ----------------------------------------------------------
+
+    def _restore_active_session(self) -> None:
+        """Reopen the session that was active in this daemon instance before it
+        stopped/restarted, so a self-update restart does not collapse the view
+        to a fresh empty conversation. The session is loaded from the store; if
+        it no longer exists (e.g. the project moved), a fresh default session
+        is created instead."""
+        try:
+            sid = self.store.active_session(self.instance)
+        except Exception:
+            return
+        if sid is None or sid in self.sessions:
+            return
+        try:
+            session = self.get_session(sid)
+        except (FileNotFoundError, Exception):
+            return  # keep the fresh default session
+        self.sessions[session.id] = session
+        self.default_session_id = session.id
+        self.broadcast({"type": "reload", "session": session.id})
+
+    def save_all_sessions(self) -> None:
+        """Persist every open session. Called before a self-update re-exec so
+        the restarted daemon can reopen the previously-active session."""
+        for session in self.sessions.values():
+            try:
+                self._save_session(session)
+            except Exception:
+                pass  # best-effort; the store may be read-only
+
+    def _mark_active(self, session_id: int | None = None) -> None:
+        self.store.set_active(self.instance, session_id if session_id is not None
+                              else self.default_session_id)
 
     def _resolve_workspace(self, cwd: str) -> Workspace:
         """Resolve a session's working directory to a Workspace. The default
@@ -228,6 +262,7 @@ class GuiState:
         session = AgentSession(self, data)
         self.sessions[session.id] = session
         self.default_session_id = session.id
+        self._mark_active(session.id)
         return session
 
     def get_session(self, session_id: int | None = None) -> AgentSession:
@@ -243,6 +278,7 @@ class GuiState:
     def load_session(self, session_id: int) -> AgentSession:
         session = self.get_session(session_id)
         self.default_session_id = session.id
+        self._mark_active(session.id)
         self.broadcast({"type": "reload", "session": session.id})
         return session
 
@@ -455,6 +491,7 @@ class GuiState:
         del self.sessions[sid]
         if self.default_session_id == sid:
             self.default_session_id = max(self.sessions) if self.sessions else self.new_session().id
+        self._mark_active(self.default_session_id)
         self.broadcast({"type": "session_closed", "session": sid})
         return {"ok": True, "session_id": self.default_session_id}
 
@@ -482,6 +519,7 @@ class GuiState:
         session.agent.model = model
         session.provider_name, session.spec = provider_name, spec
         session.data["model"] = spec
+        self._mark_active(session.id)
 
     def set_mode(self, mode: str) -> None:
         self.mode = mode
@@ -636,6 +674,7 @@ class GuiState:
                 except Exception:
                     continue
                 self._restarting = True
+                self.save_all_sessions()  # reopen the active session after re-exec
                 self.broadcast({"type": "restarting"})
                 time.sleep(0.5)  # let the browser see the event
                 os.execv(sys.executable, restart_argv(self._restart_args or []))
