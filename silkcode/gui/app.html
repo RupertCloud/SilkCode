@@ -64,7 +64,6 @@
   .code-bubble .cb-icorun { background: var(--panel); color: var(--ok); }
   .code-bubble pre { margin: 0; padding: 10px 12px; overflow-x: auto; font-family: var(--mono);
     font-size: 12.5px; line-height: 1.55; color: #d7dae0; white-space: pre; }
-  .msg.assistant .line, .msg.user .line { white-space: pre-wrap; word-break: break-word; }
   .msg-copy { flex: 0 0 auto; background: transparent; border: 1px solid var(--border); color: var(--dim);
     border-radius: 7px; width: 26px; height: 26px; font-size: 13px; line-height: 1; cursor: pointer;
     display: none; align-items: center; justify-content: center; }
@@ -383,8 +382,6 @@ async function copyToClipboard(text) {
 }
 
 function msgText(el) {
-  // streamed assistant bubbles keep their text directly on el.textContent;
-  // everything else lives inside a nested text span whose text is el.textContent.
   return (el.textContent || "").trim();
 }
 
