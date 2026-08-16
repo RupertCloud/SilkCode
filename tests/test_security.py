@@ -397,6 +397,33 @@ def test_a_visited_website_cannot_start_an_agent_turn(tmp_path, monkeypatch):
                      headers={"Origin": "https://evil.example"}).status_code == 403
 
 
+def test_loopback_is_decided_on_the_address_not_the_spelling():
+    """A "127." prefix test on the raw string also accepts host *names* that
+    merely start that way, and an attacker can register one that resolves to
+    loopback - 127.0.0.1.evil.example, the trick nip.io is built on. Origin
+    and Host then agree and the rebinding guard falls open."""
+    from silkcode.gui.server import is_loopback
+
+    for host in ("127.0.0.1", "127.0.1.1", "127.5.5.5", "::1",
+                 "0:0:0:0:0:0:0:1", "localhost"):
+        assert is_loopback(host), host
+    for host in ("127.0.0.1.evil.example", "localhost.evil.example",
+                 "127evil.com", "evil.example", "192.168.1.5", "0.0.0.0",
+                 "2001:db8::1", ""):
+        assert not is_loopback(host), host
+
+
+def test_a_rebinding_hostname_that_looks_loopback_is_refused(tmp_path, monkeypatch):
+    """The live version of the check above."""
+    url, _ = _start_gui(tmp_path, monkeypatch, "127.0.0.1")
+    evil = "127.0.0.1.evil.example"
+    assert httpx.get(f"{url}/api/state", headers={"Host": evil}).status_code == 403
+    assert httpx.get(f"{url}/api/state",
+                     headers={"Host": evil, "Origin": f"http://{evil}"}).status_code == 403
+    assert httpx.post(f"{url}/api/message", headers={"Host": evil},
+                      content=json.dumps({"text": "pwn"})).status_code == 403
+
+
 def test_dns_rebinding_cannot_reach_a_loopback_daemon(tmp_path, monkeypatch):
     """With DNS rebinding the attacker controls the name, so Origin and Host
     agree and same-origin equality alone would pass. The Host must therefore

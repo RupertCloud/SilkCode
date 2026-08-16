@@ -18,6 +18,7 @@ second one read-only until the first closes.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import queue
@@ -941,7 +942,22 @@ LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "127.0.1.1"}
 
 
 def is_loopback(host: str) -> bool:
-    return host in LOOPBACK_HOSTS or host.startswith("127.")
+    """Whether `host` addresses this machine and only this machine.
+
+    Must be decided on the parsed address, not the spelling. Matching a
+    "127." prefix as text also accepts host *names* that merely begin that
+    way, and an attacker can register one - 127.0.0.1.evil.example, the
+    trick nip.io and sslip.io are built on - that resolves straight to
+    loopback. Origin and Host then agree, and a name-based check would wave
+    the request through, which is precisely the DNS-rebinding case the Host
+    check exists to stop.
+    """
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False  # a name other than localhost: not something we serve
 
 
 def _hostname(host_header: str) -> str:
