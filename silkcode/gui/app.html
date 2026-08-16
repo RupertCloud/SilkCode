@@ -112,7 +112,16 @@
   .modal input, .modal select { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
 
   /* environment page */
-  table.envtable { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.envtable { border-collapse: collapse; width: 100%; font-size: 13px; table-layout: fixed; }
+  /* the endpoint is the least important column and the only unbounded one:
+     it truncates so the key input can never be pushed out of the modal */
+  #env-credentials th:nth-child(1), #env-credentials td:nth-child(1) { width: 15%; }
+  #env-credentials th:nth-child(2), #env-credentials td:nth-child(2) { width: 15%; white-space: nowrap; }
+  #env-credentials th:nth-child(3), #env-credentials td:nth-child(3) {
+    width: 20%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #env-credentials th:nth-child(4), #env-credentials td:nth-child(4) {
+    width: 20%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #env-credentials th:nth-child(5), #env-credentials td:nth-child(5) { width: 30%; white-space: nowrap; }
   table.envtable td, table.envtable th { padding: 5px 10px 5px 0; border-bottom: 1px solid var(--border);
     text-align: left; vertical-align: middle; }
   table.envtable th { color: var(--dim); font-weight: 400; font-size: 11px;
@@ -123,7 +132,7 @@
   .pill.ok { color: var(--ok); border-color: var(--ok); }
   .pill.off { color: var(--dim); }
   .pill.run { color: var(--warn); border-color: var(--warn); }
-  .envtable input.keyin { width: 150px; background: var(--panel2); color: var(--text);
+  .envtable input.keyin { width: min(150px, 55%); background: var(--panel2); color: var(--text);
     border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px; font-size: 12px; }
   .envtable button.keybtn { padding: 3px 9px; font-size: 12px; border-radius: 5px;
     border: 1px solid var(--border); background: var(--panel2); color: var(--text); cursor: pointer; }
@@ -1122,13 +1131,17 @@ function renderCredentials(rows) {
     const state = c.set ? `<span class="pill ok">set ${esc(c.masked)}</span>`
                 : c.needs_key ? `<span class="pill off">missing</span>`
                 : `<span class="pill off">not required</span>`;
-    const source = c.source ? esc(c.source) + (c.shadowed ? " (shadows config)" : "")
-                 : (c.local ? "local" : "—");
+    // Where the key comes from, or — when unset — where it would be read
+    // from. "— · $VAR" printed the placeholder and the answer together.
+    const envVar = c.env_var ? "$" + esc(c.env_var) : "";
+    const origin = c.source ? esc(c.source) + (c.shadowed ? " (shadows config)" : "")
+                 : (c.local ? "local" : "");
+    const source = [origin, envVar].filter(Boolean).join(" · ") || "—";
     tr.innerHTML =
       `<td>${esc(c.provider)}${c.local ? ' <span class="pill off">local</span>' : ""}</td>` +
       `<td>${state}</td>` +
-      `<td class="mono">${source}${c.env_var ? " · $" + esc(c.env_var) : ""}</td>` +
-      `<td class="mono">${esc(c.base_url)}</td>`;
+      `<td class="mono" title="${source}">${source}</td>` +
+      `<td class="mono" title="${esc(c.base_url)}">${esc(c.base_url)}</td>`;
     const actions = document.createElement("td");
     const input = document.createElement("input");
     input.className = "keyin";

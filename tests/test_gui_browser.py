@@ -362,3 +362,58 @@ def test_the_workspace_path_is_shortened_but_recoverable(browser, gui_url):
     if shown != full:
         assert shown.startswith("…/"), shown
         assert full.endswith(shown.lstrip("…/")), "the tail shown must be the real tail"
+
+
+def test_a_key_can_be_added_for_every_provider_without_scrolling_sideways(browser, gui_url):
+    """The key input existed but was unreachable: long endpoint URLs pushed
+    the actions column past the modal's right edge, so the field and its
+    Save button were off-screen.
+
+    Filling an element by selector does not notice that — Playwright will
+    happily type into something clipped — so this asserts the input is
+    actually within the modal's box before using it.
+    """
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+    page.click("#env-btn")
+    page.wait_for_selector("#env-modal.open")
+    page.wait_for_function(
+        "() => document.querySelectorAll('#env-credentials tr').length > 1")
+
+    modal = page.locator("#env-modal .modal").bounding_box()
+    rows = page.locator("#env-credentials tr").count()
+    assert rows > 5, "expected a row per provider"
+
+    for i in range(2, rows + 1):
+        row = f"#env-credentials tr:nth-child({i})"
+        for control in ("input.keyin", "button.keybtn"):
+            box = page.locator(f"{row} {control}").first.bounding_box()
+            assert box is not None, f"{control} missing on row {i}"
+            right = box["x"] + box["width"]
+            assert right <= modal["x"] + modal["width"] + 1, (
+                f"row {i}'s {control} is {right - (modal['x'] + modal['width']):.0f}px "
+                "past the modal's edge — unreachable without scrolling sideways")
+
+    # and it still does the job: the key is stored, shown masked, never in full
+    page.fill("#env-credentials tr:nth-child(2) input.keyin", "sk-live-secret-9911")
+    page.click("#env-credentials tr:nth-child(2) button.keybtn")
+    page.wait_for_function(
+        "() => document.getElementById('env-credentials').textContent.includes('…9911')")
+    assert "sk-live-secret" not in page.text_content("#env-credentials")
+
+
+def test_the_credentials_table_says_where_a_missing_key_would_come_from(browser, gui_url):
+    """An unset provider printed "— · $DEEPSEEK_API_KEY" — the placeholder
+    for "no source" next to the answer."""
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+    page.click("#env-btn")
+    page.wait_for_selector("#env-modal.open")
+    page.wait_for_function(
+        "() => document.querySelectorAll('#env-credentials tr').length > 1")
+
+    text = page.text_content("#env-credentials")
+    assert "$DEEPSEEK_API_KEY" in text, "the variable it reads should be named"
+    assert "— · $" not in text, "an em-dash placeholder was printed next to a real source"
