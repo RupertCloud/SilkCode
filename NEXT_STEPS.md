@@ -20,9 +20,14 @@ switching are the gaps (SRS FR-GUI-001, section 10; section 85).
       detects, README, `.gitignore`, `SILKCODE.md`), `git init` it, remember it as a
       recent project, and can hand it straight to the agent (`-p`) or the REPL
       (`--open`). See `silkcode/scaffold.py`.
+- [x] **Projects how-to** — one guide, two surfaces: `docs/projects.html` on the
+      landing site (linked from the hero, a Projects section, the CLI table and the
+      footer) and the **? How-to** panel in the GUI's PROJECT pane, which hands over
+      copyable `silkcode new` commands and opens the project picker.
 - [ ] **New project from the GUI** — the ＋ modal still only *opens* projects;
       give it the `scaffold.py` templates too (and a "create on GitHub" option that
-      pairs the local scaffold with `github_create_repo` + first push).
+      pairs the local scaffold with `github_create_repo` + first push). Until then
+      the GUI how-to has to send people to the terminal to create one.
 - [ ] **Switch project within a session** (highest value)
       A Project dropdown in the GUI header that re-targets the current session's
       workspace without losing the conversation (SRS line 290 mockup, section 2160:

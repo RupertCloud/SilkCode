@@ -100,6 +100,12 @@
   .providers-note { color: var(--dim); font-size: 14px; }
 
   /* steps — a real sequence */
+  /* grid children default to min-width:auto, so a long line inside a code block
+     widens its track and the whole page scrolls sideways on a phone; 0 lets the
+     block's own overflow-x do the scrolling instead */
+  .step > *, .two-col > *, .cell { min-width: 0; }
+  @media (max-width: 600px) { table.cmds { display: block; overflow-x: auto; } }
+
   .step { display: grid; grid-template-columns: 56px 1fr; gap: 18px; margin: 26px 0; }
   .step-no { font-family: var(--mono); font-size: 22px; color: var(--gold);
              border-top: 2px solid var(--gold); padding-top: 8px; font-variant-numeric: tabular-nums; }
@@ -146,6 +152,7 @@
     <p class="promise">The coding environment belongs to the developer.<br>The AI model is replaceable.</p>
     <div class="cta-row">
       <a class="btn primary" href="#quick-start">Quick start</a>
+      <a class="btn" href="projects.html">Projects how-to</a>
       <a class="btn" href="https://github.com/RupertCloud/SilkCode">GitHub</a>
       <a class="btn" href="https://github.com/RupertCloud/SilkCode/blob/main/SRS.md">Read the spec</a>
     </div>
@@ -229,10 +236,46 @@ silkcode models pull qwen2.5-coder</pre>
       <div>
         <h3>Point it at a project</h3>
         <pre class="code">silkcode gui ~/path/to/your/project   <span class="cm"># browser GUI at 127.0.0.1:8377</span>
-silkcode ~/path/to/your/project       <span class="cm"># or the terminal REPL</span></pre>
+silkcode ~/path/to/your/project       <span class="cm"># or the terminal REPL</span>
+silkcode new todo-cli -t python-cli   <span class="cm"># no project yet? make one</span></pre>
         <p>Then just ask: <em>“Build a small Flask API with tests, and make sure the tests
         pass.”</em> Approve its actions as prompts appear; switch to
         <code>--mode agent</code> once you trust it.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="projects">
+    <p class="eyebrow">Projects</p>
+    <h2>Start from nothing, or from your repository</h2>
+    <p class="lede">A session works on one project. Open a directory, pick a GitHub repo (cloned
+    for you), or create a new project that already runs and tests — then hand it to the agent
+    without writing a single line of boilerplate first.</p>
+
+    <div class="two-col">
+      <div>
+        <pre class="code">silkcode new --list                 <span class="cm"># python · python-cli · node · web · blank</span>
+silkcode new todo-cli -t python-cli <span class="cm"># scaffold + git init + first commit</span>
+silkcode new api --describe "Invoice API"
+silkcode new api -p "add a health endpoint and a test"
+
+<span class="cm"># already have code?</span>
+silkcode ~/code/ridelink
+<span class="p">silk&gt;</span> /project github:acme/widget  <span class="cm"># clone &amp; switch, mid-session</span></pre>
+      </div>
+      <div>
+        <p class="lede" style="margin-bottom:10px">Every scaffold ships source, a test suite the
+        runner already detects, a README, a <code>.gitignore</code>, and a
+        <code>SILKCODE.md</code> — so <code>silkcode test</code> works immediately and the agent
+        has project instructions from its first turn.</p>
+        <table class="cmds">
+          <tr><td>silkcode new</td><td>create a project (prompts for name and template)</td></tr>
+          <tr><td>/new · /project</td><td>create or switch project without losing the conversation</td></tr>
+          <tr><td>＋ (GUI)</td><td>new session on any project — repos and recents in one list</td></tr>
+        </table>
+        <p class="providers-note" style="margin-top:12px"><a href="projects.html">Read the
+        Projects how-to →</a> — creating, opening, switching, teaching the agent about a
+        codebase, and shipping it.</p>
       </div>
     </div>
   </section>
@@ -319,6 +362,8 @@ X-Silk-Session: 42</pre>
     <table class="cmds">
       <tr><td>silkcode [path]</td><td>interactive REPL — /model, /mode, /diff, /revert, /push, /usage</td></tr>
       <tr><td>silkcode -p "…"</td><td>one-shot, scriptable: run a single request and exit</td></tr>
+      <tr><td>silkcode new [name]</td><td>create a project from a template, git-initialized —
+        <a href="projects.html">how-to</a></td></tr>
       <tr><td>silkcode review</td><td>AI review of your uncommitted changes</td></tr>
       <tr><td>silkcode test</td><td>run the project’s tests, framework auto-detected</td></tr>
       <tr><td>silkcode models</td><td>list, add, pull, or set default models</td></tr>
@@ -331,6 +376,7 @@ X-Silk-Session: 42</pre>
     <span>Silk Code · <a href="https://github.com/RupertCloud/SilkCode/blob/main/LICENSE">MIT license</a> ·
     single runtime dependency (<code>httpx</code>) · runs entirely on your machine</span>
     <span class="spacer"></span>
+    <a href="projects.html">Projects how-to</a>
     <a href="https://silkcode.web.app">silkcode.web.app</a>
     <a href="https://github.com/RupertCloud/SilkCode">GitHub</a>
     <a href="https://github.com/RupertCloud/SilkCode/releases/latest">Releases</a>

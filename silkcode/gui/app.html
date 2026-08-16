@@ -27,7 +27,10 @@
 
   main { display: grid; grid-template-columns: 230px 1fr 270px; grid-template-rows: 1fr minmax(120px, 200px) auto; flex: 1; min-height: 0; }
   .pane { border-right: 1px solid var(--border); overflow: auto; background: var(--bg); min-height: 0; }
-  .pane h2 { font-size: 11px; letter-spacing: .12em; color: var(--dim); padding: 8px 12px 4px; position: sticky; top: 0; background: var(--bg); }
+  .pane h2 { font-size: 11px; letter-spacing: .12em; color: var(--dim); padding: 8px 12px 4px; position: sticky; top: 0; background: var(--bg); display: flex; align-items: center; gap: 8px; }
+  .h2-btn { margin-left: auto; font-size: 10px; letter-spacing: .06em; padding: 1px 7px; border-radius: 999px;
+            border: 1px solid var(--border); background: var(--panel2); color: var(--dim); cursor: pointer; }
+  .h2-btn:hover { color: var(--accent); border-color: var(--accent); }
 
   #files { grid-row: 1 / 4; }
   #files .entry { padding: 1px 10px; cursor: pointer; white-space: nowrap; font-family: var(--mono); font-size: 12px; color: var(--text); }
@@ -111,6 +114,25 @@
   .modal label { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 2px; }
   .modal input, .modal select { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
 
+  /* projects how-to */
+  .howto h4 { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent);
+              margin: 20px 0 6px; }
+  .howto p.lead { font-size: 13px; color: var(--dim); margin-bottom: 8px; }
+  .howto ul { margin: 0; padding-left: 18px; font-size: 13px; color: var(--dim); }
+  .howto li { margin: 5px 0; }
+  .howto b { color: var(--text); font-weight: 600; }
+  .howto code { font-family: var(--mono); font-size: 12px; background: var(--panel2);
+                padding: 1px 5px; border-radius: 4px; color: var(--text); }
+  .howto p.dimnote { font-size: 12px; color: var(--dim); margin-top: 10px; }
+  /* the page has no global anchor style: an unstyled link on this panel is
+     near-black on near-black */
+  .howto a { color: var(--accent); }
+  .howto .cmdlist { margin: 8px 0 4px; }
+  .howto .cmdrow { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+  .howto .cmdrow code { flex: 1; overflow-x: auto; white-space: nowrap; padding: 4px 8px; }
+  .howto button.copy { padding: 2px 9px; font-size: 11px; border-radius: 5px; }
+  .howto table.howto-table { table-layout: auto; margin-top: 10px; }
+
   /* environment page */
   table.envtable { border-collapse: collapse; width: 100%; font-size: 13px; table-layout: fixed; }
   /* the endpoint is the least important column and the only unbounded one:
@@ -178,7 +200,13 @@
 <div id="version-banner">⚠ The Silk Code server is running an older version. Stop it (Ctrl+C in its terminal) and run <b>silkcode gui</b> again, then reload this page.</div>
 <div id="lock-banner" style="display:none;background:#3a2f1d;color:#e8c87a;padding:6px 12px;font-size:12px"></div>
 <main>
-  <section class="pane" id="files"><h2>PROJECT</h2><div id="tree"></div></section>
+  <section class="pane" id="files">
+    <h2>PROJECT
+      <button id="projects-help-btn" class="h2-btn"
+              title="How projects work: create, open, switch, ship">? How-to</button>
+    </h2>
+    <div id="tree"></div>
+  </section>
   <section id="chat">
     <div id="messages" role="log" aria-live="polite" aria-relevant="additions text"
        aria-label="Conversation"></div>
@@ -295,6 +323,90 @@
       <button class="primary" id="project-confirm">Open</button>
     </div>
     <div id="project-error" style="color:var(--err);font-size:12px;margin-top:6px"></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="projects-help-modal">
+  <div class="modal howto" style="width:820px;max-width:95vw;max-height:88vh;overflow:auto"
+       role="dialog" aria-modal="true" aria-labelledby="projects-help-title">
+    <h3 id="projects-help-title">Projects — how they work</h3>
+    <p class="lead">A session works on exactly one <b>project</b>: the tree its file tools, git
+      commands and test runs are confined to. Open as many sessions as you like — each can sit on
+      a different project with a different model, side by side.</p>
+
+    <h4>Open or switch project</h4>
+    <ul>
+      <li><b>＋ (new session)</b> — asks which project to run it on: a GitHub repository you have
+        access to (cloned for you into <code>~/.silkcode/projects/</code>) or a local directory.
+        Recently opened projects are in the same list.</li>
+      <li><b>Terminal</b> — <code>silkcode ~/code/app</code>, or <code>/project</code> inside a
+        REPL session to switch without losing the conversation.</li>
+      <li>Opening the same project twice is allowed: the second session is read-only until the
+        first releases the workspace lock.</li>
+    </ul>
+
+    <h4>Create a new project</h4>
+    <p class="lead">A blank folder is a bad place to start an agent — no tests to run, no
+      instructions to read, nothing to revert to. <code>silkcode new</code> scaffolds one that
+      already runs and tests, then makes the initial commit. Open it here afterwards with ＋.</p>
+    <div class="cmdlist">
+      <div class="cmdrow"><code>silkcode new --list</code><button class="copy" data-copy="silkcode new --list">copy</button></div>
+      <div class="cmdrow"><code>silkcode new todo-cli --template python-cli</code><button class="copy" data-copy="silkcode new todo-cli --template python-cli">copy</button></div>
+      <div class="cmdrow"><code>silkcode new api --describe "Invoice API for freelancers"</code><button class="copy" data-copy='silkcode new api --describe "Invoice API for freelancers"'>copy</button></div>
+      <div class="cmdrow"><code>silkcode new api -p "add a health endpoint and a test for it"</code><button class="copy" data-copy='silkcode new api -p "add a health endpoint and a test for it"'>copy</button></div>
+    </div>
+    <table class="envtable howto-table">
+      <tr><th>Template</th><th>What you get</th><th>Tests</th></tr>
+      <tr><td>python</td><td>package + pyproject.toml, source and a pytest suite (default)</td><td>pytest</td></tr>
+      <tr><td>python-cli</td><td>argparse entry point, project scripts, logic kept importable</td><td>pytest</td></tr>
+      <tr><td>node</td><td>ES-module package with a node:test suite</td><td>npm test</td></tr>
+      <tr><td>web</td><td>static HTML + CSS + JS, no build step</td><td>—</td></tr>
+      <tr><td>blank</td><td>README, .gitignore, SILKCODE.md only</td><td>—</td></tr>
+    </table>
+    <p class="dimnote">Names are normalized (<code>"My New App"</code> → <code>my-new-app</code>).
+      A non-empty directory is refused unless you pass <code>--force</code>, and existing files
+      are never overwritten.</p>
+
+    <h4>Teach the agent about this project</h4>
+    <ul>
+      <li><code>SILKCODE.md</code> in the project root — layout, conventions, the test command,
+        anything it should never do. Read on <i>every</i> turn; scaffolded projects ship one.</li>
+      <li><b>Repo map</b> — built automatically, so the model knows the shape of the codebase
+        before its first tool call.</li>
+      <li><b>Memory &amp; skills</b> — durable notes the agent writes itself, plus markdown
+        playbooks it can follow (<code>/memory</code>, <code>/skills</code> in the REPL).</li>
+    </ul>
+
+    <h4>Verify and ship</h4>
+    <ul>
+      <li>The agent runs your suite instead of claiming success — pytest, npm, cargo, go and
+        flutter are detected from the project's own files.</li>
+      <li><b>GIT DIFF</b> shows exactly what changed; <b>↩ Revert</b> undoes a whole turn from the
+        checkpoint taken before it.</li>
+      <li><b>⇧ Push</b> pushes when you say so; the <b>GitHub</b> dialog can grant pull/commit/
+        push/merge for the session or auto-push after every turn.</li>
+      <li><b>🐝 Swarm</b> runs tester + critic + worker against this project until it scores 10/10.</li>
+    </ul>
+
+    <h4>If something is off</h4>
+    <ul>
+      <li><b>Read-only / lock banner</b> — another session or GUI instance holds this project.
+        Close it, or take over from the banner once it is idle.</li>
+      <li><b>The GitHub list is empty</b> — sign in from the <b>GitHub</b> dialog (or run
+        <code>silkcode connect github</code>); it only lists repos you can actually clone.</li>
+      <li><b>“no test framework detected”</b> — add a suite, and record the command in
+        <code>SILKCODE.md</code> so the agent uses it too.</li>
+      <li><b>“no initial commit — empty ident name”</b> — git does not know who you are yet:
+        <code>git config --global user.email you@example.com</code>. The project was created fine.</li>
+    </ul>
+
+    <p class="dimnote">Full write-up, including remote and sandboxed projects:
+      <a href="https://silkcode.web.app/projects.html" target="_blank" rel="noopener">silkcode.web.app/projects.html</a></p>
+
+    <div class="row">
+      <button id="projects-help-open">Open a project…</button>
+      <button class="primary" id="projects-help-close">Close</button>
+    </div>
   </div>
 </div>
 
@@ -907,6 +1019,37 @@ document.querySelectorAll("#project-tabs .ptab").forEach(b => {
   b.onclick = () => { if (b.dataset.pgtab === "local") selectedProject = null; paintProjectTabs(); $("project-path").focus(); };
 });
 $("project-cancel").onclick = () => $("project-modal").classList.remove("open");
+
+// ---- projects how-to ------------------------------------------------------
+// The GUI can open and switch projects but not create one - that is a terminal
+// command - so the how-to hands over the exact command instead of pretending.
+function openProjectsHelp() { $("projects-help-modal").classList.add("open"); }
+function closeProjectsHelp() { $("projects-help-modal").classList.remove("open"); }
+$("projects-help-btn").onclick = openProjectsHelp;
+$("projects-help-close").onclick = closeProjectsHelp;
+$("projects-help-open").onclick = () => { closeProjectsHelp(); openProjectModal(); };
+document.querySelectorAll("#projects-help-modal button.copy").forEach(b => {
+  b.onclick = async () => {
+    const command = b.dataset.copy;
+    try {
+      await navigator.clipboard.writeText(command);
+      const was = b.textContent;
+      b.textContent = "copied";
+      setTimeout(() => { b.textContent = was; }, 1200);
+    } catch {
+      // clipboard blocked (no permission, or a non-secure origin): select the
+      // command instead so ⌘/Ctrl+C still works
+      const range = document.createRange();
+      range.selectNodeContents(b.previousElementSibling);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  };
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("projects-help-modal").classList.contains("open")) closeProjectsHelp();
+});
 $("project-confirm").onclick = async () => {
   const path = $("project-path").value.trim();
   $("project-confirm").disabled = true;

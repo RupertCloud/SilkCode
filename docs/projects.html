@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Projects in Silk Code — create one with silkcode new, open a local directory or a GitHub repository, switch projects mid-session, and teach the agent about the codebase.">
+<link rel="canonical" href="https://silkcode.web.app/projects.html">
+<title>Projects · Silk Code</title>
+</head>
+<body>
+<style>
+  :root {
+    /* dark-first: the product's own palette (matches the landing page) */
+    --bg: #14161a; --panel: #1b1e24; --panel-2: #20242c; --border: #2b303a;
+    --text: #d7dae0; --dim: #8d95a3; --accent: #5cc8ff; --gold: #e6c07b;
+    --ok: #7ad48a; --err: #e06c75;
+    --thread: linear-gradient(180deg, var(--gold), var(--accent));
+    --code-bg: #101216;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f3f4f7; --panel: #ffffff; --panel-2: #eef0f4; --border: #d9dde5;
+      --text: #1b1e24; --dim: #5c6472; --accent: #0d76b8; --gold: #9a6f22;
+      --ok: #257a3e; --err: #b3392f;
+      --code-bg: #1b1e24;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f3f4f7; --panel: #ffffff; --panel-2: #eef0f4; --border: #d9dde5;
+    --text: #1b1e24; --dim: #5c6472; --accent: #0d76b8; --gold: #9a6f22;
+    --ok: #257a3e; --err: #b3392f;
+    --code-bg: #1b1e24;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 16px/1.65 var(--sans); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; position: relative; }
+  .thread { position: absolute; left: 3px; top: 0; bottom: 0; width: 2px;
+            background: var(--thread); opacity: .45; }
+  @media (max-width: 720px) { .thread { display: none; } }
+
+  h1, h2, h3, h4 { font-family: var(--mono); text-wrap: balance; }
+  h2 { font-size: 26px; margin-bottom: 6px; letter-spacing: -.01em; }
+  h3 { font-size: 17px; margin-bottom: 6px; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .22em;
+             text-transform: uppercase; color: var(--gold); display: flex;
+             align-items: center; gap: 10px; }
+  .eyebrow::before { content: ""; width: 26px; height: 2px; background: var(--thread); display: inline-block; }
+  section { padding: 52px 0 8px; scroll-margin-top: 70px; }
+  section > p.lede { color: var(--dim); max-width: 64ch; margin: 6px 0 20px; }
+  p { max-width: 72ch; }
+  p + p { margin-top: 12px; }
+
+  /* top bar */
+  .topbar { position: sticky; top: 0; z-index: 5; background: var(--bg);
+            border-bottom: 1px solid var(--border); }
+  .topbar .wrap { display: flex; align-items: center; gap: 18px; padding-top: 12px;
+                  padding-bottom: 12px; flex-wrap: wrap; }
+  .topbar .home { font-family: var(--mono); font-weight: 700; color: var(--text); }
+  .topbar .home .silk { color: var(--accent); }
+  .topbar nav { display: flex; gap: 16px; font-size: 14px; flex-wrap: wrap; }
+
+  header.page { padding: 56px 0 12px; }
+  header.page h1 { font-size: clamp(32px, 5.4vw, 46px); letter-spacing: -.03em; line-height: 1.1; }
+  header.page .tag { font-size: 18px; color: var(--dim); max-width: 62ch; margin: 14px 0 6px; }
+  .promise { font-family: var(--mono); font-size: 15px; color: var(--gold);
+             border-left: 2px solid var(--gold); padding: 4px 0 4px 14px; margin: 20px 0 6px; }
+
+  pre.code { background: var(--code-bg); color: #d7dae0; border: 1px solid var(--border);
+             border-radius: 10px; padding: 14px 18px; font: 13.5px/1.7 var(--mono);
+             overflow-x: auto; margin-top: 12px; }
+  pre.code .cm { color: #8d95a3; }
+  pre.code .p { color: #5cc8ff; font-weight: 700; }
+  pre.code .g { color: #7ad48a; }
+  code { font-family: var(--mono); font-size: .92em; background: var(--panel-2);
+         padding: 1.5px 6px; border-radius: 5px; }
+  pre.code code { background: none; padding: 0; }
+
+  table.cmds { border-collapse: collapse; width: 100%; font-size: 14.5px; margin-top: 16px; }
+  .cmds th { text-align: left; font-family: var(--mono); font-size: 12px; letter-spacing: .1em;
+             text-transform: uppercase; color: var(--gold); padding: 0 12px 6px 0;
+             border-bottom: 1px solid var(--border); }
+  .cmds td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .cmds td:first-child { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
+  .cmds td:last-child { color: var(--dim); }
+  .table-scroll { overflow-x: auto; }
+
+  /* grid children default to min-width:auto, so a long line inside a code block
+     widens its track and the whole page scrolls sideways on a phone; 0 lets the
+     block's own overflow-x do the scrolling instead */
+  .step > *, .cell { min-width: 0; }
+
+  .step { display: grid; grid-template-columns: 56px 1fr; gap: 18px; margin: 26px 0; }
+  .step-no { font-family: var(--mono); font-size: 22px; color: var(--gold);
+             border-top: 2px solid var(--gold); padding-top: 8px; font-variant-numeric: tabular-nums; }
+  .step p { color: var(--dim); font-size: 15px; margin: 8px 0; max-width: 64ch; }
+  @media (max-width: 600px) { .step { grid-template-columns: 1fr; gap: 6px; } }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+          gap: 14px; margin-top: 22px; }
+  .cell { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+          padding: 18px 18px 16px; }
+  .cell h3 { font-size: 15px; color: var(--accent); margin-bottom: 8px; }
+  .cell p { font-size: 14px; color: var(--dim); }
+
+  .note { border-left: 2px solid var(--accent); background: var(--panel);
+          padding: 12px 16px; border-radius: 0 8px 8px 0; margin-top: 18px;
+          font-size: 14.5px; color: var(--dim); }
+  .note b { color: var(--text); }
+
+  dl.faq { margin-top: 18px; }
+  dl.faq dt { font-family: var(--mono); font-size: 14.5px; color: var(--text);
+              margin-top: 18px; }
+  dl.faq dd { margin: 6px 0 0; color: var(--dim); font-size: 15px; max-width: 72ch; }
+
+  footer { margin-top: 70px; padding: 28px 0 46px; border-top: 1px solid var(--border);
+           color: var(--dim); font-size: 14px; display: flex; gap: 18px; flex-wrap: wrap; }
+  footer .spacer { flex: 1; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .cell { transition: border-color .15s ease, transform .15s ease; }
+    .cell:hover { border-color: var(--accent); transform: translateY(-2px); }
+  }
+</style>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="home" href="./"><span class="silk">Silk</span> Code</a>
+    <nav aria-label="On this page">
+      <a href="#create">Create</a>
+      <a href="#open">Open</a>
+      <a href="#switch">Switch</a>
+      <a href="#teach">Teach the agent</a>
+      <a href="#verify">Verify &amp; ship</a>
+      <a href="#reference">Reference</a>
+    </nav>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="thread" aria-hidden="true"></div>
+
+  <header class="page">
+    <p class="eyebrow">How to · Projects</p>
+    <h1>Working on projects</h1>
+    <p class="tag">A project is the codebase a Silk Code session acts on — the tree its file
+    tools, git commands, and test runs are confined to. This page covers the whole life of one:
+    creating it, opening it, switching to another, teaching the agent about it, and shipping it.</p>
+    <p class="promise">One session, one project.<br>Change either one without losing the other.</p>
+  </header>
+
+  <section id="what">
+    <p class="eyebrow">The model</p>
+    <h2>One session, one workspace</h2>
+    <p class="lede">Every session is bound to exactly one workspace root. Tools cannot read or
+    write outside it, <code>run_tests</code> runs inside it, and git status, diffs and pushes all
+    refer to it. Open as many sessions as you like — each can sit on a different project with a
+    different model, and they run side by side.</p>
+    <div class="grid">
+      <div class="cell"><h3>Local directory</h3>
+        <p>Any folder on your machine. <code>silkcode ~/code/app</code> or the GUI's local tab.</p></div>
+      <div class="cell"><h3>GitHub repository</h3>
+        <p>Picked from the repos your GitHub sign-in can see; cloned for you into
+        <code>~/.silkcode/projects/</code>.</p></div>
+      <div class="cell"><h3>Brand-new project</h3>
+        <p><code>silkcode new</code> scaffolds one that already runs and tests, then runs
+        <code>git init</code> and commits it.</p></div>
+      <div class="cell"><h3>Remote-only project</h3>
+        <p><code>--remote github:owner/repo</code> keeps the checkout in a sandbox; the code never
+        lands on your machine.</p></div>
+    </div>
+  </section>
+
+  <section id="create">
+    <p class="eyebrow">Step one, when there is nothing yet</p>
+    <h2>Create a new project</h2>
+    <p class="lede">A blank folder is a bad place to start an agent: it has no tests to run, no
+    instructions to read, and nothing to revert to. <code>silkcode new</code> gives you a project
+    that runs and tests on the first try, then makes the initial commit.</p>
+
+    <pre class="code"><span class="cm"># see what's available</span>
+silkcode new --list
+
+<span class="cm"># create one (git-initialized, with an initial commit)</span>
+silkcode new todo-cli --template python-cli
+
+<span class="cm"># say what it is — goes into the README, SILKCODE.md and package metadata</span>
+silkcode new invoices --describe "Invoice API for freelancers"
+
+<span class="cm"># create it somewhere specific</span>
+silkcode new site -t web --dir ~/code
+
+<span class="cm"># create it and put the agent straight to work</span>
+silkcode new invoices -p "add a health endpoint and a test for it"
+
+<span class="cm"># create it and stay in the REPL</span>
+silkcode new invoices --open
+
+<span class="cm"># no arguments: it asks for a name and a template</span>
+silkcode new</pre>
+
+    <h3 style="margin-top:28px">Templates</h3>
+    <div class="table-scroll">
+      <table class="cmds">
+        <tr><th>Template</th><th>What you get</th><th>Tests</th></tr>
+        <tr><td>python</td><td>package + <code>pyproject.toml</code>, source and a pytest suite <em>(default)</em></td><td>pytest</td></tr>
+        <tr><td>python-cli</td><td>argparse entry point, <code>[project.scripts]</code>, logic kept importable and tested</td><td>pytest</td></tr>
+        <tr><td>node</td><td>ES-module package, <code>node:test</code> suite — no test framework to install</td><td>npm test</td></tr>
+        <tr><td>web</td><td>static HTML + CSS + JS, no build step</td><td>—</td></tr>
+        <tr><td>blank</td><td>README, <code>.gitignore</code>, <code>SILKCODE.md</code> only</td><td>—</td></tr>
+      </table>
+    </div>
+
+    <h3 style="margin-top:28px">What lands on disk</h3>
+    <pre class="code">$ silkcode new todo-cli --template python-cli
+<span class="g">Created /home/you/todo-cli  (python-cli template)</span>
+  + .gitignore
+  + README.md
+  + SILKCODE.md         <span class="cm"># project instructions the agent reads every turn</span>
+  + conftest.py         <span class="cm"># so `pytest` works before an editable install</span>
+  + pyproject.toml
+  + todo_cli/__init__.py
+  + todo_cli/__main__.py
+  + todo_cli/cli.py
+  + todo_cli/core.py
+  + tests/test_cli.py
+  git: repository initialized, 0baad42 Initial commit (python-cli template)
+
+Next:
+  cd todo-cli
+  pip install -e '.[dev]'
+  pytest
+  silkcode .          <span class="cm"># work on it with the agent</span></pre>
+
+    <div class="note"><b>Names are normalized.</b> <code>"My New App"</code> becomes the directory
+    <code>my-new-app</code> and the package <code>my_new_app</code>. Path separators and reserved
+    directory names are refused rather than guessed at.</div>
+
+    <div class="note"><b>Nothing is overwritten.</b> An existing non-empty directory is refused
+    unless you pass <code>--force</code>, and even then files that already exist are kept and
+    reported. Scaffolding inside an existing checkout adds files to <em>that</em> repository
+    instead of burying a nested one, and <code>--no-git</code> skips git entirely. If git is
+    missing, or the machine has no committer identity, you get a printed warning — the project
+    is still on disk.</div>
+  </section>
+
+  <section id="open">
+    <p class="eyebrow">Step one, when the code already exists</p>
+    <h2>Open an existing project</h2>
+
+    <div class="step">
+      <div class="step-no">01</div>
+      <div>
+        <h3>From the terminal</h3>
+        <p>Pass the path. That directory becomes the workspace root for the session.</p>
+        <pre class="code">silkcode ~/code/ridelink              <span class="cm"># REPL</span>
+silkcode gui ~/code/ridelink          <span class="cm"># GUI at 127.0.0.1:8377</span>
+silkcode -p "fix the failing test" ~/code/ridelink   <span class="cm"># one-shot</span></pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-no">02</div>
+      <div>
+        <h3>From GitHub</h3>
+        <p>Sign in once with <code>silkcode connect github</code>. After that, any repository the
+        sign-in can see — private ones included — can be opened by name; Silk Code clones it for
+        you and reuses the clone next time.</p>
+        <pre class="code">silkcode connect github
+silk&gt; /project github:acme/widget     <span class="cm"># clones into ~/.silkcode/projects/</span></pre>
+        <p>Clone directories are named <code>&lt;owner&gt;-&lt;repo&gt;-&lt;digest&gt;</code>. The
+        digest is not decoration: <code>-</code> is legal inside both owner and repo names, so
+        <code>facebook/react-native</code> and <code>facebook-react/native</code> would otherwise
+        share a directory — and a push would land in the wrong repository.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-no">03</div>
+      <div>
+        <h3>From the GUI</h3>
+        <p>The <b>＋</b> button (new session) asks which project to run the session on: pick a
+        GitHub repository from the list, or type a local path on the second tab. Recently opened
+        projects appear in the same list, so the second visit is one click.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="switch">
+    <p class="eyebrow">Mid-flight</p>
+    <h2>Switch project without losing the conversation</h2>
+    <p class="lede"><code>/project</code> re-points the current session at another codebase. The
+    conversation, checkpoints and token count survive; the system prompt is regenerated so the
+    model orients on the new tree, and files, git and commands all follow.</p>
+    <pre class="code"><span class="p">silk&gt;</span> /project                       <span class="cm"># interactive picker</span>
+<span class="p">silk&gt;</span> /project ~/code/other-app      <span class="cm"># straight to a local path</span>
+<span class="p">silk&gt;</span> /project github:acme/widget    <span class="cm"># clone (or update) and switch</span>
+<span class="p">silk&gt;</span> /new scratch-api python         <span class="cm"># create one next door and switch to it</span></pre>
+    <p class="lede" style="margin-top:16px"><code>/new</code> creates the project <em>beside</em>
+    the current one — <code>/new sibling</code> from <code>~/code/app</code> creates
+    <code>~/code/sibling</code> — so scaffolding never drops an unrelated tree inside the
+    repository you are working on.</p>
+    <div class="note"><b>One writer at a time.</b> Opening the same project in a second session
+    or a second GUI instance is allowed, but the second one is read-only until the first releases
+    the workspace lock (close its session, or take over from the banner).</div>
+  </section>
+
+  <section id="teach">
+    <p class="eyebrow">Make the agent good at your codebase</p>
+    <h2>Teach the project to the agent</h2>
+    <p class="lede">Every turn starts with a repo map plus whatever the project tells the agent
+    about itself. Scaffolded projects ship a <code>SILKCODE.md</code> for exactly this reason —
+    an existing project earns the same by adding one.</p>
+    <div class="grid">
+      <div class="cell"><h3>SILKCODE.md</h3>
+        <p>Project instructions, read on every turn: layout, conventions, the test command,
+        anything the agent should never do. Keep it short and current.</p></div>
+      <div class="cell"><h3>Repo map</h3>
+        <p>Built automatically — the structure and key symbols, so the model knows the shape of
+        the codebase before its first tool call.</p></div>
+      <div class="cell"><h3>Project memory</h3>
+        <p>The agent writes durable notes with the <code>remember</code> tool; read them with
+        <code>/memory</code>. Facts it learned once do not have to be rediscovered.</p></div>
+      <div class="cell"><h3>Skills</h3>
+        <p>Markdown playbooks in the project's skills directory, listed with <code>/skills</code>
+        — repeatable procedures the agent can follow.</p></div>
+    </div>
+    <pre class="code"><span class="cm"># SILKCODE.md — the version a scaffolded project starts with</span>
+# Todo Cli
+
+Track todos from the terminal.
+
+## Layout
+- `todo_cli/cli.py` — argument parsing and the `main()` entry point
+- `todo_cli/core.py` — the logic the CLI calls (keep it importable and testable)
+- `tests/` — pytest suite; drive the CLI through `main([...])`
+
+## Conventions
+- Keep changes small and focused; explain anything non-obvious in a comment.
+- Add or update a test for every behavior change.
+- Run `pytest` before committing; the suite must be green.</pre>
+  </section>
+
+  <section id="verify">
+    <p class="eyebrow">Prove it, then ship it</p>
+    <h2>Verify and ship a project</h2>
+    <p class="lede">The harness runs your suite rather than trusting the model's summary. Test
+    detection is automatic: pytest, npm, cargo, go and flutter are recognized from the project's
+    own files — which is why every scaffold ships a suite the runner can already find.</p>
+    <div class="table-scroll">
+      <table class="cmds">
+        <tr><td>silkcode test</td><td>run the project's tests, framework auto-detected</td></tr>
+        <tr><td>/diff · GIT DIFF</td><td>review exactly what changed before it goes anywhere</td></tr>
+        <tr><td>/revert · ↩ Revert</td><td>undo a whole turn from the checkpoint taken before it</td></tr>
+        <tr><td>/push · ⇧ Push</td><td>push the current branch when you say so</td></tr>
+        <tr><td>--auto-push</td><td>push unpushed commits after every turn</td></tr>
+        <tr><td>silkcode review</td><td>an AI review of your uncommitted changes — reads, never writes</td></tr>
+        <tr><td>silkcode swarm</td><td>tester + critic + worker iterate until the project scores 10/10</td></tr>
+      </table>
+    </div>
+    <p style="margin-top:16px">Agent-made commits register Silk Code as co-author, so the record
+    stays honest: <code>git log --grep=X-Silk-Model</code> answers “which commits did the agent
+    write, and with which model?” forever.</p>
+  </section>
+
+  <section id="remote">
+    <p class="eyebrow">When the code should not touch your machine</p>
+    <h2>Sandboxed and remote projects</h2>
+    <p class="lede">Two different needs, two different flags. <code>--sandbox</code> keeps the
+    project local but runs the agent's <em>commands</em> in a disposable container.
+    <code>--remote</code> goes further: the repository is cloned inside the sandbox and never
+    lands on your disk at all.</p>
+    <pre class="code">silkcode sandbox serve --token &lt;secret&gt;            <span class="cm"># on the machine that should run commands</span>
+silkcode sandbox connect http://host:8390 --token &lt;secret&gt;
+
+silkcode --sandbox ~/code/app                      <span class="cm"># local files, remote commands</span>
+silkcode --remote github:acme/widget               <span class="cm"># repo lives only in the sandbox</span></pre>
+  </section>
+
+  <section id="troubleshooting">
+    <p class="eyebrow">When it does not go smoothly</p>
+    <h2>Troubleshooting</h2>
+    <dl class="faq">
+      <dt>“already exists and is not empty”</dt>
+      <dd>The target directory has files in it. Pick another name, or pass <code>--force</code> to
+      scaffold alongside what is there — existing files are never overwritten either way.</dd>
+
+      <dt>“no initial commit — empty ident name”</dt>
+      <dd>Git does not know who you are on this machine. Set it once
+      (<code>git config --global user.email you@example.com</code>) and commit; the project itself
+      was created fine.</dd>
+
+      <dt>The new project has no git repository</dt>
+      <dd>Expected when you scaffolded inside an existing checkout: the files belong to that
+      repository rather than a nested one. Use <code>--dir</code> to place it outside, or
+      <code>git init</code> it yourself.</dd>
+
+      <dt>“no test framework detected”</dt>
+      <dd>Nothing in the project identifies a runner. Add a suite (or pass
+      <code>--command</code> to <code>silkcode test</code>), and record the command in
+      <code>SILKCODE.md</code> so the agent uses it too.</dd>
+
+      <dt>The session is read-only / a lock banner appeared</dt>
+      <dd>Another session or GUI instance holds this project. Close it, or take over from the
+      banner once it is idle.</dd>
+
+      <dt>The GitHub list is empty</dt>
+      <dd>Run <code>silkcode connect github</code> (or paste a token in the GUI's GitHub dialog).
+      The picker only lists what your sign-in can actually clone.</dd>
+    </dl>
+  </section>
+
+  <section id="reference">
+    <p class="eyebrow">Reference</p>
+    <h2>Every project command</h2>
+    <div class="table-scroll">
+      <table class="cmds">
+        <tr><th>Command</th><th>What it does</th></tr>
+        <tr><td>silkcode new [name]</td><td>create a project from a template, git-init it, remember it</td></tr>
+        <tr><td>silkcode new --list</td><td>list the templates</td></tr>
+        <tr><td>-t, --template</td><td>python · python-cli · node · web · blank</td></tr>
+        <tr><td>-d, --dir</td><td>where to create it (default: current directory)</td></tr>
+        <tr><td>--describe "…"</td><td>one-line description written into README, SILKCODE.md, metadata</td></tr>
+        <tr><td>--no-git / --force</td><td>skip the repository / scaffold into a non-empty directory</td></tr>
+        <tr><td>-p "…" / --open</td><td>run one agent turn in it / open the REPL in it</td></tr>
+        <tr><td>silkcode [path]</td><td>open an existing directory as the session's project</td></tr>
+        <tr><td>/new [name] [template]</td><td>create a project beside this one and switch to it</td></tr>
+        <tr><td>/project [spec]</td><td>switch to another project: a path or <code>github:owner/repo</code></td></tr>
+        <tr><td>/memory · /skills</td><td>what the agent has learned and can follow in this project</td></tr>
+        <tr><td>silkcode test [path]</td><td>run the project's tests, framework auto-detected</td></tr>
+        <tr><td>silkcode connect github</td><td>sign in so GitHub repositories can be listed and cloned</td></tr>
+      </table>
+    </div>
+    <p style="margin-top:18px">The full command surface is in the
+    <a href="https://github.com/RupertCloud/SilkCode/blob/main/README.md">README</a>, and the
+    behavior it all implements is specified in the
+    <a href="https://github.com/RupertCloud/SilkCode/blob/main/SRS.md">SRS</a>.</p>
+  </section>
+
+  <footer>
+    <span>Silk Code · <a href="https://github.com/RupertCloud/SilkCode/blob/main/LICENSE">MIT license</a> ·
+    runs entirely on your machine</span>
+    <span class="spacer"></span>
+    <a href="./">Home</a>
+    <a href="https://github.com/RupertCloud/SilkCode">GitHub</a>
+    <a href="https://github.com/RupertCloud/SilkCode/releases/latest">Releases</a>
+    <a href="https://github.com/RupertCloud/SilkCode/blob/main/SRS.md">Specification</a>
+  </footer>
+</div>
+</body>
+</html>
