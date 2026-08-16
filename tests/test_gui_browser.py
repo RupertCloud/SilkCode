@@ -138,7 +138,15 @@ def test_composer_always_visible_and_sessions_switch(browser, gui_url):
     page.click("#project-confirm")
     page.wait_for_function(
         "sel => document.querySelector('#session-select').value !== sel", arg=first_label)
-    assert page.locator("#messages .msg").count() == 0
+    # the conversation is empty; a workspace-lock notice is expected because
+    # this second session opens the project the first one already holds
+    page.wait_for_function(
+        "() => !document.getElementById('messages').textContent.includes('Reply in session one.')")
+    assert page.locator("#messages .msg.user, #messages .msg.assistant").count() == 0
+    notice = page.locator("#messages .msg.notice")
+    if notice.count():
+        text = notice.first.text_content()
+        assert "already open in session-" in text, text  # a readable sentence
 
     send_and_wait(page, "second session request", "Reply in session two.")
     assert page.locator(".msg.assistant", has_text="Reply in session one.").count() == 0

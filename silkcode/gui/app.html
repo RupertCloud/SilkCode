@@ -864,6 +864,13 @@ async function init() {
     $("version-banner").style.display = "block";
     if (!Array.isArray(state.sessions)) return;  // old server: stop before we crash
   }
+  // Showing a different session: clear the old conversation before the header
+  // switches, so the previous session's messages are never displayed under the
+  // new session's name while its transcript is still loading.
+  if (currentSessionId !== state.session_id) {
+    $("messages").innerHTML = ""; $("timeline").innerHTML = "";
+    streamEl = null;
+  }
   currentSessionId = state.session_id;
   $("cwd").textContent = state.cwd;
   $("mode-select").value = state.mode;

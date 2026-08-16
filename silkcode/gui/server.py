@@ -101,7 +101,7 @@ class AgentSession:
             acquire(self.workspace.root, self.lock_owner)
         except LockError as exc:
             self.lock_conflict = str(exc)
-            notice = (f"⚠ This project is already open in {self.lock_conflict} — "
+            notice = (f"⚠ This project is already open in {exc.holder()} — "
                       "edits are refused until that session closes or the lock goes stale.")
             self.transcript.append({"kind": "notice", "text": notice})
             state.broadcast({"type": "notice", "text": notice, "session": self.id})
