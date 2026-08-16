@@ -301,3 +301,64 @@ def test_prose_between_fences_carries_no_blank_lines(browser, gui_url):
         """() => Array.from(document.querySelectorAll('#messages .msg.assistant'))
                      .map(m => m.getBoundingClientRect().height)""")
     assert max(heights) < 60, f"a one-line prose bubble is {max(heights)}px tall"
+
+
+def test_the_interface_is_navigable_without_sight_or_a_mouse(browser, gui_url):
+    """Icon-only controls need names, and a streaming reply has to be
+    announced — otherwise a screen-reader user gets an unlabelled button row
+    and silence while the agent works."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#tree div", timeout=15000)
+
+    # the transcript announces itself as it grows
+    messages = page.locator("#messages")
+    assert messages.get_attribute("aria-live") == "polite"
+    assert messages.get_attribute("role") == "log"
+    assert messages.get_attribute("aria-label")
+
+    # every control whose label is an icon carries an accessible name
+    unnamed = page.evaluate("""() => Array.from(document.querySelectorAll('button'))
+        .filter(b => b.offsetParent !== null)
+        .filter(b => {
+            const text = (b.textContent || '').replace(/[^\\p{L}\\p{N}]/gu, '').trim();
+            return !text && !b.getAttribute('aria-label') && !b.getAttribute('title');
+        })
+        .map(b => b.id || b.className)""")
+    assert unnamed == [], f"controls with no accessible name: {unnamed}"
+
+    # the composer's input is named and its hint is associated, not just nearby
+    assert page.locator("#input").get_attribute("aria-label")
+    described = page.locator("#input").get_attribute("aria-describedby")
+    assert described and page.locator(f"#{described}").count() == 1
+
+
+def test_the_activity_rail_explains_itself_when_empty(browser, gui_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#tree div", timeout=15000)
+    assert page.is_visible("#timeline-empty")
+
+    page.evaluate("() => addToolMsg('read_file', '{\"path\": \"app.py\"}')")
+    page.evaluate("""() => {
+        const d = document.createElement('div');
+        d.className = 'act'; d.textContent = 'read_file';
+        document.getElementById('timeline').appendChild(d);
+    }""")
+    assert not page.is_visible("#timeline-empty"), \
+        "the empty-state text should give way to real activity"
+
+
+def test_the_workspace_path_is_shortened_but_recoverable(browser, gui_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#tree div", timeout=15000)
+    page.wait_for_function("() => document.getElementById('cwd').textContent.length > 0")
+
+    shown = page.locator("#cwd").text_content()
+    full = page.locator("#cwd").get_attribute("title")
+    assert full and len(full) >= len(shown)
+    assert not shown.endswith("/"), f"truncation left a dangling separator: {shown!r}"
+    if shown != full:
+        assert shown.startswith("…/"), shown
+        assert full.endswith(shown.lstrip("…/")), "the tail shown must be the real tail"
