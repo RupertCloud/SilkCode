@@ -214,6 +214,11 @@ def test_code_blocks_render_with_copy_and_run_buttons(browser, gui_url):
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(gui_url)
     page.wait_for_selector("#input")
+    # #input is in the static HTML, so it says nothing about the app having
+    # booted. Boot ends by clearing #messages and re-rendering the transcript,
+    # which would wipe anything injected before it - the file tree is loaded
+    # after that clear, so tree content means the clear has already happened.
+    page.wait_for_selector("#tree div", timeout=15000)
 
     # inject a message that mixes prose with shell and non-shell code fences
     page.evaluate("""() => {
