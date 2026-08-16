@@ -1172,6 +1172,65 @@ And **sovereignty demand is not limited to these regions**; European public
 sector and regulated industries want the same thing. That is expansion room,
 not a reason to lose focus now.
 
+### 15.4 Which other fields, and how to pick them
+
+"Which industries could use an AI agent" is not a useful question — the answer
+is all of them. The useful one is which fields share the four properties that
+make *this* architecture the right one:
+
+1. **The data cannot leave.** Sovereignty is the whole pitch; a field without
+   that constraint is one where we have no advantage over Copilot.
+2. **The agent must take actions, not just answer.** Tool calling, permission
+   prompts and audit are what we built. If a chatbot would do, we are overkill.
+3. **The output is checkable.** This is the strongest predictor of success and
+   the most commonly ignored. Coding works for agents because tests pass or
+   fail. A field with a verifiable result — the query runs, the plan applies,
+   the report reconciles, the clause matches the template — will work. "Write
+   me a strategy" will disappoint and burn credibility.
+4. **The work is artifact-shaped.** Files in a directory, versioned and
+   diffable. The `Workspace` model transfers directly, and version history is
+   itself valuable to regulated buyers.
+
+That filter produces three tiers, in order of how little new engineering each
+needs:
+
+**Tier 1 — same workspace, different file types.** Barely new domains at all:
+data and analytics engineering (SQL, dbt, notebooks), infrastructure and DevOps
+(Terraform, Kubernetes manifests, CI configs), security engineering (patching,
+detection rules, incident runbooks), and QA automation — `tools/testing.py`
+already exists. New prompts and a few tools; the rest is unchanged.
+
+**Tier 2 — documents as artifacts.** New tools, same runtime: regulatory and
+compliance reporting (banks file enormous volumes of rule-bound, versioned
+documents — plausibly the highest-value non-coding use in a bank), procurement
+and tender documents for government and universities, contract review, and
+grant writing and reporting for the donor-funded programmes in §13.3. Git
+history over documents is a feature to a regulator, not an accident.
+
+**Tier 3 — their systems, over MCP.** Back-office operations, reconciliation
+and exception handling, ticket triage, research assistance, public-service
+delivery. Highest value and highest stakes, because the agent is acting on live
+systems — which is exactly where permissions and audit earn their keep.
+
+**Poor fits, named so they are not drifted into.** Customer-facing chat and
+support bots are a different product with different constraints, commoditised
+and competitive. Purely generative-creative work has no verification and no
+sovereignty driver. Clinical decision support carries regulatory and liability
+weight a small company should not take on.
+
+**The selection rule is not "which market is biggest."** It is: *what else does
+this buyer, in this account, already own?* Expansion follows the org chart, not
+the industry analyst. For a bank: coding → data engineering → infrastructure →
+security → compliance reporting → back-office, where the first four report to
+the same person. For a university: coding → research computing → grant
+reporting → administration. For government: coding → procurement documents →
+service delivery.
+
+Every one of these needs the same four things already built — the model on
+their infrastructure, permissioned tool calling, an audit trail, and a
+versioned workspace. That is what makes this one platform rather than six
+products.
+
 ## 16. Distribution: getting into institutional hands
 
 We cannot outspend anyone on marketing, and institutional buying in these
