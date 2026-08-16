@@ -56,8 +56,16 @@ uncommon, currency rules are real, institutions buy once a year through
 procurement. That is not an engineering problem, which is why it gets
 postponed. Answer it first.
 
-Everything below is the detail behind those paragraphs. §13 is the market,
-§12 the money, §11 the roadmap, §§2–9 the architecture.
+**If the code is free, what are they paying for?** Not the software — the
+accountability, the deployment, the upkeep, the compliance paperwork, the
+administration layer for many users, and the training. For government and
+campus buyers there is a twist: procurement often *cannot* buy "free", because
+there is no vendor, invoice or accountable party. Open source wins the security
+review; the contract is what makes adoption possible. §14 has the detail,
+including which parts stay MIT and which are commercial.
+
+Everything below is the detail behind those paragraphs. §14 is what customers
+buy, §13 the market, §12 the money, §11 the roadmap, §§2–9 the architecture.
 
 ---
 
@@ -726,8 +734,8 @@ cloud**:
   and the M4 team work.
 - **Support and SLA**, priced annually per seat.
 
-**Open-core is the licensing shape this implies**, and it is the unresolved
-question in §14: the MIT harness drives adoption and is the reason a security
+**Open-core is the licensing shape this implies**, and §14.3 draws the line:
+the MIT harness drives adoption and is the reason a security
 team will approve us, while the control plane, gateway and enterprise features
 are what is actually sold. Where exactly that line falls needs deciding before
 `silkcloud` has much code in it, because moving it later is a re-licensing
@@ -769,7 +777,7 @@ expensive:
    BYO-key branch in §10. Build it once, generically: `(principal → upstream +
    credential)`. That single abstraction covers pooled credits, BYO-key, and
    the enterprise org gateway.
-3. **The open-core boundary** (§14). The MIT harness is not only marketing —
+3. **The open-core boundary** (§14.3). The MIT harness is not only marketing —
    it is the enterprise lead generator. Developers adopt it locally, security
    teams approve it because they can read it, and the organization then buys
    the control plane, gateway and policy layer. That is the standard open-core
@@ -919,7 +927,104 @@ The cheapest possible validation, before any of the above is built:
 Everything in §§3–12 remains the right architecture. What §13 changes is who
 pays first, how they pay, and therefore what gets built first.
 
-## 14. Open questions
+## 14. What customers pay for when the code is free
+
+### 14.1 Nobody is buying the software
+
+The code is MIT and downloadable. That is not the product, and it never was.
+What an institution is actually buying:
+
+| What they pay for | Why free source does not provide it |
+| --- | --- |
+| **Accountability** | A contract, an SLA, a named vendor, someone answerable when it breaks. Free software has no counterparty |
+| **Making it work** | Installed into *their* cluster, wired to *their* model, integrated with *their* identity system, on *their* network. A ministry does not have people who do this |
+| **Keeping it working** | Security patches, version upgrades, migrations, someone to call. Ongoing, which is why it is the best revenue line |
+| **Time** | They *could* self-host free — with three engineers for six months they do not have. We sell the six months back |
+| **Compliance paperwork** | Security questionnaires, data-processing agreements, pen-test reports, procurement documents. Tedious, mandatory, and not something a repository provides |
+| **The administration layer** | Many users, org policy, SSO, audit logs, spend visibility (§14.3) |
+| **Knowledge** | Training, curriculum, certification. For universities frequently the most wanted item of all |
+
+The framing that follows: **do not price the software, price the outcome.**
+"A supported deployment, kept running, with an SLA" is purchasable. "A licence
+for software you could have downloaded" invites exactly the objection in the
+question.
+
+### 14.2 Public procurement cannot buy "free"
+
+The counterintuitive part, and it matters most for the government and campus
+segments: **being free can *block* a purchase.**
+
+A ministry or a public university cannot put "we downloaded it" through
+procurement. There is no vendor, no invoice, no line item, no accountable
+party, no support contract — and often an explicit policy requiring all three.
+Meanwhile the same institution's security review is far easier to pass *because*
+the source is readable and auditable.
+
+So open source does not cannibalise this segment. It de-risks the decision
+while leaving the purchase fully intact — they still need someone to sell them
+a supported, warranted, invoiced version. Open source is the reason they trust
+it; the contract is the reason they can adopt it.
+
+### 14.3 What stays open, and what is commercial
+
+One test decides every case:
+
+> **Does closing this weaken the claim that the model is replaceable, or that
+> the code is auditable?** If yes, it stays open. If it only helps an
+> organization administer many users, it can be commercial.
+
+| Always open (MIT) | Commercial |
+| --- | --- |
+| The agent, tools, CLI, local GUI | Multi-user control plane |
+| The provider layer and every model integration | Organization model gateway and policy |
+| Single-user local use, forever free | SSO/SAML, audit logs, admin and spend dashboards |
+| The sandbox protocol | Packaged installer, managed updates, support tooling |
+
+Closing the harness would destroy the thesis — a sovereignty pitch that cannot
+be inspected is not a sovereignty pitch. Closing the *administration* layer
+costs an individual developer nothing, because a single user never needed it.
+That asymmetry is what makes open-core work here rather than being a tax on
+goodwill.
+
+Licence choice for the commercial half is a live decision (§15) — permissive,
+copyleft, or source-available all behave differently when a large cloud decides
+to resell us.
+
+### 14.4 The segments buy different things
+
+Government agencies, departments, schools, campuses and SMEs are not one
+market. They differ in budget, cycle, and which product they should even be
+sold:
+
+| Segment | Buying | Product | Cycle |
+| --- | --- | --- | --- |
+| **Government / ministry** | Sovereignty, accountability, compliance, local presence | Self-hosted appliance + support + SLA | Longest, largest, tender-based |
+| **Department / agency unit** | A working setup someone maintains | Appliance or in-region hosting, smaller contract | Medium, budget-holder decides |
+| **University / campus** | Multi-user, SSO, teaching material, research freedom | Annual institution licence + training | Annual, procurement-gated |
+| **School** | Something turnkey, plus curriculum | Hosted, or a very simple appliance; often grant-funded | Short but tiny budget — volume play |
+| **SME** | Working AI coding with no IT department | **Hosted, self-serve, pay as you go** | Immediate, card or mobile money |
+
+That last row matters more than it looks: **SMEs rescue the hosted product.**
+They will never run a cluster, so the pooled-credit hosted service in §§3–7 is
+exactly right for them — it is simply not what a ministry buys. Both products
+have a home, and §13.4's reordering is about which one earns first, not about
+abandoning either.
+
+### 14.5 The honest risks
+
+- **Some will self-host and never pay.** They will. Universities especially.
+  Treat them as references, talent pipeline and credibility rather than lost
+  revenue — a share convert the first time something breaks in production.
+- **Someone forks it.** Real but rare for infrastructure that needs support;
+  the credible threat is a large cloud reselling us, which the commercial-half
+  licence choice exists to address.
+- **"Why pay if it is free?" will be asked in every deal.** The answer must be
+  one sentence and segment-specific — for a ministry, *"because you cannot put
+  a download through procurement, and nobody is accountable when it stops";*
+  for an SME, *"because you would need an engineer you do not have."* Rehearse
+  it; it is the objection that decides deals.
+
+## 15. Open questions
 
 - **Warm pool from day one?** Cold Pod plus clone is seconds. The pool is the
   fix, but it means paying for idle capacity on our own nodes — a direct cost
@@ -951,9 +1056,8 @@ pays first, how they pay, and therefore what gets built first.
 - **Data handling.** Pooled keys mean user code transits Silk's gateway to
   third-party providers. This needs an explicit, published statement about
   retention and provider training policies before launch, not after.
-- **Open-source boundary.** Does `silkcloud` stay MIT alongside `silkcode`, or
-  is the control plane the proprietary part? This decision shapes how much of
-  the above can live in this repository — and it is now revenue-critical, since
-  the open-core split in §12.5 *is* the enterprise product. Decide it before
-  `silkcloud` has much code in it; moving the line later is a re-licensing
-  argument nobody enjoys.
+- **Licence for the commercial half.** §14.3 settles *where* the open-core line
+  falls; it does not settle what licence sits on the closed side. Permissive,
+  copyleft and source-available behave very differently when a large cloud
+  decides to resell us. Decide before `silkcloud` has much code in it — moving
+  it later is a re-licensing argument nobody enjoys.
