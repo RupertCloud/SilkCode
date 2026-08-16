@@ -856,6 +856,26 @@ class GuiState:
             raise ConfigError(str(exc)) from exc
         return self.environment()
 
+    def checkout_options(self) -> dict:
+        from ..billing import checkout_options
+        return checkout_options()
+
+    def checkout(self, body: dict) -> dict:
+        from ..billing import purchase
+        pack_id = str(body.get("pack", "")).strip()
+        card = str(body.get("card", "")).strip()
+        try:
+            return purchase(pack_id, card)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+
+    def billing_summary(self) -> dict:
+        from .. import billing
+        return {
+            "balance": billing.credit_balance(),
+            "orders": billing.orders(),
+        }
+
     def providers_info(self) -> list[dict]:
         out = []
         for name in sorted(self.config.providers):
@@ -1137,6 +1157,10 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json(st.projects_info())
             elif route == "/api/providers":
                 self._json(st.providers_info())
+            elif route == "/api/checkout":
+                self._json(st.checkout_options())
+            elif route == "/api/billing":
+                self._json(st.billing_summary())
             elif route == "/api/sessions":
                 self._json(st.sessions_summary())
             elif route == "/api/environment":
@@ -1264,6 +1288,8 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/providers":
                 st.add_provider(body)
                 self._json(st.providers_info())
+            elif route == "/api/checkout":
+                self._json(st.checkout(body))
             else:
                 self._error("not found", 404)
         except FileNotFoundError as exc:

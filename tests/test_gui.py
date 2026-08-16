@@ -212,6 +212,45 @@ def test_gui_environment_usage_after_a_turn(gui):
                for m in env["usage"]["by_model"])
 
 
+def test_gui_checkout_buys_credits_and_lists_them(gui):
+    """The credits checkout (beautifului.dev-style) serves packs, validates a
+    card, records a simulated order, and its balance reflects the purchase."""
+    base, _state, _ws = gui
+    from silkcode import billing as billmod
+
+    # checkout page describes the packs it sells
+    opts = httpx.get(f"{base}/api/checkout").json()
+    assert {"packs", "currency", "default_pack"} <= set(opts)
+    assert len(opts["packs"]) >= 3
+    assert opts["packs"][0]["id"] == opts["default_pack"]
+    assert opts["packs"][0]["credits"] > 0 and opts["packs"][0]["usd"] > 0
+
+    # an invalid pack is refused
+    bad = httpx.post(f"{base}/api/checkout", json={"pack": "nope", "card": "4242 4242 4242 4242"})
+    assert bad.status_code == 400
+    assert "credit pack" in bad.json()["error"]
+
+    # a too-short card is refused
+    short = httpx.post(f"{base}/api/checkout", json={"pack": "pro", "card": "4242"})
+    assert short.status_code == 400
+    assert "card" in short.json()["error"]
+
+    # a valid purchase returns a receipt and updates the balance/orders lists
+    before = httpx.get(f"{base}/api/billing").json()
+    receipt = httpx.post(f"{base}/api/checkout",
+                         json={"pack": "pro", "card": "4242 4242 4242 4242"}).json()
+    assert receipt["pack"] == "pro"
+    assert receipt["credits"] == billmod.CREDIT_PACKS[1]["credits"]
+    assert receipt["usd"] == billmod.CREDIT_PACKS[1]["usd"]
+    assert receipt["card_last4"] == "•••• 4242"
+    assert receipt["order_id"].startswith("silkord-")
+    assert "credits" in receipt.get("receipt_email", "")
+
+    after = httpx.get(f"{base}/api/billing").json()
+    assert after["orders"][0]["order_id"] == receipt["order_id"]
+    assert after["balance"] == before["balance"] + receipt["credits"]
+
+
 def test_gui_stop_endpoint(gui):
     base, state, _ws = gui
     resp = httpx.post(f"{base}/api/stop", json={})
