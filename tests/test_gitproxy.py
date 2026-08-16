@@ -319,3 +319,29 @@ def test_an_unreachable_upstream_is_reported_as_a_bad_gateway():
         assert TOKEN not in resp.text
     finally:
         proxy.close()
+
+
+def test_a_large_push_survives_chunked_transfer(proxy, tmp_path, upstream):
+    """git switches to chunked transfer once a push outgrows its buffer, and
+    the proxy's dechunking is hand-rolled - so this pushes a payload big
+    enough to exercise it and checks the objects arrive intact."""
+    import os
+
+    p, _ = proxy
+    _, root = upstream
+    work = tmp_path / "big"
+    assert _git("clone", "-q", p.url, str(work)).returncode == 0
+
+    for i in range(6):
+        (work / f"blob{i}.bin").write_bytes(os.urandom(2 * 1024 * 1024))
+    _git("-C", str(work), "add", "-A")
+    _git("-C", str(work), "commit", "-qm", "big")
+    _git("-C", str(work), "config", "http.postBuffer", "16384")  # force chunking
+
+    result = _git("-C", str(work), "push", "origin", "HEAD:main")
+    assert result.returncode == 0, result.stderr + result.stdout
+
+    bare = root / "acme" / "widget.git"
+    assert "big" in _git("--git-dir", str(bare), "log", "--oneline", "main").stdout
+    size = sum(f.stat().st_size for f in bare.rglob("*") if f.is_file())
+    assert size > 8 * 1024 * 1024, f"objects did not arrive intact ({size} bytes)"
