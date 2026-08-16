@@ -22,13 +22,20 @@ This document is long. The short version:
 Every serious competitor — Claude Code, Cursor, Copilot — is American and tied
 to one American AI company: their price, their model, your code sent to them.
 
-**Who we are building for.** Universities, ministries and organizations across
-Africa, Asia and Latin America. They want AI in their software work and have
-three needs no US tool meets together: **cheaper models**, **their own
-machines**, and **their own rules about where code goes**. Silk Code already
-does all three — cheap providers, Ollama/vLLM on their own hardware, and an MIT
-licence anyone can read, teach from and modify. The incumbents cannot copy
-this, because their product *is* their model.
+**Who we are building for.** Banks and fintechs, governments, universities and
+smaller companies across Africa, Asia and Latin America. They want AI in their
+software work and have three needs no US tool meets together: **cheaper
+models**, **their own machines**, and **their own rules about where code
+goes**. Silk Code already does all three — cheap providers, Ollama/vLLM on
+their own hardware, and an MIT licence anyone can read, teach from and modify.
+The incumbents cannot copy this, because their product *is* their model.
+
+**Who pays first is probably financial services.** For a regulated bank,
+keeping source code in-country is a rule, not a preference — so where
+regulation blocks the US tools, our competition is not Copilot, it is *nothing*.
+Banks and fintechs also have budget, infrastructure and a normal way to buy
+software. Universities and ministries matter strategically, but they are slower
+and poorer. See §14.5.
 
 **What "Cloud" adds.** Today Silk Code is one person on one laptop. Cloud makes
 it serve a whole institution: everyone signs in, work runs on the institution's
@@ -839,7 +846,8 @@ Three structural facts, each of which breaks a standard SaaS assumption:
 1. **Per-seat monthly pricing fails.** $20–30/month is a meaningful share of a
    developer's salary in much of this market, and a university with 5,000
    computing students cannot pay 5,000 × anything. Charge the *institution*,
-   not the seat.
+   not the seat. (One exception, and it is a large one: regulated financial
+   institutions pay per developer at enterprise rates — see §14.5.)
 2. **Collection is a real engineering and legal problem, not a checkbox.**
    International card penetration is low, corporate cards rarer, and FX
    controls and repatriation rules are real. Mobile money and local rails
@@ -998,19 +1006,81 @@ sold:
 
 | Segment | Buying | Product | Cycle |
 | --- | --- | --- | --- |
+| **Bank / regulated financial** | Regulatory compliance, code that provably never leaves, audit trail | On-prem appliance + support + SLA + audit | 9–18 months, vendor-risk gated |
+| **Fintech / payments** | The same, with less legacy and more urgency | Appliance or in-region private deployment | Months — the fastest of the serious buyers |
 | **Government / ministry** | Sovereignty, accountability, compliance, local presence | Self-hosted appliance + support + SLA | Longest, largest, tender-based |
 | **Department / agency unit** | A working setup someone maintains | Appliance or in-region hosting, smaller contract | Medium, budget-holder decides |
 | **University / campus** | Multi-user, SSO, teaching material, research freedom | Annual institution licence + training | Annual, procurement-gated |
 | **School** | Something turnkey, plus curriculum | Hosted, or a very simple appliance; often grant-funded | Short but tiny budget — volume play |
 | **SME** | Working AI coding with no IT department | **Hosted, self-serve, pay as you go** | Immediate, card or mobile money |
 
-That last row matters more than it looks: **SMEs rescue the hosted product.**
-They will never run a cluster, so the pooled-credit hosted service in §§3–7 is
-exactly right for them — it is simply not what a ministry buys. Both products
-have a home, and §13.4's reordering is about which one earns first, not about
-abandoning either.
+Two rows carry more weight than the rest. **SMEs rescue the hosted product** —
+they will never run a cluster, so the pooled-credit service in §§3–7 is exactly
+right for them even though it is not what a ministry buys. And **banks and
+fintech are where the money is**, for reasons that invert several assumptions
+made earlier in this document.
 
-### 14.5 The honest risks
+### 14.5 Banks and fintech invert the assumptions
+
+§13 was written around institutions with small budgets, slow procurement and
+weak infrastructure. Regulated financial institutions are the opposite on every
+axis, and they are the best-fitting customer in the document:
+
+- **Regulation makes it mandatory, not preferred.** Central-bank rules on data
+  residency and third-party processing mean many banks *cannot* send source
+  code to a foreign AI service at all. This is a hard bar, not a preference —
+  and the strongest possible version of the §13.1 sovereignty argument.
+- **There is no incumbent to displace.** Where regulation blocks the US tools,
+  the alternative is not Copilot — it is *no AI coding tooling*. Competing
+  against nothing is a far better position than competing with Cursor on
+  features.
+- **They have money.** Unlike a university, a bank has a real software budget
+  and is used to paying six figures for developer tooling.
+- **They have infrastructure and know how to buy.** Own datacentres, security
+  teams, existing procurement paths for licensed software with support. The
+  appliance is the natural shape for them.
+- **They have developers at scale.** Core banking, mobile money, payment
+  integrations — real seat counts, not a pilot classroom.
+
+**Open source is an advantage here, not a complication.** Banks routinely
+require *source-code escrow* so they are not stranded if a vendor fails; an
+MIT harness satisfies that by construction. Their security team can audit the
+code directly, turning what is normally a six-month third-party-risk blocker
+into a selling point.
+
+What they demand on top of §14.1: vendor risk assessment, penetration-test
+reports, immutable audit logs of what the AI touched, role-based access and
+segregation of duties, strict network segmentation or air-gap, data-loss
+guarantees, liability and indemnity terms, and business-continuity commitments.
+
+Three consequences:
+
+1. **Per-seat pricing works here** — the §13.2 objection is an
+   education-and-government constraint, not a universal one. Price banks per
+   developer at enterprise rates and institutions per site; the products are
+   the same, the price metric is not.
+2. **Audit logs and RBAC move up the roadmap.** They sit in M4 today (§11.7).
+   For this segment they are not a later tier, they are table stakes for the
+   first conversation.
+3. **Fintech is the better beachhead than banks.** Mobile-money operators,
+   payment processors and digital banks have the same regulatory driver with
+   less legacy and far shorter cycles. Land fintech first, use it as the
+   reference that survives a bank's vendor-risk review.
+
+**The honest obstacle is third-party risk management.** A young company with no
+SOC 2, no audited financials and few references will struggle to clear a tier-1
+bank's onboarding, however good the product is. Two mitigations: start with
+fintechs and mid-tier banks whose process is lighter, and partner with a local
+systems integrator who has already cleared vendor onboarding and can carry the
+contract (§13.3's partner line, which pays off twice here).
+
+**This is plausibly who pays first.** Universities remain strategically
+valuable — adoption, talent, references, teaching — but they are slow and poor.
+Financial services can fund the company while education builds the ecosystem,
+and §13.4's roadmap ordering holds either way, since both need multi-user,
+per-org model routing and the installer before anything else.
+
+### 14.6 The honest risks
 
 - **Some will self-host and never pay.** They will. Universities especially.
   Treat them as references, talent pipeline and credibility rather than lost
