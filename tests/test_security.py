@@ -221,6 +221,59 @@ def test_sandbox_clone_never_echoes_the_token(sandbox):
     assert "ghp_supersecrettoken" not in resp.text
 
 
+def test_a_cloned_workspace_does_not_contain_the_github_token(tmp_path):
+    """The token must not be written into the clone.
+
+    Embedding it in the remote URL puts it in .git/config verbatim, where the
+    agent reaches it without trying: a repo scan, a `cat .git/config`, a `git
+    remote -v`. From there it goes into the model's context and out to
+    whichever third-party provider is answering.
+    """
+    from silkcode.sandbox_server import _clone_repo
+
+    secret = "ghp_supersecrettoken"
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+
+    dest = tmp_path / "workspaces" / "w"
+    try:
+        _clone_repo(str(origin), dest, token=secret)
+    except ValueError:
+        pytest.skip("git could not clone the fixture repository")
+
+    leaked = [str(p) for p in dest.rglob("*")
+              if p.is_file() and secret in p.read_text(errors="replace")]
+    assert not leaked, f"the token was written into {leaked}"
+
+
+def test_a_cloned_sandbox_workspace_does_not_expose_the_token(sandbox, tmp_path):
+    """Drive the real /clone then /exec path: after cloning with a token, the
+    commands the agent runs must not be able to read it back out of the
+    workspace, and an ordinary command's environment must not carry it."""
+    url, _ = sandbox
+    auth = {"Authorization": "Bearer the-secret-token"}
+    workspace = "d" * 16
+    secret = "ghp_supersecrettoken"
+
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+
+    resp = httpx.post(f"{url}/clone/{workspace}",
+                      json={"url": str(origin), "token": secret},
+                      headers=auth, timeout=120)
+    if resp.status_code >= 400:
+        pytest.skip(f"git could not clone the fixture repository: {resp.text[:120]}")
+
+    for command in ("cat .git/config", "git remote -v",
+                    "printenv SILKCODE_GIT_TOKEN || echo absent",
+                    "grep -r ghp_ . || echo absent"):
+        out = httpx.post(f"{url}/exec/{workspace}", json={"command": command},
+                         headers=auth, timeout=60)
+        assert secret not in out.text, f"`{command}` exposed the token"
+
+
 # --------------------------------------------------------------------------- #
 # GUI daemon: reachable beyond loopback means a credential is required
 # --------------------------------------------------------------------------- #

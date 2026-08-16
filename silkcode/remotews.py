@@ -141,9 +141,10 @@ class RemoteWorkspace(Workspace):
 
     def git(self, *args: str, env: dict | None = None, timeout: int = 60) -> str:
         """Run a git command in the sandbox clone. `env` is accepted for
-        signature compatibility with the local tools but ignored: credentials
-        live in the sandbox's origin URL (set at clone time), not on this
-        machine."""
+        signature compatibility with the local tools but ignored: the sandbox
+        holds the credentials it was given at clone time and supplies them to
+        git itself, so they never travel with the command or land in the
+        clone's .git/config."""
         cmd = "git " + shlex.join(str(a) for a in args)
         data = self.backend.exec_json(self.workspace_id, cmd, timeout=timeout)
         output = str(data.get("output", ""))
