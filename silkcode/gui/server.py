@@ -944,6 +944,14 @@ def is_loopback(host: str) -> bool:
     return host in LOOPBACK_HOSTS or host.startswith("127.")
 
 
+def _hostname(host_header: str) -> str:
+    """The hostname part of a Host header, without the port ('[::1]:80' -> '::1')."""
+    host = host_header.strip()
+    if host.startswith("["):  # bracketed IPv6 literal
+        return host[1:].partition("]")[0]
+    return host.rpartition(":")[0] if ":" in host else host
+
+
 class GuiHandler(BaseHTTPRequestHandler):
     state: GuiState = None  # type: ignore[assignment]
     html: bytes = b""
@@ -966,9 +974,46 @@ class GuiHandler(BaseHTTPRequestHandler):
                 return value
         return (parse_qs(urlparse(self.path).query).get("token") or [""])[0]
 
+    def _same_origin(self) -> bool:
+        """Reject requests a browser made on behalf of another site.
+
+        A loopback daemon needs no token, which leaves it open to any page the
+        user happens to visit: a cross-site POST with Content-Type text/plain
+        is a CORS "simple request", so the browser sends it without a
+        preflight, and the body is JSON either way. That is enough to start an
+        agent turn - in agent mode, arbitrary code execution from a web page.
+        The attacker cannot read the reply, but the side effect is the attack.
+
+        Browsers always attach Origin to cross-origin requests, so an Origin
+        that disagrees with the Host we were reached on is exactly that case.
+        Non-browser clients (curl, the CLI, tests) send no Origin and are
+        unaffected - they carry no ambient credentials to abuse.
+
+        Checking Origin against Host rather than a fixed address keeps every
+        legitimate way in working: 127.0.0.1, localhost, or a LAN IP all match
+        themselves. DNS rebinding defeats that equality - the attacker
+        controls the name, so Origin and Host agree - so the Host itself must
+        also resolve to somewhere we would serve. Beyond loopback that is what
+        the token is for, and it is already required.
+        """
+        origin = self.headers.get("Origin", "").strip()
+        host_header = self.headers.get("Host", "").strip()
+        if origin and origin.lower() != "null":
+            parsed = urlparse(origin)
+            if parsed.netloc.lower() != host_header.lower():
+                return False
+        # Rebinding guard: a loopback-only daemon may only be addressed by a
+        # loopback name. With a token in play the token is the gate.
+        if not self.token and host_header and not is_loopback(_hostname(host_header)):
+            return False
+        return True
+
     def _authorized(self) -> bool:
-        """No token configured (loopback) means no check; otherwise every
-        request must carry it. Compared in constant time."""
+        """No token configured (loopback) means no token check; otherwise every
+        request must carry it, compared in constant time. Either way the
+        request must not have been made on another site's behalf."""
+        if not self._same_origin():
+            return False
         if not self.token:
             return True
         import hmac
@@ -976,11 +1021,18 @@ class GuiHandler(BaseHTTPRequestHandler):
         return bool(presented) and hmac.compare_digest(presented, self.token)
 
     def _deny(self) -> None:
-        body = (b"Unauthorized. This Silk Code daemon is reachable beyond this "
-                b"machine and requires its access token; open the URL printed "
-                b"when it started.")
+        if not self._same_origin():
+            body = (b"Forbidden. This request carries another site's origin, or "
+                    b"reached this daemon under a host name it does not serve, "
+                    b"so it was not made by the Silk Code page.")
+            status = 403
+        else:
+            body = (b"Unauthorized. This Silk Code daemon is reachable beyond this "
+                    b"machine and requires its access token; open the URL printed "
+                    b"when it started.")
+            status = 401
         try:
-            self.send_response(401)
+            self.send_response(status)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
