@@ -586,3 +586,71 @@ def test_detection_on_a_remote_workspace_uses_the_file_listing():
     assert detect_test_command(FakeRemote(["src/app.py", "README.md"])) is None
     # a path that merely contains "test_" deeper down is not a root test file
     assert detect_test_command(FakeRemote(["vendor/pkg/test_x.py"])) is None
+
+
+# --------------------------------------------------------------------------
+# sync
+# --------------------------------------------------------------------------
+
+def _sync_repo(tmp_path):
+    import subprocess as sp
+    env = {"HOME": "/tmp", "PATH": "/usr/bin:/bin", "GIT_AUTHOR_NAME": "t",
+           "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t", "GIT_TERMINAL_PROMPT": "0"}
+
+    def git(*args, cwd=None):
+        return sp.run(["git", *args], cwd=cwd, capture_output=True, text=True,
+                      check=True, env=env)
+
+    origin = tmp_path / "origin.git"
+    git("init", "-q", "--bare", "-b", "main", str(origin))
+    seed = tmp_path / "seed"
+    git("clone", "-q", str(origin), str(seed))
+    (seed / "README.md").write_text("# demo\n")
+    git("add", "-A", cwd=seed)
+    git("commit", "-qm", "init", cwd=seed)
+    git("push", "-q", "origin", "main", cwd=seed)
+
+    ours = tmp_path / "ours"
+    git("clone", "-q", str(origin), str(ours))
+    return ours, seed, git
+
+
+def test_sync_reports_an_up_to_date_branch(home, tmp_path, capsys):
+    ours, _, _ = _sync_repo(tmp_path)
+    code, out, _ = run(["sync", str(ours)], capsys)
+    assert code == 0
+    assert "up to date" in out
+
+
+def test_sync_notices_a_branch_that_moved_and_exits_nonzero(home, tmp_path, capsys):
+    """Non-zero so it can gate a script."""
+    ours, seed, git = _sync_repo(tmp_path)
+    (seed / "theirs.txt").write_text("from them\n")
+    git("add", "-A", cwd=seed)
+    git("commit", "-qm", "theirs", cwd=seed)
+    git("push", "-q", "origin", "main", cwd=seed)
+
+    code, out, _ = run(["sync", str(ours)], capsys)
+    assert code == 1, "a branch needing attention should be a non-zero exit"
+    assert "behind" in out and "fast-forward" in out
+    assert not (ours / "theirs.txt").exists(), "a plain check must change nothing"
+
+
+def test_sync_apply_brings_the_branch_up_to_date(home, tmp_path, capsys):
+    ours, seed, git = _sync_repo(tmp_path)
+    (seed / "theirs.txt").write_text("from them\n")
+    git("add", "-A", cwd=seed)
+    git("commit", "-qm", "theirs", cwd=seed)
+    git("push", "-q", "origin", "main", cwd=seed)
+
+    code, out, _ = run(["sync", str(ours), "--apply"], capsys)
+    assert code == 0
+    assert "fast-forwarded" in out
+    assert (ours / "theirs.txt").read_text() == "from them\n"
+
+
+def test_sync_reports_a_missing_workspace(home, tmp_path, capsys):
+    code, _, err = run(["sync", str(tmp_path / "nope")], capsys)
+    assert code == 1
+    assert "error:" in err

@@ -12,6 +12,7 @@ Commands:
     silkcode config                                        show configuration
     silkcode swarm [path] [--model M] [...]                multi-agent improvement loop
     silkcode update [--branch B]                           pull updates and hot-apply them
+    silkcode sync [path] [--apply]                         check/reconcile a branch that moved
 
 Run several GUI instances on one machine - each on its own --host/--port and
 project. Session ids are unique across instances and every session is tagged
@@ -49,6 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         "swarm": cmd_swarm,
         "update": cmd_update,
         "sandbox": cmd_sandbox,
+        "sync": cmd_sync,
     }
     if argv and argv[0] in commands:
         try:
@@ -675,6 +677,45 @@ def cmd_config(argv: list[str]) -> int:
     print("\nBuilt-in providers: " + ", ".join(sorted(Config().providers)))
     print("API keys are read from environment variables (e.g. DEEPSEEK_API_KEY) unless set in the config.")
     return 0
+
+
+def cmd_sync(argv: list[str]) -> int:
+    """Report whether the branch has moved underneath this workspace, and
+    optionally reconcile it."""
+    parser = argparse.ArgumentParser(
+        prog="silkcode sync",
+        description="Fetch and report where this branch stands against its "
+                    "upstream and the base branch. Without --apply it changes "
+                    "nothing.")
+    parser.add_argument("path", nargs="?", default=".")
+    parser.add_argument("--apply", action="store_true",
+                        help="perform the suggested action (fast-forward or merge)")
+    parser.add_argument("--restart", action="store_true",
+                        help="when the branch is already merged as a squash, move it "
+                             "onto the base branch (implies --apply)")
+    parser.add_argument("--base", help="branch to measure against (default: the "
+                                       "remote's default branch)")
+    parser.add_argument("--remote", default="origin")
+    args = parser.parse_args(argv)
+
+    from ..sync import resync, survey
+    from ..workspace import ToolError, Workspace
+    try:
+        ws = Workspace(args.path)
+    except ToolError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.apply or args.restart:
+        print(resync(ws, remote=args.remote, base=args.base,
+                     allow_restart=args.restart))
+        return 0
+
+    state = survey(ws, remote=args.remote, base=args.base)
+    print(state.summary())
+    # a branch that needs attention is worth a non-zero exit, so this can gate
+    # a script: `silkcode sync || silkcode sync --apply`
+    return 0 if state.recommendation()[0] in ("none", "push") else 1
 
 
 def cmd_sandbox(argv: list[str]) -> int:
