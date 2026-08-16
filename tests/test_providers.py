@@ -14,6 +14,72 @@ def make_provider(handler):
     return OpenAICompatProvider("test", "http://test/v1", api_key="k", client=client)
 
 
+def test_chat_retries_on_transport_timeout_and_succeeds():
+    from httpx import ReadTimeout
+
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ReadTimeout("read timed out", request=request)
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": "recovered"}, "finish_reason": "stop"}],
+        })
+
+    p = OpenAICompatProvider("test", "http://test/v1", api_key="k",
+                             retries=2, retry_delay=0,
+                             client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = p.chat("m1", [{"role": "user", "content": "hi"}])
+    assert result.content == "recovered"
+    assert len(calls) == 2
+
+
+def test_chat_retries_on_429_and_503():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(429 if len(calls) < 3 else 200, json={} if len(calls) < 3 else {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+        })
+
+    p = OpenAICompatProvider("test", "http://test/v1", api_key="k",
+                             retries=3, retry_delay=0,
+                             client=httpx.Client(transport=httpx.MockTransport(handler)))
+    result = p.chat("m1", [])
+    assert result.content == "ok"
+    assert len(calls) == 3
+
+
+def test_chat_does_not_retry_client_4xx():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(401, json={"error": "bad key"})
+
+    p = OpenAICompatProvider("test", "http://test/v1", api_key="k",
+                             retries=3, retry_delay=0,
+                             client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ProviderError, match="401"):
+        p.chat("m1", [])
+    assert len(calls) == 1  # a 401 is a request problem, not worth a retry
+
+
+def test_chat_raises_after_retries_exhausted():
+    from httpx import ReadTimeout
+
+    def handler(request):
+        raise ReadTimeout("still timing out", request=request)
+
+    p = OpenAICompatProvider("test", "http://test/v1", api_key="k",
+                             retries=2, retry_delay=0,
+                             client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ProviderError, match="request failed"):
+        p.chat("m1", [])
+
+
 def test_chat_parses_content_and_usage():
     def handler(request):
         assert request.headers["Authorization"] == "Bearer k"
@@ -79,6 +145,62 @@ def test_stream_assembles_text_and_tool_calls():
     assert result.usage.total_tokens == 10
 
 
+def test_stream_retries_on_timeout_before_any_output():
+    from httpx import ReadTimeout
+
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ReadTimeout("never connected", request=request)
+        body = "data: " + json.dumps({"choices": [{"delta": {"content": "hi"}}]}) + "\n\ndata: [DONE]\n\n"
+        return httpx.Response(200, content=body.encode(), headers={"content-type": "text/event-stream"})
+
+    p = OpenAICompatProvider("test", "http://test/v1", api_key="k",
+                             retries=2, retry_delay=0,
+                             client=httpx.Client(transport=httpx.MockTransport(handler)))
+    events = list(p.stream("m1", []))
+    assert "".join(d for k, d in events if k == "text") == "hi"
+    assert len(calls) == 2
+
+
+def test_stream_raises_after_retries_exhausted_without_output():
+    from httpx import ReadTimeout
+
+    def handler(request):
+        raise ReadTimeout("persistent", request=request)
+
+    p = OpenAICompatProvider("test", "http://test/v1", api_key="k",
+                             retries=2, retry_delay=0,
+                             client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ProviderError, match="stream failed"):
+        list(p.stream("m1", []))
+
+
+def test_stream_does_not_retry_once_output_has_yielded():
+    """Once the first chunk is out, a mid-stream failure must surface as a
+    ProviderError rather than re-streaming (which would duplicate tokens)."""
+    from httpx import ReadError
+
+    # body that yields one chunk then blows up on the next line read
+    def body():
+        yield ("data: " + json.dumps({"choices": [{"delta": {"content": "par"}}]}) + "\n\n").encode()
+        raise ReadError("connection dropped mid-read")
+
+    def handler(request):
+        return httpx.Response(200, content=body(), headers={"content-type": "text/event-stream"})
+
+    p = OpenAICompatProvider("test", "http://test/v1", api_key="k",
+                             retries=2, retry_delay=0,
+                             client=httpx.Client(transport=httpx.MockTransport(handler)))
+    gen = p.stream("m1", [])
+    # the first chunk arrives fine (started=True), then the next read fails
+    assert next(gen) == ("text", "par")
+    with pytest.raises(ProviderError, match="stream failed"):
+        next(gen)
+
+
 def test_build_provider_types():
     p = build_provider("x", {"type": "openai_compat", "base_url": "http://h/v1"})
     assert isinstance(p, OpenAICompatProvider)
@@ -101,3 +223,13 @@ def test_build_provider_timeout_from_config():
     # garbage fails loudly instead of silently keeping the default
     with pytest.raises(ProviderError, match="invalid 'timeout'"):
         build_provider("x", {"type": "openai_compat", "base_url": "http://h/v1", "timeout": "soon"})
+
+
+def test_build_provider_retries_from_config():
+    p = build_provider("x", {"type": "openai_compat", "base_url": "http://h/v1"})
+    assert p.retries == 2 and p.retry_delay == 1.0
+    p = build_provider("x", {"type": "openai_compat", "base_url": "http://h/v1",
+                             "retries": 5, "retry_delay": "0.5"})
+    assert p.retries == 5 and p.retry_delay == 0.5
+    with pytest.raises(ProviderError, match="retries"):
+        build_provider("x", {"type": "openai_compat", "base_url": "http://h/v1", "retries": "lots"})

@@ -107,6 +107,31 @@ The order is configurable via `auto_order` in the config file.
 Configuration lives at `~/.silkcode/config.json` (override the directory with
 `$SILKCODE_HOME`).
 
+Per-provider network options in `config.json` (for flaky networks or slow first
+tokens, e.g. DeepSeek):
+
+```json
+{
+  "providers": {
+    "deepseek": {
+      "timeout": 600,
+      "retries": 3,
+      "retry_delay": 1.5
+    }
+  }
+}
+```
+
+`timeout` is the per-request (connect + read) limit in seconds (default 180).
+- `retries` (default 2) — how many times a *transient* failure is retried before
+  giving up. Transient means a network timeout/connection drop (`Operation timed
+  out`, `Connection reset`) or a `429`/`5xx` provider response. A client `4xx`
+  (bad key, bad request) is a problem with the request and is never retried.
+- `retry_delay` (default 1.0s) — the base backoff between attempts; it doubles
+  each retry (1s, 2s, 4s, …). For streaming, a request is only re-sent while no
+  response has arrived yet — once tokens are streaming out, a mid-stream drop is
+  surfaced as an error rather than replaying duplicate output.
+
 ## CLI
 
 ```bash
