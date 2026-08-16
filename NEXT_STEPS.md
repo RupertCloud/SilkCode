@@ -74,6 +74,17 @@ checkpoints, benchmarking, swarm). Remaining gaps:
 - [ ] **V0.3: enterprise & team** — audit logs, team settings, shared skills,
       organization model gateway, GitLab integration (SRS 80).
 
+## Priority 4 — Silk Cloud (hosted)
+
+A fully hosted Silk Code: sign in with GitHub, pick a repo, start working —
+no install, no API keys. The agent runs in a per-session cloud container and
+reaches models through a metered gateway holding pooled provider keys.
+
+The architecture, the build order, and what in this codebase moves versus gets
+rewritten are in **[docs/CLOUD.md](docs/CLOUD.md)**. Phase 0 there (the metered
+model gateway) is shippable on its own and is also where the missing **Model
+Auto Router** naturally lives.
+
 ## How to verify changes
 
 ```bash
