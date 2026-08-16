@@ -33,12 +33,13 @@ def detect_test_command(ws: Workspace) -> str | None:
         return ws.read_text(rel) if remote else (ws.root / rel).read_text(errors="replace")
 
     def has_test_files(directory: str) -> bool:
+        """Test files directly in `directory`; "" means the workspace root."""
         if remote:
-            prefix = directory + "/"
-            return any(f.startswith(prefix) and
-                       (Path(f).name.startswith("test_") or Path(f).name.endswith("_test.py"))
-                       for f in files)
-        d = ws.root / directory
+            prefix = directory + "/" if directory else ""
+            names = [f[len(prefix):] for f in files if f.startswith(prefix)]
+            return any("/" not in n and (n.startswith("test_") or n.endswith("_test.py"))
+                       for n in names)
+        d = ws.root / directory if directory else ws.root
         if not d.is_dir():
             return False
         return bool(list(d.glob("test_*.py")) or list(d.glob("*_test.py")))
@@ -60,7 +61,9 @@ def detect_test_command(ws: Workspace) -> str | None:
         return _pytest_command()
     if exists("pyproject.toml") and "pytest" in read("pyproject.toml"):
         return _pytest_command()
-    for directory in ("tests", "test"):
+    # "" is the workspace root: a flat project keeps test_foo.py next to
+    # foo.py, with no tests/ directory and nothing to declare it.
+    for directory in ("tests", "test", ""):
         if has_test_files(directory):
             return _pytest_command()
     return None
