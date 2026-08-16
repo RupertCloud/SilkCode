@@ -14,6 +14,53 @@ same agent that ships in the wheel, not a fork of it.
 
 ---
 
+## 0. Start here — the whole thing in plain language
+
+This document is long. The short version:
+
+**What Silk Code is.** An AI coding assistant that works with *any* AI model.
+Every serious competitor — Claude Code, Cursor, Copilot — is American and tied
+to one American AI company: their price, their model, your code sent to them.
+
+**Who we are building for.** Universities, ministries and organizations across
+Africa, Asia and Latin America. They want AI in their software work and have
+three needs no US tool meets together: **cheaper models**, **their own
+machines**, and **their own rules about where code goes**. Silk Code already
+does all three — cheap providers, Ollama/vLLM on their own hardware, and an MIT
+licence anyone can read, teach from and modify. The incumbents cannot copy
+this, because their product *is* their model.
+
+**What "Cloud" adds.** Today Silk Code is one person on one laptop. Cloud makes
+it serve a whole institution: everyone signs in, work runs on the institution's
+servers, using the institution's chosen model, under its policy. The coding
+engine does not change — we build sign-in, user management, model policy and an
+installer around it.
+
+**How we get paid.** Sell to the *institution*, not the seat — a university
+with 5,000 students cannot buy 5,000 subscriptions but can sign one annual
+contract. Licence, plus setup and support, plus training; then grants and
+government programmes, partners who resell, and eventually public sign-up.
+**We do not make money reselling AI tokens** — providers publish their prices,
+so any markup is visible and gets competed away. Pass inference through near
+cost and charge for the platform.
+
+**What we build, in order.** ① multi-user · ② point it at their model ·
+③ package it to install on their servers · ④ land one paid pilot ·
+⑤ open public sign-up later.
+
+**What to prove before building.** One partner institution. One invoice
+actually paid. One campus running against its own model.
+
+**The main risk.** Getting paid is harder than building it — cards are
+uncommon, currency rules are real, institutions buy once a year through
+procurement. That is not an engineering problem, which is why it gets
+postponed. Answer it first.
+
+Everything below is the detail behind those paragraphs. §13 is the market,
+§12 the money, §11 the roadmap, §§2–9 the architecture.
+
+---
+
 ## 1. The three decisions this design rests on
 
 | Decision | Choice | Consequence |
