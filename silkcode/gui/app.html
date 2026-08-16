@@ -36,7 +36,7 @@
 
   #chat { display: flex; flex-direction: column; min-height: 0; }
   #messages { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 6px; }
-  .msg-wrap { display: flex; align-items: center; gap: 6px; max-width: 92%; }
+  .msg-wrap { display: flex; align-items: center; gap: 6px; max-width: 92%; flex-shrink: 0; }
   .msg-wrap.user { align-self: flex-end; }
   .msg-wrap.assistant, .msg-wrap.tool, .msg-wrap.error, .msg-wrap.notice { align-self: flex-start; }
   .msg { max-width: 100%; padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; word-break: break-word; }
@@ -47,7 +47,10 @@
   .msg.tool { background: transparent; border: 1px dashed var(--border); color: var(--dim); font-family: var(--mono); font-size: 12px; padding: 4px 10px; }
 
   /* special code / terminal bubbles: distinct cards, not inline boxes */
-  .code-bubble { position: relative; max-width: 92%; align-self: stretch; margin: 2px 0;
+  /* flex-shrink:0 is load-bearing: #messages is a column flex container, so
+     without it these get squashed below their content height and the code is
+     clipped — worse the less vertical room there is. */
+  .code-bubble { position: relative; max-width: 92%; align-self: stretch; margin: 2px 0; flex-shrink: 0;
     background: #101318; border: 1px solid var(--border); border-left: 3px solid var(--accent);
     border-radius: 10px; overflow: hidden; font-family: var(--mono); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
   .code-bubble .cb-head { display: flex; align-items: center; gap: 6px; padding: 5px 10px;
@@ -605,7 +608,13 @@ function renderFormattedBubble(el, raw) {
     if (part.type === "code") {
       node = makeCodeBubble(part.lang, part.code);
     } else {
-      node = makeProseWrap(kind, part.text.replace(/\s+$/, ""));
+      // Trim both ends: the blank lines around a fence belong to the fence,
+      // not the prose. Kept, they render as empty rows inside a pre-wrap
+      // bubble and it becomes a tall empty box with a line of text at the
+      // bottom. A part that was only those blank lines gets no bubble at all.
+      const text = part.text.trim();
+      if (!text) continue;
+      node = makeProseWrap(kind, text);
     }
     messages.insertBefore(node, anchor.nextSibling);
     anchor = node;

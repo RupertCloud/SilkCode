@@ -241,3 +241,63 @@ def test_code_blocks_render_with_copy_and_run_buttons(browser, gui_url):
     assert run_btns.count() == 1
     assert run_btns.first.text_content().strip() == "▶ run"
     assert page.locator("#messages .code-bubble .cb-copy").count() == 2
+
+
+def test_code_bubbles_are_not_squashed_by_the_message_column(browser, gui_url):
+    """#messages is a column flex container, so a code bubble without
+    flex-shrink:0 is compressed below its content height and the code is
+    clipped — silently, and worse the less vertical room there is."""
+    page = browser.new_page(viewport={"width": 820, "height": 640})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+    page.wait_for_selector("#tree div", timeout=15000)
+
+    page.evaluate("""() => {
+        const raw = "Change:\\n\\n```python\\ndef fmt(n):\\n    for u in ['B','KB','MB']:\\n"
+                  + "        if n < 1024: return n\\n        n /= 1024\\n```\\n";
+        const el = addMsg('assistant', raw);
+        el.__raw = raw;
+        formatAllMessages();
+    }""")
+
+    sizes = page.evaluate("""() => Array.from(
+        document.querySelectorAll('#messages .code-bubble')).map(b => ({
+            bubble: b.getBoundingClientRect().height,
+            head: b.querySelector('.cb-head').getBoundingClientRect().height,
+            content: b.querySelector('pre').scrollHeight,
+        }))""")
+    assert sizes, "no code bubble was rendered"
+    for s in sizes:
+        assert s["bubble"] >= s["head"] + s["content"] - 2, (
+            f"code bubble squashed to {s['bubble']}px for "
+            f"{s['head'] + s['content']}px of content — the code is clipped")
+
+
+def test_prose_between_fences_carries_no_blank_lines(browser, gui_url):
+    """Bubbles use white-space: pre-wrap, so the blank lines that separate a
+    fence from its prose become empty rows — a tall empty box with one line
+    of text at the bottom."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+    page.wait_for_selector("#tree div", timeout=15000)
+
+    page.evaluate("""() => {
+        const raw = "First line:\\n\\n```bash\\nls\\n```\\n\\nSecond line:\\n\\n```bash\\npwd\\n```";
+        const el = addMsg('assistant', raw);
+        el.__raw = raw;
+        formatAllMessages();
+    }""")
+
+    texts = page.evaluate(
+        """() => Array.from(document.querySelectorAll('#messages .msg.assistant'))
+                     .map(m => m.textContent)""")
+    assert texts, "no prose bubble survived the split"
+    for text in texts:
+        assert text == text.strip(), f"prose bubble kept padding: {text!r}"
+        assert text.strip(), "an empty prose bubble was created"
+
+    heights = page.evaluate(
+        """() => Array.from(document.querySelectorAll('#messages .msg.assistant'))
+                     .map(m => m.getBoundingClientRect().height)""")
+    assert max(heights) < 60, f"a one-line prose bubble is {max(heights)}px tall"
