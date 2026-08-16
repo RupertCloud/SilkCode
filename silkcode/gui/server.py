@@ -18,6 +18,7 @@ second one read-only until the first closes.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import queue
@@ -855,6 +856,7 @@ class GuiState:
             raise ConfigError(str(exc)) from exc
         return self.environment()
 
+
     def providers_info(self) -> list[dict]:
         out = []
         for name in sorted(self.config.providers):
@@ -879,7 +881,12 @@ class GuiState:
         workspace = self.get_session(session_id).workspace
         entries: list[dict] = []
         if isinstance(workspace, RemoteWorkspace):
-            # remote: build the tree from the sandbox file listing
+            # remote: build the tree from the sandbox file listing.
+            # Directories already added are tracked in a set: scanning the
+            # entries list for each prefix of each file is quadratic, and this
+            # runs after every turn. On a packages/pkg*/src layout that was
+            # 120ms; it is 6ms, for the same output.
+            seen_dirs: set[str] = set()
             for f in workspace.list_files():
                 if len(entries) >= MAX_TREE_ENTRIES:
                     break
@@ -889,7 +896,8 @@ class GuiState:
                 entries.append({"path": f, "dir": False, "depth": len(parts) - 1})
                 for i in range(1, len(parts)):
                     prefix = "/".join(parts[:i])
-                    if not any(e["path"] == prefix and e["dir"] for e in entries):
+                    if prefix not in seen_dirs:
+                        seen_dirs.add(prefix)
                         entries.append({"path": prefix, "dir": True, "depth": i - 1})
             return entries
 
@@ -937,12 +945,123 @@ class GuiState:
         return available_projects()
 
 
+LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "127.0.1.1"}
+
+
+def is_loopback(host: str) -> bool:
+    """Whether `host` addresses this machine and only this machine.
+
+    Must be decided on the parsed address, not the spelling. Matching a
+    "127." prefix as text also accepts host *names* that merely begin that
+    way, and an attacker can register one - 127.0.0.1.evil.example, the
+    trick nip.io and sslip.io are built on - that resolves straight to
+    loopback. Origin and Host then agree, and a name-based check would wave
+    the request through, which is precisely the DNS-rebinding case the Host
+    check exists to stop.
+    """
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False  # a name other than localhost: not something we serve
+
+
+def _hostname(host_header: str) -> str:
+    """The hostname part of a Host header, without the port ('[::1]:80' -> '::1')."""
+    host = host_header.strip()
+    if host.startswith("["):  # bracketed IPv6 literal
+        return host[1:].partition("]")[0]
+    return host.rpartition(":")[0] if ":" in host else host
+
+
 class GuiHandler(BaseHTTPRequestHandler):
     state: GuiState = None  # type: ignore[assignment]
     html: bytes = b""
+    # Shared secret required on every request when the daemon is reachable
+    # beyond loopback. None (loopback only) keeps the local dev-server model.
+    token: str | None = None
 
     def log_message(self, format, *args):  # noqa: A002 - BaseHTTPRequestHandler API
         pass
+
+    def _presented_token(self) -> str:
+        """The token from the header, the cookie, or the query string."""
+        header = self.headers.get("Authorization", "")
+        if header.startswith("Bearer "):
+            return header[len("Bearer "):].strip()
+        cookie = self.headers.get("Cookie", "")
+        for part in cookie.split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == "silk_token":
+                return value
+        return (parse_qs(urlparse(self.path).query).get("token") or [""])[0]
+
+    def _same_origin(self) -> bool:
+        """Reject requests a browser made on behalf of another site.
+
+        A loopback daemon needs no token, which leaves it open to any page the
+        user happens to visit: a cross-site POST with Content-Type text/plain
+        is a CORS "simple request", so the browser sends it without a
+        preflight, and the body is JSON either way. That is enough to start an
+        agent turn - in agent mode, arbitrary code execution from a web page.
+        The attacker cannot read the reply, but the side effect is the attack.
+
+        Browsers always attach Origin to cross-origin requests, so an Origin
+        that disagrees with the Host we were reached on is exactly that case.
+        Non-browser clients (curl, the CLI, tests) send no Origin and are
+        unaffected - they carry no ambient credentials to abuse.
+
+        Checking Origin against Host rather than a fixed address keeps every
+        legitimate way in working: 127.0.0.1, localhost, or a LAN IP all match
+        themselves. DNS rebinding defeats that equality - the attacker
+        controls the name, so Origin and Host agree - so the Host itself must
+        also resolve to somewhere we would serve. Beyond loopback that is what
+        the token is for, and it is already required.
+        """
+        origin = self.headers.get("Origin", "").strip()
+        host_header = self.headers.get("Host", "").strip()
+        if origin and origin.lower() != "null":
+            parsed = urlparse(origin)
+            if parsed.netloc.lower() != host_header.lower():
+                return False
+        # Rebinding guard: a loopback-only daemon may only be addressed by a
+        # loopback name. With a token in play the token is the gate.
+        if not self.token and host_header and not is_loopback(_hostname(host_header)):
+            return False
+        return True
+
+    def _authorized(self) -> bool:
+        """No token configured (loopback) means no token check; otherwise every
+        request must carry it, compared in constant time. Either way the
+        request must not have been made on another site's behalf."""
+        if not self._same_origin():
+            return False
+        if not self.token:
+            return True
+        import hmac
+        presented = self._presented_token()
+        return bool(presented) and hmac.compare_digest(presented, self.token)
+
+    def _deny(self) -> None:
+        if not self._same_origin():
+            body = (b"Forbidden. This request carries another site's origin, or "
+                    b"reached this daemon under a host name it does not serve, "
+                    b"so it was not made by the Silk Code page.")
+            status = 403
+        else:
+            body = (b"Unauthorized. This Silk Code daemon is reachable beyond this "
+                    b"machine and requires its access token; open the URL printed "
+                    b"when it started.")
+            status = 401
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
     def _json(self, data, status: int = 200) -> None:
         body = json.dumps(data).encode()
@@ -989,6 +1108,8 @@ class GuiHandler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
+        if not self._authorized():
+            return self._deny()
         parsed = urlparse(self.path)
         route = parsed.path
         params = parse_qs(parsed.query)
@@ -999,6 +1120,12 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")  # never serve a stale UI
+                if self.token:
+                    # the page was opened with ?token=...; keep it for the
+                    # fetches and the event stream that follow
+                    self.send_header(
+                        "Set-Cookie",
+                        f"silk_token={self.token}; Path=/; SameSite=Strict; HttpOnly")
                 self.send_header("Content-Length", str(len(self.html)))
                 self.end_headers()
                 self.wfile.write(self.html)
@@ -1055,6 +1182,8 @@ class GuiHandler(BaseHTTPRequestHandler):
             st.unsubscribe(q)
 
     def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
+        if not self._authorized():
+            return self._deny()
         st = self.state
         length = int(self.headers.get("Content-Length") or 0)
         try:
@@ -1142,6 +1271,8 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/providers":
                 st.add_provider(body)
                 self._json(st.providers_info())
+            elif route == "/api/checkout":
+                self._json(st.checkout(body))
             else:
                 self._error("not found", 404)
         except FileNotFoundError as exc:
@@ -1155,7 +1286,8 @@ class GuiHandler(BaseHTTPRequestHandler):
 def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1",
             port: int = 8377, grants: list[str] | None = None,
             use_sandbox: bool = False, auto_push: bool = False,
-            restart_args: list[str] | None = None) -> int:
+            restart_args: list[str] | None = None, token: str | None = None,
+            remote: str | None = None) -> int:
     # Bind first so we know the real address (--port 0 picks an ephemeral one)
     # and can label this daemon's sessions with it; a busy address fails fast
     # with a clear message before any state is created.
@@ -1170,17 +1302,29 @@ def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1
     bound_host, bound_port = server.server_address[:2]
     try:
         state = GuiState(path, model_spec, mode, grants=grants, use_sandbox=use_sandbox,
-                         auto_push=auto_push, instance=f"{bound_host}:{bound_port}")
+                         auto_push=auto_push, instance=f"{bound_host}:{bound_port}",
+                         remote=remote)
     except (ToolError, ConfigError) as exc:
         print(f"error: {exc}")
         server.server_close()
         return 1
     GuiHandler.state = state
     GuiHandler.html = (Path(__file__).parent / "app.html").read_bytes()
+    # The daemon drives an agent that reads and writes files, runs commands and
+    # holds API keys. On loopback that is the usual local-dev trust model; the
+    # moment it is reachable from elsewhere it needs a credential, so one is
+    # required (and generated when not supplied).
+    if not is_loopback(host) and not token:
+        import secrets
+        token = secrets.token_urlsafe(24)
+        print("This daemon is reachable beyond this machine, so it requires an "
+              "access token.\nOpen the URL below (it carries the token); share it "
+              "with nobody you would not\ngive a shell on this machine.\n")
+    GuiHandler.token = token
     if restart_args:
         state.start_auto_reload(restart_args)
     display_host = "localhost" if bound_host in ("0.0.0.0", "::") else bound_host
-    url = f"http://{display_host}:{bound_port}"
+    url = f"http://{display_host}:{bound_port}" + (f"/?token={token}" if token else "")
     print(f"Silk Code GUI: {url}")
     print(f"workspace: {state.workspace.root}")
     first = state.get_session()

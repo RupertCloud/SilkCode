@@ -88,10 +88,21 @@ class RemoteBackend:
         return tuple(entries)
 
     def health(self) -> dict:
-        resp = self._client.get(f"{self.url}/health", headers=self._headers)
+        # A health check is the one call whose whole job is to report an
+        # unreachable sandbox, so a connection error is an expected answer
+        # here, not a crash: wrap it like every other request does.
+        try:
+            resp = self._client.get(f"{self.url}/health", headers=self._headers)
+        except httpx.HTTPError as exc:
+            raise ToolError(f"sandbox unreachable: {exc}") from exc
         if resp.status_code >= 400:
             raise ToolError(f"sandbox health check failed: HTTP {resp.status_code}: {resp.text[:200]}")
-        return resp.json()
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise ToolError(
+                f"sandbox at {self.url} did not return JSON; is it a Silk Code sandbox?"
+            ) from exc
 
     # ---- remote-workspace protocol (the repo lives in the sandbox) ---------
 
@@ -175,6 +186,15 @@ class RemoteBackend:
                 json={"command": command, "timeout": timeout},
                 headers=self._headers,
             )
+        except httpx.TimeoutException as exc:
+            # The command's own limit is enforced by the sandbox, which
+            # answers with a "timed out" result. Reaching this instead means
+            # the round trip itself stalled, and the caller's remedy is a
+            # different one, so say which happened.
+            raise ToolError(
+                f"the sandbox at {self.url} did not respond within the client "
+                f"timeout while running a command (limit was {timeout}s): {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise ToolError(f"sandbox request failed: {exc}") from exc
         if resp.status_code >= 400:

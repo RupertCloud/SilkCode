@@ -22,20 +22,20 @@ GO_PATTERN = re.compile(r"^\s*(?:func\s+(?:\([^)]*\)\s*)?(?P<func>\w+)|type\s+(?
 RUST_PATTERN = re.compile(r"^\s*(?:pub\s+)?(?:fn\s+(?P<func>\w+)|struct\s+(?P<cls>\w+)|enum\s+(?P<enum>\w+)|trait\s+(?P<trait>\w+))")
 
 
-def _python_symbols(path: Path, rel: str, out: list[str]) -> None:
-    try:
-        tree = ast.parse(path.read_text(errors="replace"))
-    except SyntaxError:
-        return
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef):
-            out.append(f"{rel}:{node.lineno}: class {node.name}")
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args = ", ".join(a.arg for a in node.args.args)
-            out.append(f"{rel}:{node.lineno}: def {node.name}({args})")
+# What each named capture group in the language patterns above is called in
+# the output. Unknown group names fall back to "symbol" rather than raising,
+# so adding a group to a pattern cannot break extraction for a whole file.
+GROUP_LABELS = {"func": "function", "cls": "class", "const": "function",
+                "enum": "enum", "trait": "trait"}
 
 
-def _python_symbols_text(text: str, rel: str, out: list[str]) -> None:
+def _python_symbols(text: str, rel: str, out: list[str]) -> None:
+    """Classes and functions from Python source.
+
+    Takes text, not a path: a remote workspace's files are fetched from the
+    sandbox and never exist locally. One implementation for both, so a fix
+    here cannot apply to only half the callers.
+    """
     try:
         tree = ast.parse(text)
     except SyntaxError:
@@ -48,26 +48,27 @@ def _python_symbols_text(text: str, rel: str, out: list[str]) -> None:
             out.append(f"{rel}:{node.lineno}: def {node.name}({args})")
 
 
-def _regex_symbols(path: Path, rel: str, pattern: re.Pattern, out: list[str]) -> None:
-    for lineno, line in enumerate(path.read_text(errors="replace").splitlines(), start=1):
-        m = pattern.match(line)
-        if m:
-            for kind, name in m.groupdict().items():
-                if name:
-                    label = {"func": "function", "cls": "class", "const": "function",
-                             "enum": "enum", "trait": "trait"}[kind]
-                    out.append(f"{rel}:{lineno}: {label} {name}")
-
-
-def _regex_symbols_text(text: str, rel: str, pattern: re.Pattern, out: list[str]) -> None:
+def _regex_symbols(text: str, rel: str, pattern: re.Pattern, out: list[str]) -> None:
+    """Definitions from a non-Python language, matched line by line."""
     for lineno, line in enumerate(text.splitlines(), start=1):
         m = pattern.match(line)
         if m:
             for kind, name in m.groupdict().items():
                 if name:
-                    label = {"func": "function", "cls": "class", "const": "function",
-                             "enum": "enum", "trait": "trait"}[kind]
+                    label = GROUP_LABELS.get(kind, "symbol")
                     out.append(f"{rel}:{lineno}: {label} {name}")
+
+
+def _extract(text: str, rel: str, out: list[str]) -> None:
+    """Dispatch to the right extractor for this file's language."""
+    if rel.endswith(".py"):
+        _python_symbols(text, rel, out)
+    elif rel.endswith((".js", ".jsx", ".ts", ".tsx")):
+        _regex_symbols(text, rel, JS_PATTERN, out)
+    elif rel.endswith(".go"):
+        _regex_symbols(text, rel, GO_PATTERN, out)
+    elif rel.endswith(".rs"):
+        _regex_symbols(text, rel, RUST_PATTERN, out)
 
 
 SOURCE_SUFFIXES = (".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs")
@@ -106,14 +107,7 @@ def symbols(ws: Workspace, path: str = ".") -> str:
                 text = ws.read_text(rel)
             except Exception:
                 continue
-            if rel.endswith(".py"):
-                _python_symbols_text(text, rel, out)
-            elif rel.endswith((".js", ".jsx", ".ts", ".tsx")):
-                _regex_symbols_text(text, rel, JS_PATTERN, out)
-            elif rel.endswith(".go"):
-                _regex_symbols_text(text, rel, GO_PATTERN, out)
-            elif rel.endswith(".rs"):
-                _regex_symbols_text(text, rel, RUST_PATTERN, out)
+            _extract(text, rel, out)
             if len(out) >= MAX_LINES:
                 out = out[:MAX_LINES]
                 out.append("... [symbol list truncated]")
@@ -127,14 +121,11 @@ def symbols(ws: Workspace, path: str = ".") -> str:
     out: list[str] = []
     for f in files:
         rel = ws.relative(f)
-        if f.suffix == ".py":
-            _python_symbols(f, rel, out)
-        elif f.suffix in (".js", ".jsx", ".ts", ".tsx"):
-            _regex_symbols(f, rel, JS_PATTERN, out)
-        elif f.suffix == ".go":
-            _regex_symbols(f, rel, GO_PATTERN, out)
-        elif f.suffix == ".rs":
-            _regex_symbols(f, rel, RUST_PATTERN, out)
+        try:
+            text = f.read_text(errors="replace")
+        except OSError:
+            continue  # unreadable file: skip it rather than lose the rest
+        _extract(text, rel, out)
         if len(out) >= MAX_LINES:
             out = out[:MAX_LINES]
             out.append("... [symbol list truncated]")

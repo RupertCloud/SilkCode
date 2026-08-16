@@ -119,6 +119,9 @@ def cmd_gui(argv: list[str]) -> int:
     parser = _repl_parser("silkcode gui")
     parser.add_argument("--port", type=int, default=8377)
     parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--token", help="access token required on every request; "
+                        "generated automatically when the daemon is reachable "
+                        "beyond this machine (--host other than loopback)")
     args = parser.parse_args(argv)
     from ..gui.server import run_gui
     # Normalized launch args so the daemon can re-exec itself with the same
@@ -142,7 +145,7 @@ def cmd_gui(argv: list[str]) -> int:
     return run_gui(args.path, args.model, args.mode, host=args.host, port=args.port,
                    grants=_parse_grants(args.allow), use_sandbox=args.sandbox,
                    auto_push=args.auto_push, restart_args=restart_args,
-                   remote=args.remote)
+                   remote=args.remote, token=args.token)
 
 
 def cmd_models(argv: list[str]) -> int:

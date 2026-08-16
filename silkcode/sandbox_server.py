@@ -24,6 +24,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from .gitproxy import GitAuthProxy, ProxyTarget
+
 PROTOCOL_VERSION = 1
 WORKSPACE_ID_PATTERN = re.compile(r"^[a-f0-9]{8,64}$")
 MAX_BODY_BYTES = 100_000_000
@@ -68,31 +70,70 @@ def _resolve_under(base: Path, rel: str) -> Path:
     return p
 
 
-def _clone_repo(url: str, dest: Path, token: str | None = None) -> None:
-    """Clone `url` into `dest` (or fetch when already cloned). A token is
-    embedded in the origin URL so later pushes work without local
-    credentials; git redacts it from output."""
+def _git_env() -> dict:
+    """Environment for every git process the sandbox runs.
+
+    Deliberately carries no credential. Git is never given one, because a git
+    process holding a token will run commands the repository chooses - an
+    `-c alias.x='!sh'`, a `credential.helper`, a `pre-push` hook the agent
+    just wrote - and every one of those can print the token. Authentication
+    happens at the network boundary instead (see silkcode/gitproxy.py).
+    """
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
+CLONE_TIMEOUT = 600
+
+
+def _clone_repo(url: str, dest: Path, timeout: int = CLONE_TIMEOUT) -> None:
+    """Clone `url` into `dest`, or fetch when it is already cloned.
+
+    `url` is expected to be already-authenticated - the loopback proxy's
+    address when a token is in play - so nothing here handles credentials.
+
+    A clone of a large repository over a slow link is the ordinary reason
+    this takes minutes, and running out of time is an expected answer, not a
+    crash: it is reported as a plain message naming the limit so the caller
+    knows to raise it rather than guessing at a stack trace.
+    """
     dest.mkdir(parents=True, exist_ok=True)
-    if token:
-        from urllib.parse import urlparse
-        parts = urlparse(url)
-        if parts.scheme in ("https", "http") and parts.hostname:
-            netloc = f"x-access-token:{token}@{parts.netloc}"
-            url = parts._replace(netloc=netloc).geturl()
+    env = _git_env()
     if (dest / ".git").is_dir():
-        subprocess.run(["git", "-C", str(dest), "fetch", "--all", "--prune"],
-                       capture_output=True, text=True, timeout=600, env=env)
+        try:
+            subprocess.run(["git", "-C", str(dest), "fetch", "--all", "--prune"],
+                           capture_output=True, text=True, timeout=timeout, env=env)
+        except subprocess.TimeoutExpired:
+            pass  # the clone is already here; stale is better than failing
+        except FileNotFoundError as exc:
+            raise ValueError(f"git is not installed in the sandbox: {exc}") from exc
         return
-    proc = subprocess.run(["git", "clone", url, str(dest)],
-                          capture_output=True, text=True, timeout=600, env=env)
+    try:
+        proc = subprocess.run(["git", "clone", url, str(dest)],
+                              capture_output=True, text=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired as exc:
+        # A half-written clone would be mistaken for a finished one by the
+        # `.git` check above, so it must not be left behind.
+        _discard(dest)
+        raise ValueError(
+            f"git clone timed out after {timeout}s; the repository may be too "
+            "large for this limit or the network too slow") from exc
+    except FileNotFoundError as exc:
+        raise ValueError(f"git is not installed in the sandbox: {exc}") from exc
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout).strip() or "unknown git error"
-        # never echo the token back to the client
-        if token:
-            detail = detail.replace(token, "***")
+        _discard(dest)
         raise ValueError(f"git clone failed: {detail.splitlines()[0][:300]}")
+
+
+def _discard(dest: Path) -> None:
+    """Remove a partial clone, leaving nothing that looks finished."""
+    import shutil
+    try:
+        shutil.rmtree(dest)
+    except OSError:
+        pass
 
 
 def _grep(base: Path, regex: "re.Pattern", rel_path: str, glob: str) -> list[str]:
@@ -130,6 +171,38 @@ class SandboxState:
     def __init__(self, base_dir: Path, token: str):
         self.base_dir = base_dir
         self.token = token
+        # One authenticating proxy per workspace that was cloned with a
+        # token. The token lives in the proxy's process and nowhere else -
+        # not in the environment, not in the remote URL, not in .git/config -
+        # so nothing running inside the sandbox can read it back.
+        self.git_proxies: dict[str, "GitAuthProxy"] = {}
+
+    def authenticated_url(self, workspace_id: str, url: str, token: str | None) -> str:
+        """The URL the clone's origin should point at.
+
+        Without a token, the upstream URL unchanged. With one, a loopback
+        proxy scoped to exactly this repository, so the credential is applied
+        on the way out and never handed to git.
+        """
+        if not token:
+            return url
+        try:
+            target = ProxyTarget.from_url(url.strip(), token)
+        except ValueError:
+            # A local path or an ssh remote: HTTP credentials do not apply,
+            # so there is nothing to protect and nothing to proxy.
+            return url
+        existing = self.git_proxies.pop(workspace_id, None)
+        if existing is not None:
+            existing.close()
+        proxy = GitAuthProxy(target)
+        self.git_proxies[workspace_id] = proxy
+        return proxy.url
+
+    def close(self) -> None:
+        for proxy in self.git_proxies.values():
+            proxy.close()
+        self.git_proxies.clear()
 
     def workspace_dir(self, workspace_id: str) -> Path:
         if not WORKSPACE_ID_PATTERN.match(workspace_id):
@@ -219,10 +292,15 @@ class SandboxHandler(BaseHTTPRequestHandler):
                 timeout = min(max(int(request.get("timeout", 120)), 1), 600)
                 if not command:
                     return self._json({"error": "empty command"}, 400)
+                # No credential is ever placed here. Commands run with a
+                # plain environment; a `git push` authenticates because the
+                # origin points at the loopback proxy, not because this
+                # process holds a token.
                 try:
                     proc = subprocess.run(
                         command, shell=True, cwd=workdir,
                         capture_output=True, text=True, timeout=timeout,
+                        env=_git_env(),
                     )
                     output = proc.stdout or ""
                     if proc.stderr:
@@ -238,7 +316,11 @@ class SandboxHandler(BaseHTTPRequestHandler):
                 if not url:
                     return self._json({"error": "empty clone url"}, 400)
                 token = request.get("token")
-                _clone_repo(url, workdir, token=token)
+                # With a token this becomes the loopback proxy's address, so
+                # the credential is never written into the clone.
+                origin = self.state.authenticated_url(
+                    clone_match.group(1), url, str(token) if token else None)
+                _clone_repo(origin, workdir)
                 return self._json({"ok": True})
             if write_match:
                 workdir = self.state.workspace_dir(write_match.group(1))
