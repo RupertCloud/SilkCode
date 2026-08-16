@@ -21,6 +21,7 @@ same agent that ships in the wheel, not a fork of it.
 | **Model access** | Managed pooled credits — Silk holds the provider keys, users spend Silk credits | Zero-config onboarding; Silk carries inference cost, abuse risk, and provider rate limits |
 | **Runtime** | Full cloud workspace — repo, agent loop, file edits and commands all run in a per-session cloud container | True zero-install; works from a phone; the browser is a thin client |
 | **Codebase** | One agent, two deployments — `silkcode` stays the pip-installable local harness, cloud imports it | No fork, no drift; local users keep BYO-key freedom |
+| **Substrate** | Our own containers — Pods on our existing Kubernetes, isolated with gVisor | No sandbox vendor; we own isolation, warm-start, capacity and reaping (§7) |
 
 Sections 3–9 follow from these. Section 10 records where the pooled-credit
 choice creates tension with "without limitations" and what to do about it.
@@ -72,11 +73,13 @@ Browser (thin client, today's app.html)
     │ mTLS / signed short-lived token
     ▼
 ┌─────────────────────────────────────────────────────────┐
-│ Runner container  (one per session, disposable)          │
+│ Runner Pod  (one per session, disposable, gVisor)        │
+│  · our own K8s, dedicated tainted node pool              │
 │  · git clone of the user's repo  ← source of truth       │
 │  · `silkcode gui` — the code in this repo, unchanged     │
 │  · SILKCODE_HOME=/workspace/.silkcode                    │
 │  · no provider API keys, no long-lived GitHub token      │
+│  · no service-account token, no inbound                  │
 └─────────────────────────────────────────────────────────┘
     │ OpenAI-compatible HTTP                    │ git push
     ▼                                           ▼
@@ -124,6 +127,8 @@ holds transcripts. Neither is on the container's critical path for a turn.
 - `silkcloud/gateway/` — the metered, OpenAI-compatible model proxy
 - `silkcloud/controlplane/` — auth, users, credits, orchestration, the proxy
 - `silkcloud/runner/` — container image + supervisor that boots `silkcode gui`
+- `silkcloud/placement/` — the `RunnerPlacement` drivers (§7.1);
+  `KubernetesPlacement` is the one we run
 
 The rule that keeps this honest: **`silkcloud` imports `silkcode`; `silkcode`
 never imports `silkcloud`.** If a cloud feature needs an agent change, it lands
@@ -218,26 +223,131 @@ it extendable per-project rather than pretending it is invisible.
 
 ---
 
-## 7. Isolation: where the container runs
+## 7. Isolation: our own containers, on our own Kubernetes
 
-| Option | For | Against |
-| --- | --- | --- |
-| **Fly Machines** *(recommended)* | Real VMs, ~300 ms boot from snapshot, per-second billing, persistent volumes, straightforward egress control | Another vendor; capacity planning is yours |
-| **Cloudflare Containers** | You already ship a Worker for the sandbox protocol; edge-native | Constrained runtime and image support; less suited to a full dev toolchain |
-| **E2B / Modal / Daytona** | Purpose-built agent sandboxes, fastest to a demo | Margin stacking, less control over egress, vendor risk on a core dependency |
-| **Own K8s + gVisor/Kata** | Cheapest at scale, total control | Slowest to build; you own the isolation bugs |
+**Constraint: we run the containers ourselves.** No Fly Machines, no E2B, no
+Modal. Session containers are Pods on our existing Kubernetes cluster, isolated
+with **gVisor (`runsc`)**.
 
-Recommendation: **Fly Machines** for the runner, with the container image built
-from the toolchains the target languages need. Keep the existing Cloudflare
-Worker as the reference implementation of the sandbox protocol for local users
-— it is a different product surface, not a competing one.
+That is a deliberate trade. A managed sandbox vendor silently handles six
+things; owning the substrate means owning all six:
+
+| What the vendor did | What we now build |
+| --- | --- |
+| Isolation boundary | gVisor RuntimeClass on a dedicated node pool (§7.2) |
+| Sub-second start | Warm Pod pool + pre-baked toolchain image (§7.4) |
+| Placement and capacity | Scheduler is K8s; headroom and node scaling are ours |
+| Lifecycle and reaping | Idle reaper + `activeDeadlineSeconds` + orphan sweeper (§7.5) |
+| Network containment | NetworkPolicy default-deny + egress proxy (§7.3) |
+| Resource containment | Requests/limits, pids, ephemeral-storage quotas (§7.2) |
+
+### 7.1 The placement driver, and why it is swappable
+
+Everything above sits behind one small interface. The runner image and the
+session protocol do not know where they run:
+
+```python
+class RunnerPlacement(Protocol):
+    def start(self, session: SessionSpec) -> RunnerHandle: ...
+    def attach(self, handle: RunnerHandle) -> AttachURL: ...
+    def stop(self, handle: RunnerHandle) -> None: ...
+    def sweep(self) -> list[RunnerHandle]: ...   # orphans
+```
+
+`KubernetesPlacement` is the driver we build and run. A `FlyPlacement` (or any
+other) is a second implementation of the same four methods — useful for burst
+overflow, a region we have no cluster in, or a faster path to a first public
+launch. Keeping this seam costs almost nothing today and prevents the substrate
+decision from being load-bearing on the rest of the design.
+
+**The runner image is the portable artifact.** It clones a repo, runs
+`silkcode gui` against the gateway, and exits when idle. Nothing in it is
+Kubernetes-specific.
+
+### 7.2 Pod shape
+
+One Pod per session, in a single `silk-sessions` namespace, on a **dedicated,
+tainted node pool**. The control plane and the gateway must never be scheduled
+onto a node that runs user code — that is the one placement rule that matters.
+
+Per-user namespaces are tempting for RBAC and `ResourceQuota`, but K8s degrades
+badly at thousands of namespaces and our sessions are ephemeral. Use labels
+(`silk.session/user`, `silk.session/id`) and enforce per-user limits in the
+control plane, where the credit ledger already lives.
+
+Non-negotiables on the Pod spec:
+
+- `runtimeClassName: gvisor`
+- `automountServiceAccountToken: false` — **the most important line here.**
+  A mounted token hands a user with shell access an API-server credential.
+- `securityContext`: `runAsNonRoot`, `allowPrivilegeEscalation: false`,
+  `capabilities: drop: [ALL]`, `seccompProfile: RuntimeDefault`
+- `readOnlyRootFilesystem: true`, with writable `emptyDir` mounts for
+  `/workspace` and `/tmp` (`sizeLimit` set on both)
+- CPU/memory requests **and** limits, `pids` limit, `ephemeral-storage` limit
+- no `hostPath`, no `hostNetwork`, no privileged, no container runtime socket
+- PodSecurity admission `restricted` enforced on the namespace
+
+### 7.3 Network containment
+
+Default-deny egress `NetworkPolicy`, then allow exactly three things: DNS, the
+egress proxy, and the model gateway. All package-registry and git traffic goes
+through the proxy allowlist from §6.
+
+Two egress paths are easy to forget and both are breaches:
+
+- **The node metadata endpoint** (`169.254.169.254`). Reachable from a Pod by
+  default on most clouds, and it hands out node IAM credentials. Deny it
+  explicitly.
+- **Cluster-internal CIDRs** — Pod and Service ranges, the API server. A
+  session Pod must not reach the gateway's internals, the database, or another
+  session. Deny the ranges, allow the specific Services.
+
+No inbound at all. Sessions are attached by the control plane proxying to the
+Pod IP from inside the cluster — never an Ingress or a public address per
+session.
+
+### 7.4 Start latency and the gVisor tax
+
+Cold start is image pull (avoided by pre-pulling onto the node pool) plus Pod
+sandbox creation (~150 ms under `runsc`) plus `git clone`. The clone dominates,
+so: shallow clone by default, and a **warm pool** of pre-created Pods idling at
+a low CPU floor, claimed and cloned on demand. Size the pool from concurrent-
+session telemetry; it is the difference between "instant" and "eight seconds."
+
+**gVisor's real cost is syscall-heavy file I/O, and `npm install` is exactly
+that.** Expect a measurable slowdown on dependency installs. Mitigations:
+enable gVisor's `directfs`, and bake the common toolchains and a warm package
+cache into the image rather than fetching them per session.
+
+Compatibility needs validating against the actual image, not assumed. Known
+friction under `runsc`: no nested containers (Docker-in-Docker is out, so
+projects whose tests spin up containers will fail), `io_uring` is unsupported,
+and `ptrace`-based debuggers and profilers are partly limited. Ordinary
+builds and test suites — `pytest`, `cargo`, `go test`, Node — are fine.
+Publish the limitations rather than letting users discover them mid-task.
+
+### 7.5 Lifecycle
+
+Three independent mechanisms, because any one of them can fail:
+
+1. **Idle reaper** in the control plane — no turn for N minutes, Pod deleted.
+2. **`activeDeadlineSeconds`** on the Pod — a hard TTL the control plane cannot
+   forget to enforce.
+3. **Orphan sweeper** — periodically reconciles live Pods against session
+   records and deletes anything unclaimed. This is what saves the bill when the
+   control plane crashes mid-start.
 
 **Ephemeral by default.** Clone fresh from GitHub at session start, work, and
 push to a branch. Durability lives in the user's git remote, not in Silk's
 storage. This is how the existing GitHub integration already thinks
 (`silkcode/github.py`, auto-push, PR creation), it dodges a large class of
-backup and privacy problems, and it makes container loss a non-event. Offer
+backup and privacy problems, and it makes Pod loss a non-event. Offer
 persistent volumes later as an opt-in for slow-to-restore workspaces.
+
+Keep the existing Cloudflare Worker as the reference implementation of the
+sandbox protocol for local users — it is a different product surface, not a
+competing one.
 
 ---
 
@@ -315,17 +425,22 @@ and the auto-router without any orchestration work, and de-risks the hardest
 correctness problem (transparent tool-call streaming) first.
 
 **Phase 1 — Runner image.** Container that clones a repo, runs `silkcode gui`
-against the gateway, and exits when idle. Driven by hand. Proves the agent runs
-unchanged in a container.
+against the gateway, and exits when idle. Driven by hand, `kubectl run` with
+the gVisor RuntimeClass. Proves the agent runs unchanged under `runsc` — and
+this is where the compatibility and `npm install` performance questions in §7.4
+get answered with measurements instead of guesses. Do it early; it is the item
+most likely to surprise us.
 
-**Phase 2 — Control plane.** GitHub web OAuth, session records, start/attach/
-reap orchestration, authenticated proxy to the container. Opaque session ids
-and the durable `SessionStore` land here. This is the first end-to-end hosted
-product.
+**Phase 2 — Control plane and placement.** GitHub web OAuth, session records,
+`KubernetesPlacement` (start/attach/stop/sweep), authenticated in-cluster proxy
+to the Pod. Opaque session ids and the durable `SessionStore` land here. This is
+the first end-to-end hosted product.
 
-**Phase 3 — Commerce and safety.** Billing, plan limits, per-session caps,
-egress allowlist, idle reaping, abuse signals. Also the mid-turn
-credits-exhausted stop generalized out of `swarm.py`.
+**Phase 3 — Commerce and safety.** Billing, plan limits, per-session caps, the
+NetworkPolicy and egress allowlist, warm pool, the three-layer reaper, abuse
+signals. Also the mid-turn credits-exhausted stop generalized out of
+`swarm.py`. The Pod-hardening checklist in §7.2 is not Phase 3 — it ships with
+Phase 1, because a Pod without it is not safe to point at a real user even once.
 
 **Phase 4 — What hosting unlocks.** Async tasks that run without a browser
 open, PR-first workflows, mobile, shared team workspaces, org-level model
@@ -334,8 +449,15 @@ to host at all.
 
 ## 12. Open questions
 
-- **Per-turn latency budget.** Cold container boot plus clone is seconds; is
-  that acceptable per session, or is a warm pool needed from day one?
+- **Warm pool from day one?** Cold Pod plus clone is seconds. The pool is the
+  fix, but it means paying for idle capacity on our own nodes — a direct cost
+  we now carry rather than a vendor's per-second billing problem.
+- **gVisor compatibility surface.** Phase 1 must measure this, not assume it.
+  Specifically: `npm install` wall-clock versus `runc`, and how many real
+  projects need Docker-in-Docker (which `runsc` cannot give them at all).
+- **Node pool capacity planning.** Sessions per node, headroom for spikes, and
+  what happens when the pool is full — queue the session, autoscale, or
+  overflow to a second placement driver?
 - **Repo size.** `MAX_SYNC_BYTES` caps the local sandbox at 100 MB compressed;
   a cloud clone has no such limit but does have a clone-time cost. Shallow
   clone by default?
