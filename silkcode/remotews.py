@@ -91,12 +91,12 @@ class RemoteWorkspace(Workspace):
         root = Path(tempfile.mkdtemp(prefix="silk-remote-"))
         super().__init__(root)
         self.backend = backend
-        self.repo_url = repo_url
+        self.repo_url = normalize_repo_url(repo_url)
         self.token = token
-        self.workspace_id = workspace_id_for_repo(repo_url)
+        self.workspace_id = workspace_id_for_repo(self.repo_url)
         self.exec_backend = RemoteExecBackend(backend, self.workspace_id)
         self._files_cache: set[str] | None = None
-        backend.clone(self.workspace_id, repo_url, token)
+        backend.clone(self.workspace_id, self.repo_url, token)
 
     # ---- file API (proxied to the sandbox) ---------------------------------
 
@@ -155,3 +155,21 @@ class RemoteWorkspace(Workspace):
 
     def exec(self, command: str, timeout: int = 120) -> str:
         return self.exec_backend.exec(self, command, timeout=timeout)
+
+
+def normalize_repo_url(url: str) -> str:
+    """Turn a user-friendly repo spec into something `git clone` accepts.
+
+    * 'github:owner/repo' or 'github.com/owner/repo' -> https://github.com/...
+    * a bare 'owner/repo' on a known host stays as-is (assume the sandbox
+      resolves it via ssh/config)
+    * anything else (https://, git@, a local path) is passed through.
+    """
+    url = url.strip()
+    m = re.match(r"^github[:/](?P<path>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)$", url)
+    if m:
+        path = m.group("path")
+        return f"https://github.com/{path}" + ("" if path.endswith(".git") else ".git")
+    if url.startswith("github.com/"):
+        return "https://" + url + ("" if url.endswith(".git") else ".git")
+    return url

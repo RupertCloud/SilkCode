@@ -16,8 +16,16 @@ import pytest
 
 from silkcode.execbackend import RemoteBackend
 from silkcode.gui.server import GuiState
-from silkcode.remotews import RemoteWorkspace
+from silkcode.remotews import RemoteWorkspace, normalize_repo_url
 from silkcode.sandbox_server import SandboxHandler, SandboxState
+
+
+def test_normalize_repo_url():
+    assert normalize_repo_url("github:owner/repo") == "https://github.com/owner/repo.git"
+    assert normalize_repo_url("github:owner/repo.git") == "https://github.com/owner/repo.git"
+    assert normalize_repo_url("https://github.com/owner/repo") == "https://github.com/owner/repo"
+    assert normalize_repo_url("/tmp/foo") == "/tmp/foo"
+    assert normalize_repo_url("git@github.com:owner/repo.git") == "git@github.com:owner/repo.git"
 
 
 @pytest.fixture
