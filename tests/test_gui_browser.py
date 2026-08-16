@@ -206,3 +206,30 @@ def test_composer_always_visible_and_sessions_switch(browser, gui_url):
     page.select_option("#session-select", value=first_label)
     page.wait_for_selector(".msg.assistant:has-text('Reply in session one.')", timeout=10000)
     send_and_wait(page, "again in one", "Second reply in session one.")
+
+
+def test_code_blocks_render_with_copy_and_run_buttons(browser, gui_url):
+    """Fenced code/terminal blocks inside a message render as styled code blocks
+    with copy + run-in-terminal controls."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+
+    # inject a message that mixes prose with shell and non-shell code fences
+    page.evaluate("""() => {
+        const raw = 'Install deps:\\n\\n```bash\\nnpm install\\nnpm test\\n```\\n\\nDone.\\n\\n```python\\nprint(1)\\n```';
+        const el = addMsg('assistant', raw);
+        el.__raw = raw;
+        formatAllMessages();
+    }""")
+
+    # the prose turns into a text block, each fence becomes a .codeblock
+    assert page.locator("#messages .codeblock").count() == 2
+    assert page.locator("#messages pre code").nth(0).text_content() == "npm install\nnpm test"
+
+    # shell block gets a run button; the python one does not
+    shell = page.locator("#messages .codeblock[data-shell=1]")
+    assert shell.count() == 1
+    assert shell.locator(".cb-icorun").count() == 1
+    assert page.locator("#messages .codeblock .cb-copy").count() == 2
+    assert page.locator("#messages .codeblock.cb-icorun, #messages .codeblock .cb-icorun").count() == 1
