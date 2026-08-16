@@ -134,47 +134,6 @@
   #swarm-chart .swbar .bar.warn { background: var(--warn); }
   #swarm-chart .swbar .bar.err { background: var(--err); }
 
-  /* ---- credits checkout (beautifului.dev-style two-column card) ---- */
-  #buy-modal .modal { width: 760px; max-width: 96vw; }
-  #checkout-wrap { display: grid; grid-template-columns: 5fr 4fr; gap: 22px; }
-  #checkout-wrap h4 { font-size: 13px; margin: 16px 0 8px; letter-spacing: .05em; color: var(--text); }
-  #checkout-wrap h4:first-child { margin-top: 0; }
-  .co-label { display: block; font-size: 12px; color: var(--dim); margin: 12px 0 4px; }
-  .co-err { color: var(--err); font-size: 12px; margin-top: 8px; min-height: 1em; }
-  .co-field { width: 100%; background: var(--panel2); color: var(--text);
-    border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; font: inherit; }
-  .co-field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(92,200,255,.18); }
-  #co-card-row { display: grid; grid-template-columns: 3fr 2fr; gap: 10px; }
-  .co-packs { display: flex; flex-direction: column; gap: 8px; }
-  .co-pack { display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    cursor: pointer; padding: 10px 12px; border-radius: 10px;
-    border: 1px solid var(--border); background: var(--panel2); text-align: left; }
-  .co-pack:hover { border-color: var(--accent); }
-  .co-pack.selected { border-color: var(--accent); background: rgba(92,200,255,.08); }
-  .co-pack input { accent-color: var(--accent); }
-  .co-pack .cp-name { font-weight: 600; font-size: 14px; }
-  .co-pack .cp-sub { font-size: 12px; color: var(--dim); margin-top: 1px; }
-  .co-pack .cp-price { font-variant-numeric: tabular-nums; font-weight: 700; }
-  .co-pack .cp-best { display: inline-block; margin-left: 6px; font-size: 10px; font-weight: 700;
-    letter-spacing: .04em; color: #10222e; background: var(--accent); border-radius: 999px; padding: 1px 7px; }
-  #co-summary { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
-    background: var(--panel2); align-self: start; }
-  #co-summary .co-srow { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; color: var(--dim); }
-  #co-summary .co-srow.total { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 12px;
-    color: var(--text); font-weight: 700; font-size: 15px; }
-  #co-balance { display: flex; justify-content: space-between; font-size: 12px; color: var(--ok); padding-top: 10px;
-    border-top: 1px dashed var(--border); margin-top: 8px; }
-  #co-submit { width: 100%; margin-top: 12px; background: var(--accent); color: #10222e;
-    border: 0; border-radius: 8px; padding: 11px; font-weight: 700; font-size: 14px; cursor: pointer; }
-  #co-submit:disabled { opacity: .45; cursor: default; }
-  /* success / receipt state */
-  #co-receipt { display: none; text-align: center; padding: 14px 4px 6px; }
-  #co-receipt.open { display: block; }
-  #co-receipt .co-check { font-size: 40px; }
-  #co-form { display: block; }
-  #co-form.hidden { display: none; }
-  #co-receipt.hidden { display: none; }
-  .co-secure { font-size: 12px; color: var(--dim); margin-top: 10px; display: flex; gap: 5px; align-items: center; }
 </style>
 </head>
 <body>
@@ -190,7 +149,6 @@
   <button id="add-model">+ Add model</button>
   <button id="github-btn">GitHub</button>
   <button id="env-btn" title="Keys, token usage and running sessions">⚙ Environment</button>
-  <button id="buy-btn" title="Buy Silk Cloud credits for hosted model use">🛒 Buy credits</button>
   <button id="swarm-btn" title="Multi-agent improvement loop: tester, critic and worker iterate until this project scores 10/10">🐝 Swarm</button>
   <button id="update-btn" title="Pull the latest Silk Code from git; the daemon restarts itself with the new code">↻ Update</button>
   <label>Mode <select id="mode-select">
@@ -282,12 +240,6 @@
     <div id="env-live-summary" style="margin-bottom:6px"></div>
     <table class="envtable" id="env-live"></table>
 
-    <div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 6px">
-      <h4 style="font-size:13px;margin:0">Silk Cloud credits</h4>
-      <button id="env-buy" style="padding:4px 10px;font-size:12px;border-radius:6px;border:1px solid var(--border);background:var(--panel2);color:var(--text);cursor:pointer">🛒 Buy credits</button>
-    </div>
-    <div id="env-credits-summary" style="color:var(--ok);font-size:13px;margin-bottom:6px"></div>
-    <table class="envtable" id="env-orders"></table>
 
     <div class="row">
       <button id="env-refresh">Refresh</button>
@@ -338,66 +290,6 @@
   </div>
 </div>
 
-<div class="modal-bg" id="buy-modal">
-  <div class="modal" id="co-modal">
-    <h3>Buy Silk Cloud credits</h3>
-    <div style="color:var(--dim);font-size:12px;margin-bottom:14px">
-      Buy credits to use hosted models through the Silk Cloud gateway — no provider
-      API keys to manage. This checkout is a preview: purchases are simulated, not
-      charged.
-    </div>
-
-    <div id="co-form">
-      <div id="checkout-wrap">
-        <!-- left: payment -->
-        <div>
-          <div id="co-packs" class="co-packs"></div>
-          <h4>Payment</h4>
-          <label class="co-label">Card number</label>
-          <input id="co-card" class="co-field" inputmode="numeric" placeholder="4242 4242 4242 4242" maxlength="23">
-          <div id="co-card-row">
-            <div>
-              <label class="co-label">Expires</label>
-              <input id="co-exp" class="co-field" inputmode="numeric" placeholder="MM/YY" maxlength="5">
-            </div>
-            <div>
-              <label class="co-label">CVC</label>
-              <input id="co-cvc" class="co-field" inputmode="numeric" placeholder="123" maxlength="4">
-            </div>
-          </div>
-          <label class="co-label">Email for receipt</label>
-          <input id="co-email" class="co-field" type="email" placeholder="you@example.com">
-          <div class="co-secure">🔒 Card details never leave this machine in the preview build.</div>
-        </div>
-        <!-- right: order summary -->
-        <div id="co-summary">
-          <h4 style="margin-top:0">Order summary</h4>
-          <div class="co-srow"><span>Plan</span><span id="co-sum-plan">—</span></div>
-          <div class="co-srow"><span>Credits</span><span id="co-sum-credits">—</span></div>
-          <div class="co-srow"><span>Price</span><span id="co-sum-price">—</span></div>
-          <div class="co-srow total"><span>Total</span><span id="co-sum-total">$0.00</span></div>
-          <div id="co-balance"><span>New balance</span><span id="co-balance-value">—</span></div>
-          <button id="co-submit" disabled>Pay</button>
-        </div>
-      </div>
-      <div class="co-err" id="co-err"></div>
-      <div class="row">
-        <button id="co-cancel">Close</button>
-      </div>
-    </div>
-
-    <!-- success / receipt -->
-    <div id="co-receipt">
-      <div class="co-check">✓</div>
-      <h3 id="co-receipt-title" style="margin:8px 0 4px">Thank you!</h3>
-      <div id="co-receipt-email" style="color:var(--dim);font-size:13px;margin-bottom:6px"></div>
-      <div id="co-receipt-credits" style="font-size:18px;font-weight:700;margin:10px 0"></div>
-      <div class="row" style="justify-content:center;margin-top:14px">
-        <button class="primary" id="co-done">Done</button>
-      </div>
-    </div>
-  </div>
-</div>
 
 <div class="modal-bg" id="swarm-modal">
   <div class="modal" style="width:600px">
@@ -1304,7 +1196,6 @@ function renderEnvironment(env) {
   renderCredentials(env.credentials);
   renderUsageBreakdown(env.usage);
   renderLive(env);
-  renderBilling().catch(() => {});
 }
 async function openEnvironment() {
   $("env-modal").classList.add("open");
@@ -1315,148 +1206,7 @@ $("env-btn").onclick = openEnvironment;
 $("env-refresh").onclick = openEnvironment;
 $("env-close").onclick = () => $("env-modal").classList.remove("open");
 
-// ---- credits checkout (beautifului.dev-style two-column card) ------------
 
-let coPacks = [];          // credit packs from the server
-let coSelected = null;     // selected pack id
-
-const fmtUsd = (n) => "$" + (n % 1 === 0 ? n.toFixed(0) : n.toFixed(2));
-
-function renderCheckoutOptions(opts) {
-  coPacks = opts.packs || [];
-  coSelected = opts.default_pack || (coPacks[0] && coPacks[0].id) || null;
-  const box = $("co-packs");
-  box.innerHTML = "";
-  const best = coPacks.reduce((a, b) => (b.credits / b.usd > a.credits / a.usd ? b : a), coPacks[0] || {});
-  for (const p of coPacks) {
-    const row = document.createElement("label");
-    row.className = "co-pack";
-    row.innerHTML =
-      `<span style="display:flex;align-items:center;gap:10px">` +
-        `<input type="radio" name="co-pack" value="${esc(p.id)}">` +
-        `<span><span class="cp-name">${esc(p.label)}</span>` +
-        (p === best ? `<span class="cp-best">BEST VALUE</span>` : "") +
-        `<div class="cp-sub">${p.credits.toLocaleString()} credits</div></span>` +
-      `</span>` +
-      `<span class="cp-price">${fmtUsd(p.usd)}</span>`;
-    row.onclick = () => { coSelected = p.id; paintCheckout(); };
-    box.appendChild(row);
-  }
-  paintCheckout();
-}
-
-function applyCardMask(input, max) {
-  const d = input.value.replace(/\D/g, "").slice(0, max);
-  input.value = (d.match(/.{1,4}/g) || []).join(" ");
-}
-function applyExpMask(input) {
-  const d = input.value.replace(/\D/g, "").slice(0, 4);
-  input.value = d.length > 2 ? d.slice(0, 2) + "/" + d.slice(2) : d;
-}
-
-function currentPack() { return coPacks.find(p => p.id === coSelected) || null; }
-
-function paintCheckout() {
-  const p = currentPack();
-  if (!p) { $("co-submit").disabled = true; return; }
-  document.querySelectorAll(".co-pack").forEach((el, i) => {
-    el.classList.toggle("selected", coPacks[i] && coPacks[i].id === coSelected);
-    const radio = el.querySelector("input");
-    radio.checked = coPacks[i] && coPacks[i].id === coSelected;
-  });
-  $("co-sum-plan").textContent = p.label;
-  $("co-sum-credits").textContent = p.credits.toLocaleString();
-  $("co-sum-price").textContent = fmtUsd(p.usd);
-  $("co-sum-total").textContent = fmtUsd(p.usd);
-  refreshBalance();
-  updateSubmit();
-}
-
-async function refreshBalance() {
-  try {
-    const b = await api("/api/billing");
-    const cur = b.balance || 0;
-    const p = currentPack();
-    const value = p ? (cur + p.credits).toLocaleString() : cur.toLocaleString();
-    $("co-balance-value").textContent = value + " credits";
-  } catch (e) {}
-}
-
-function updateSubmit() {
-  const ok = currentPack() && /^\d{8,}$/.test($("co-card").value.replace(/\D/g, ""))
-    && /^\d{2}\/\d{2}$/.test($("co-exp").value) && /\d{3,4}/.test($("co-cvc").value);
-  $("co-submit").disabled = !ok;
-}
-
-$("co-card").addEventListener("input", function () { applyCardMask(this, 16); updateSubmit(); });
-$("co-exp").addEventListener("input", function () { applyExpMask(this); updateSubmit(); });
-$("co-cvc").addEventListener("input", function () { updateSubmit(); });
-
-function showCoReceipt(receipt) {
-  $("co-form").classList.add("hidden");
-  $("co-receipt").classList.add("open");
-  $("co-receipt-title").textContent = "Thanks, " + (receipt.card_last4 || "you") + "!";
-  $("co-receipt-email").textContent = receipt.receipt_email || "";
-  $("co-receipt-credits").textContent = receipt.credits.toLocaleString() + " credits added";
-}
-
-function resetCheckout() {
-  $("co-form").classList.remove("hidden");
-  $("co-receipt").classList.remove("open");
-  $("co-receipt").classList.remove("hidden");
-  $("co-err").textContent = "";
-  $("co-card").value = $("co-exp").value = $("co-cvc").value = $("co-email").value = "";
-  $("co-submit").disabled = true;
-  paintCheckout();
-}
-
-$("buy-btn").onclick = async () => {
-  $("buy-modal").classList.add("open");
-  resetCheckout();
-  try {
-    const opts = await api("/api/checkout");
-    renderCheckoutOptions(opts);
-  } catch (err) { $("co-err").textContent = "could not load checkout: " + err.message; }
-};
-$("co-cancel").onclick = () => $("buy-modal").classList.remove("open");
-$("co-done").onclick = () => { $("buy-modal").classList.remove("open"); resetCheckout(); };
-
-$("co-submit").onclick = async () => {
-  const p = currentPack();
-  if (!p) return;
-  const btn = $("co-submit");
-  btn.disabled = true;
-  try {
-    const receipt = await api("/api/checkout", {pack: p.id, card: $("co-card").value});
-    showCoReceipt(receipt);
-  } catch (err) { $("co-err").textContent = err.message; btn.disabled = false; }
-};
-
-// ---- environment: credits / orders ---------------------------------------
-
-const fmtDate = (t) => new Date(t * 1000).toLocaleDateString(undefined,
-  {year: "numeric", month: "short", day: "numeric"});
-
-async function renderBilling() {
-  const b = await api("/api/billing");
-  $("env-credits-summary").textContent =
-    `Balance: ${b.balance.toLocaleString()} credits · ${b.orders.length} order(s)`;
-  const table = $("env-orders");
-  table.innerHTML = "<tr><th>Order</th><th>Pack</th><th>Credits</th><th>Total</th><th>Date</th></tr>";
-  if (!b.orders.length) {
-    table.innerHTML += `<tr><td colspan="5" style="color:var(--dim)">No purchases yet — buy your first credits above.</td></tr>`;
-    return;
-  }
-  for (const o of b.orders) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td class="mono">${esc(o.order_id)}</td><td>${esc(o.label || o.pack)}</td>` +
-      `<td class="num">${o.credits.toLocaleString()}</td>` +
-      `<td class="num">${fmtUsd(o.usd)}</td><td class="mono">${fmtDate(o.at)}</td>`;
-    table.appendChild(tr);
-  }
-}
-
-$("env-buy").onclick = () => $("buy-btn").click();
 
 $("add-model").onclick = () => $("provider-modal").classList.add("open");
 $("p-cancel").onclick = () => $("provider-modal").classList.remove("open");
