@@ -71,8 +71,25 @@ there is no vendor, invoice or accountable party. Open source wins the security
 review; the contract is what makes adoption possible. §14 has the detail,
 including which parts stay MIT and which are commercial.
 
-Everything below is the detail behind those paragraphs. §14 is what customers
-buy, §13 the market, §12 the money, §11 the roadmap, §§2–9 the architecture.
+**Is coding a big enough market?** As a wedge, yes; as the whole business,
+probably not. What this repository actually contains is an *agent runtime* —
+model routing, tool calling, permissions, sandboxing, sessions, MCP — of which
+coding is the first application. Coding is the right opening because it is
+measurable, has an identifiable buyer, and already works. The platform then
+expands *inside the account*, after delivery. Broaden the platform, not the
+pitch. §15.
+
+**How it reaches institutions.** Not through marketing spend. The free MIT tool
+creates champions inside organizations; universities are a channel rather than
+only a customer, because their students become the developers who ask for it;
+local partners carry the contract and the vendor approval. The step everyone
+gets wrong is the handoff from champion to procurement — build the security
+whitepaper, DPA template and price sheet early, because without them bottom-up
+adoption stalls exactly when it should become revenue. §16.
+
+Everything below is the detail behind those paragraphs. §16 is distribution,
+§15 the market size, §14 what customers buy, §13 the market, §12 the money,
+§11 the roadmap, §§2–9 the architecture.
 
 ---
 
@@ -994,7 +1011,7 @@ costs an individual developer nothing, because a single user never needed it.
 That asymmetry is what makes open-core work here rather than being a tax on
 goodwill.
 
-Licence choice for the commercial half is a live decision (§15) — permissive,
+Licence choice for the commercial half is a live decision (§17) — permissive,
 copyleft, or source-available all behave differently when a large cloud decides
 to resell us.
 
@@ -1094,7 +1111,148 @@ per-org model routing and the installer before anything else.
   for an SME, *"because you would need an engineer you do not have."* Rehearse
   it; it is the objection that decides deals.
 
-## 15. Open questions
+## 15. Is coding a big enough market?
+
+### 15.1 What is actually in this repository is not a coding tool
+
+Read `silkcode/` as an outsider and the coding parts are the smallest part of
+it. What is really there is an **agent runtime**: a model-agnostic provider
+layer, a tool-calling loop, a permission and approval model
+(`permissions.py`), sandboxed execution (`execbackend.py`), session
+persistence, skills and memory, and **MCP support** (`mcp.py`) for attaching
+arbitrary external tools.
+
+Coding is the first *application* of that runtime, not the runtime itself. The
+file, git and shell tools are the coding application; swap them for an
+institution's own systems over MCP and the same harness does procurement
+review, data analysis, or back-office automation.
+
+So the honest positioning is **a sovereign AI agent platform, starting with
+software development** — and every hard part of it (model neutrality, running
+on their infrastructure, permissioned actions, audit) transfers to every other
+application unchanged.
+
+### 15.2 Broaden the platform, not the pitch
+
+The failure mode is obvious and common: reposition as "an AI platform for
+everything," and become vapourware to every buyer. Coding is the right wedge
+precisely because it is narrow:
+
+- **It is measurable.** Code shipped, tests passing, review time saved. Most
+  agent use cases cannot show that in a pilot.
+- **The buyer is identifiable.** A head of engineering exists, has a budget,
+  and feels the problem. "AI for the organization" has no such owner.
+- **It is already built.** V0.1 works today.
+
+The expansion is **within the account, after delivery** — land a bank's
+engineering team on coding, then sell the same platform to their operations
+and compliance functions once it is already installed, approved and trusted.
+Land-and-expand, not a broader opening pitch.
+
+**MCP is the mechanism** and it is already in the codebase. An institution
+connects its own systems as MCP servers and the harness does non-coding work
+without us writing a single integration. That is the cheapest possible route
+from "coding tool" to "platform," and it is mostly a packaging and
+documentation exercise rather than new engineering.
+
+### 15.3 Size it by institutions, not by developers
+
+"Developers × monthly seat price" is the wrong sum for this market and makes
+coding look far too small. The right one is **institutions × contract value**.
+
+A single bank on a platform contract is worth several hundred individual
+subscriptions, and platform contracts grow inside the account as more
+departments adopt. That changes the arithmetic from a thin developer-tools
+market into an enterprise-software one — which is what §14.5 is really saying.
+
+Two honest caveats. **Coding alone, in emerging markets alone, is probably not
+a venture-scale market** — the platform expansion in §15.2 is what makes the
+ceiling high enough, and it should be a deliberate plan rather than a hope.
+And **sovereignty demand is not limited to these regions**; European public
+sector and regulated industries want the same thing. That is expansion room,
+not a reason to lose focus now.
+
+## 16. Distribution: getting into institutional hands
+
+We cannot outspend anyone on marketing, and institutional buying in these
+markets is relationship-led rather than inbound-led. Distribution therefore has
+to be structural, not promotional.
+
+### 16.1 Open source is the marketing budget
+
+`pip install silkcode` is the top of the funnel. A developer inside a bank
+tries it on their own machine, likes it, and becomes an internal champion —
+who then asks for the version the organization can actually deploy. Bottom-up
+adoption creating top-down demand is the only motion that costs us nothing per
+prospect.
+
+This makes the free local tool a **distribution asset, not a giveaway**, and it
+argues for spending real effort on first-run experience, documentation and
+install reliability — the things that decide whether a curious developer
+becomes a champion.
+
+### 16.2 Universities are a channel, not only a customer
+
+The most valuable thing a university gives us is not its licence fee. Students
+learn on Silk Code, graduate, join banks, fintechs and ministries, and ask for
+the tool they already know. That is how MATLAB, SAS, AutoCAD and JetBrains won
+their enterprise markets, and it is a two-to-four year pipeline that compounds.
+
+Reframed: **academic licensing is a marketing expense, not a revenue line.**
+Price it accordingly — free or near-free, with training and curriculum as the
+paid part — and measure it on graduates placed, not fees collected.
+
+### 16.3 Partners carry the contract
+
+Local systems integrators and resellers already have the relationships, the
+vendor approvals and the ability to invoice locally (§13.2). Giving them margin
+buys distribution we cannot build ourselves, and it solves the vendor-risk
+problem in §14.5 at the same time.
+
+Train and certify them so deployments scale without our headcount. A partner
+who can install and support it is worth more than an ad campaign.
+
+### 16.4 The champion-to-procurement handoff
+
+**This is the highest-leverage thing in this section, and where most
+open-source companies fail.** A champion who loves the tool still has to get it
+through their organization, and they cannot do that with enthusiasm alone. They
+need artifacts:
+
+- a security whitepaper and architecture overview
+- a data-processing agreement template
+- a penetration-test summary
+- a clear price sheet with the institutional shape (§14.4)
+- two reference customers they can name
+
+Build that pack early — it is cheap, it is reusable, and without it every
+bottom-up adoption stalls at exactly the moment it was about to become revenue.
+
+### 16.5 The rest of the channel mix
+
+- **Regulator and ministry relations.** Getting onto an approved-vendor list,
+  or being referenced in a national AI strategy, outperforms any amount of
+  advertising in this market.
+- **Developer communities.** Local meetups, hackathons and training networks
+  are strong, underserved and high-trust. Cheap, and they feed §16.1.
+- **Industry bodies.** Banking and fintech associations, and national research
+  and education networks, are where institutional buyers already cluster.
+- **Proof over promotion.** A live demo running against *their* model on
+  modest hardware persuades this buyer more than any deck. Reference logos are
+  the dominant buying signal — the first flagship customer is worth
+  disproportionate effort and discount.
+
+### 16.6 What not to do
+
+Do not buy ads against Copilot or Cursor keywords; we lose that auction and the
+comparison. Do not lead with "cheaper than Copilot" — it invites a price war
+and ignores that for many of these buyers the US tools are not an option at all
+(§14.5). Do not pitch the platform before delivering the wedge. And do not
+launch a public hosted service to "get traction" before an institution has
+paid — §13.4 already sequenced that, and marketing pressure is exactly what
+tends to reverse it.
+
+## 17. Open questions
 
 - **Warm pool from day one?** Cold Pod plus clone is seconds. The pool is the
   fix, but it means paying for idle capacity on our own nodes — a direct cost
