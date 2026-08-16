@@ -225,6 +225,37 @@ on a permission prompt to let it run unattended for the rest of the session.
 
 ## Self-update
 
+### Resyncing a branch that moved
+
+A session can hold a workspace for hours while the branch changes underneath
+it — a teammate pushes, the base branch advances, a pull request is merged.
+
+```
+silkcode sync                # fetch and report; changes nothing
+silkcode sync --apply        # fast-forward, or merge if both sides moved
+```
+
+It exits non-zero when the branch needs attention, so it composes:
+`silkcode sync || silkcode sync --apply`.
+
+The case it exists for is the one `git status` describes misleadingly. After a
+squash merge your branch is "ahead" — those commits genuinely are not on the
+base — but the *work* is already there under the squashed commit. Merging
+produces a confusing duplicate; the branch should restart from the base. Sync
+tells the two apart by comparing trees rather than commits, and says so:
+
+```
+branch feature · tracking origin/feature · 8 ahead of origin/main
+· already merged into origin/main
+suggested: restart — this branch's work is already in origin/main under a
+different commit (a squash merge) …
+```
+
+Restarting moves the branch pointer, so it needs `--restart` explicitly.
+Nothing here discards work: uncommitted changes stop it, and a conflicted
+merge is reported rather than guessed at. The agent has the same thing as the
+`git_sync` tool, so it can check before committing on a stale base.
+
 `silkcode update` fast-forwards the installed checkout to the latest code from
 its git remote (refuses on a dirty tree or non-fast-forward; `--force` overrides
 that, `--install` also re-runs `pip install -e .` for new dependencies):

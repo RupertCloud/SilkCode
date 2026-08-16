@@ -220,6 +220,38 @@ _register(Tool(
     command_of=lambda args, ws: "git pull",
 ))
 
+def _git_sync(ws, apply: bool = False, restart: bool = False) -> str:
+    from ..sync import git_sync
+    return git_sync(ws, apply=apply, restart=restart)
+
+
+_register(Tool(
+    name="git_sync",
+    description=(
+        "Check whether this branch has fallen behind because someone else "
+        "pushed, the base branch moved, or a pull request was merged — and "
+        "optionally reconcile it. Read-only unless 'apply' is true. Use this "
+        "before committing or pushing after a long session, and whenever a "
+        "push is rejected as non-fast-forward. It never discards work: "
+        "uncommitted changes stop it, and it reports conflicts rather than "
+        "guessing."
+    ),
+    parameters=_params({
+        "apply": {"type": "boolean",
+                  "description": "Perform the suggested action (fast-forward or "
+                                 "merge) instead of only reporting it."},
+        "restart": {"type": "boolean",
+                    "description": "Allow moving the branch onto the base when its "
+                                   "work is already merged there as a squash. Only "
+                                   "meaningful with apply."},
+    }, []),
+    func=_git_sync,
+    # A plain check touches nothing; applying one runs a pull, which is the
+    # grantable 'pull' operation, so it is classified as such.
+    kind="command",
+    command_of=lambda args, ws: ("git pull" if args.get("apply") else "git status"),
+))
+
 _register(Tool(
     name="git_log",
     description="Show recent commits (oneline format).",
