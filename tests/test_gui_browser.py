@@ -214,6 +214,11 @@ def test_code_blocks_render_with_copy_and_run_buttons(browser, gui_url):
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(gui_url)
     page.wait_for_selector("#input")
+    # #input is in the static HTML, so it says nothing about the app having
+    # booted. Boot ends by clearing #messages and re-rendering the transcript,
+    # which would wipe anything injected before it - the file tree is loaded
+    # after that clear, so tree content means the clear has already happened.
+    page.wait_for_selector("#tree div", timeout=15000)
 
     # inject a message that mixes prose with shell and non-shell code fences
     page.evaluate("""() => {
@@ -236,3 +241,124 @@ def test_code_blocks_render_with_copy_and_run_buttons(browser, gui_url):
     assert run_btns.count() == 1
     assert run_btns.first.text_content().strip() == "▶ run"
     assert page.locator("#messages .code-bubble .cb-copy").count() == 2
+
+
+def test_code_bubbles_are_not_squashed_by_the_message_column(browser, gui_url):
+    """#messages is a column flex container, so a code bubble without
+    flex-shrink:0 is compressed below its content height and the code is
+    clipped — silently, and worse the less vertical room there is."""
+    page = browser.new_page(viewport={"width": 820, "height": 640})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+    page.wait_for_selector("#tree div", timeout=15000)
+
+    page.evaluate("""() => {
+        const raw = "Change:\\n\\n```python\\ndef fmt(n):\\n    for u in ['B','KB','MB']:\\n"
+                  + "        if n < 1024: return n\\n        n /= 1024\\n```\\n";
+        const el = addMsg('assistant', raw);
+        el.__raw = raw;
+        formatAllMessages();
+    }""")
+
+    sizes = page.evaluate("""() => Array.from(
+        document.querySelectorAll('#messages .code-bubble')).map(b => ({
+            bubble: b.getBoundingClientRect().height,
+            head: b.querySelector('.cb-head').getBoundingClientRect().height,
+            content: b.querySelector('pre').scrollHeight,
+        }))""")
+    assert sizes, "no code bubble was rendered"
+    for s in sizes:
+        assert s["bubble"] >= s["head"] + s["content"] - 2, (
+            f"code bubble squashed to {s['bubble']}px for "
+            f"{s['head'] + s['content']}px of content — the code is clipped")
+
+
+def test_prose_between_fences_carries_no_blank_lines(browser, gui_url):
+    """Bubbles use white-space: pre-wrap, so the blank lines that separate a
+    fence from its prose become empty rows — a tall empty box with one line
+    of text at the bottom."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+    page.wait_for_selector("#tree div", timeout=15000)
+
+    page.evaluate("""() => {
+        const raw = "First line:\\n\\n```bash\\nls\\n```\\n\\nSecond line:\\n\\n```bash\\npwd\\n```";
+        const el = addMsg('assistant', raw);
+        el.__raw = raw;
+        formatAllMessages();
+    }""")
+
+    texts = page.evaluate(
+        """() => Array.from(document.querySelectorAll('#messages .msg.assistant'))
+                     .map(m => m.textContent)""")
+    assert texts, "no prose bubble survived the split"
+    for text in texts:
+        assert text == text.strip(), f"prose bubble kept padding: {text!r}"
+        assert text.strip(), "an empty prose bubble was created"
+
+    heights = page.evaluate(
+        """() => Array.from(document.querySelectorAll('#messages .msg.assistant'))
+                     .map(m => m.getBoundingClientRect().height)""")
+    assert max(heights) < 60, f"a one-line prose bubble is {max(heights)}px tall"
+
+
+def test_the_interface_is_navigable_without_sight_or_a_mouse(browser, gui_url):
+    """Icon-only controls need names, and a streaming reply has to be
+    announced — otherwise a screen-reader user gets an unlabelled button row
+    and silence while the agent works."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#tree div", timeout=15000)
+
+    # the transcript announces itself as it grows
+    messages = page.locator("#messages")
+    assert messages.get_attribute("aria-live") == "polite"
+    assert messages.get_attribute("role") == "log"
+    assert messages.get_attribute("aria-label")
+
+    # every control whose label is an icon carries an accessible name
+    unnamed = page.evaluate("""() => Array.from(document.querySelectorAll('button'))
+        .filter(b => b.offsetParent !== null)
+        .filter(b => {
+            const text = (b.textContent || '').replace(/[^\\p{L}\\p{N}]/gu, '').trim();
+            return !text && !b.getAttribute('aria-label') && !b.getAttribute('title');
+        })
+        .map(b => b.id || b.className)""")
+    assert unnamed == [], f"controls with no accessible name: {unnamed}"
+
+    # the composer's input is named and its hint is associated, not just nearby
+    assert page.locator("#input").get_attribute("aria-label")
+    described = page.locator("#input").get_attribute("aria-describedby")
+    assert described and page.locator(f"#{described}").count() == 1
+
+
+def test_the_activity_rail_explains_itself_when_empty(browser, gui_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#tree div", timeout=15000)
+    assert page.is_visible("#timeline-empty")
+
+    page.evaluate("() => addToolMsg('read_file', '{\"path\": \"app.py\"}')")
+    page.evaluate("""() => {
+        const d = document.createElement('div');
+        d.className = 'act'; d.textContent = 'read_file';
+        document.getElementById('timeline').appendChild(d);
+    }""")
+    assert not page.is_visible("#timeline-empty"), \
+        "the empty-state text should give way to real activity"
+
+
+def test_the_workspace_path_is_shortened_but_recoverable(browser, gui_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#tree div", timeout=15000)
+    page.wait_for_function("() => document.getElementById('cwd').textContent.length > 0")
+
+    shown = page.locator("#cwd").text_content()
+    full = page.locator("#cwd").get_attribute("title")
+    assert full and len(full) >= len(shown)
+    assert not shown.endswith("/"), f"truncation left a dangling separator: {shown!r}"
+    if shown != full:
+        assert shown.startswith("…/"), shown
+        assert full.endswith(shown.lstrip("…/")), "the tail shown must be the real tail"

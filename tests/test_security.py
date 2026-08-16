@@ -221,30 +221,46 @@ def test_sandbox_clone_never_echoes_the_token(sandbox):
     assert "ghp_supersecrettoken" not in resp.text
 
 
-def test_a_cloned_workspace_does_not_contain_the_github_token(tmp_path):
-    """The token must not be written into the clone.
+def test_the_sandbox_never_hands_a_credential_to_git(tmp_path):
+    """Git is never given the token, in the URL or the environment.
 
-    Embedding it in the remote URL puts it in .git/config verbatim, where the
-    agent reaches it without trying: a repo scan, a `cat .git/config`, a `git
-    remote -v`. From there it goes into the model's context and out to
-    whichever third-party provider is answering.
+    A git process holding a credential runs commands the repository chooses -
+    `-c alias.x='!sh'`, a `credential.helper`, a `pre-push` hook the agent
+    just wrote - and any of those can print it. So the credential is applied
+    at the network boundary instead, and a clone URL that carries a token is
+    replaced by a loopback proxy address.
     """
-    from silkcode.sandbox_server import _clone_repo
+    from silkcode.sandbox_server import SandboxState, _git_env
 
     secret = "ghp_supersecrettoken"
-    origin = tmp_path / "origin"
-    origin.mkdir()
-    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    env = _git_env()
+    # The sandbox host's own environment is inherited, so an operator's
+    # ambient git settings survive; what must not appear is a credential this
+    # code put there.
+    assert not any(secret in str(v) for v in env.values())
+    assert "SILKCODE_GIT_TOKEN" not in env
 
-    dest = tmp_path / "workspaces" / "w"
+    state = SandboxState(tmp_path / "ws", "sandbox-token")
     try:
-        _clone_repo(str(origin), dest, token=secret)
-    except ValueError:
-        pytest.skip("git could not clone the fixture repository")
+        url = state.authenticated_url("a" * 16, "https://github.com/acme/widget.git", secret)
+        assert secret not in url, "the credential ended up in the remote URL"
+        assert url.startswith("http://127.0.0.1:"), url
+        assert url.endswith("/acme/widget.git"), url
+    finally:
+        state.close()
 
-    leaked = [str(p) for p in dest.rglob("*")
-              if p.is_file() and secret in p.read_text(errors="replace")]
-    assert not leaked, f"the token was written into {leaked}"
+
+def test_an_unauthenticated_clone_url_is_left_alone(tmp_path):
+    from silkcode.sandbox_server import SandboxState
+
+    state = SandboxState(tmp_path / "ws", "sandbox-token")
+    try:
+        plain = "https://github.com/acme/public.git"
+        assert state.authenticated_url("b" * 16, plain, None) == plain
+        # a local path or ssh remote takes no HTTP credential
+        assert state.authenticated_url("c" * 16, "/srv/repo.git", "tok") == "/srv/repo.git"
+    finally:
+        state.close()
 
 
 def test_a_cloned_sandbox_workspace_does_not_expose_the_token(sandbox, tmp_path):
@@ -499,3 +515,53 @@ def test_chained_and_piped_commands_take_the_highest_risk():
     for command in ("ls && rm -rf build", "echo hi; sudo reboot",
                     "cat f | sh", "true || git push --force"):
         assert classify_command(command) == Risk.HIGH, command
+
+
+def test_nothing_in_the_sandbox_can_read_the_token_end_to_end(tmp_path, sandbox):
+    """The whole boundary, exercised through the real protocol.
+
+    A git server that demands authentication, a /clone carrying the token,
+    then the commands an agent would actually run to look for it. The clone
+    has to work - proving the credential is being applied - while every probe
+    comes back without it.
+    """
+    from test_gitproxy import EXPECTED, TOKEN, GitHttpServer, _git
+
+    url, _ = sandbox
+    auth = {"Authorization": "Bearer the-secret-token"}
+    workspace = "e" * 16
+
+    served = tmp_path / "served"
+    bare = served / "acme" / "widget.git"
+    bare.mkdir(parents=True)
+    _git("init", "-q", "--bare", "-b", "main", str(bare))
+    _git("-C", str(bare), "config", "http.receivepack", "true")
+    seed = tmp_path / "seed"
+    _git("clone", "-q", str(bare), str(seed))
+    (seed / "README.md").write_text("hello\n")
+    _git("-C", str(seed), "add", "-A")
+    _git("-C", str(seed), "commit", "-qm", "seed")
+    _git("-C", str(seed), "push", "-q", "origin", "HEAD:main")
+
+    server = GitHttpServer(served, EXPECTED)
+    try:
+        resp = httpx.post(f"{url}/clone/{workspace}",
+                          json={"url": f"{server.origin}/acme/widget.git",
+                                "token": TOKEN},
+                          headers=auth, timeout=120)
+        assert resp.status_code == 200, resp.text
+        assert TOKEN not in resp.text
+
+        def run(command):
+            return httpx.post(f"{url}/exec/{workspace}", json={"command": command},
+                              headers=auth, timeout=60).text
+
+        # the clone really happened, so authentication really was applied
+        assert "hello" in run("cat README.md")
+
+        for command in ("cat .git/config", "git remote -v", "printenv",
+                        "env", "grep -ra ghp_ . || true",
+                        "cat .git/config .git/FETCH_HEAD 2>/dev/null || true"):
+            assert TOKEN not in run(command), f"`{command}` exposed the token"
+    finally:
+        server.close()

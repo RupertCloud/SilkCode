@@ -151,3 +151,36 @@ def test_memory_written_in_a_remote_session_can_be_read_back(sandbox_and_repo):
 
     # and it lives in the sandbox, not on this machine
     assert list(Path(ws.root).rglob("*")) == []
+
+
+def test_the_remote_tree_is_built_without_rescanning_itself(sandbox_and_repo):
+    """The tree is rebuilt after every turn, so its cost is paid constantly.
+
+    Deduplicating directories by scanning the entries list is quadratic in
+    the number of distinct directories - a packages/pkg*/src layout took
+    120ms where a set takes 6ms. This pins the behaviour (correct tree, each
+    directory once) and puts a ceiling on the time.
+    """
+    import time
+
+    from silkcode.gui.server import GuiState
+
+    backend, repo_url, base = sandbox_and_repo
+    ws = RemoteWorkspace(backend, repo_url)
+    ws._files_cache = {f"packages/pkg{i // 5}/src/file{i}.ts" for i in range(2000)}
+
+    state = GuiState.__new__(GuiState)
+    session = type("S", (), {"workspace": ws})()
+    state.get_session = lambda sid=None: session
+
+    started = time.perf_counter()
+    entries = GuiState.tree(state)
+    elapsed = time.perf_counter() - started
+
+    paths = [e["path"] for e in entries]
+    assert len(paths) == len(set(paths)), "a directory was emitted more than once"
+    dirs = [e["path"] for e in entries if e["dir"]]
+    assert "packages" in dirs and any(d.startswith("packages/pkg") for d in dirs)
+    for entry in entries:
+        assert entry["depth"] == entry["path"].count("/")
+    assert elapsed < 1.0, f"tree build took {elapsed:.2f}s"

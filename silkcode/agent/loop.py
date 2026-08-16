@@ -41,6 +41,7 @@ class Agent:
         session_id: int | None = None,
         attribution: bool = True,
         lock_owner: str | None = None,
+        redact_output: bool = True,
     ):
         self.provider = provider
         self.model = model
@@ -61,6 +62,18 @@ class Agent:
         # Per-owner optimistic-concurrency registry for the file tools: this
         # agent's reads/writes never mask another session's stale base.
         self._fp_registry: dict = {}
+        # Literal credentials this installation holds, so tool output that
+        # happens to print one is scrubbed before it reaches the provider.
+        # Resolved once per agent: it reads the config and the environment.
+        self._known_secrets: tuple[str, ...] = ()
+        if redact_output:
+            try:
+                from ..config import Config
+                from ..redact import known_secrets
+                self._known_secrets = known_secrets(Config.load())
+            except Exception:
+                pass  # never let redaction setup stop an agent from starting
+        self.redact_output = redact_output
         system = SYSTEM_PROMPT.format(root=workspace.root, platform=platform.platform())
         if context:
             system += "\n" + context
@@ -103,13 +116,32 @@ class Agent:
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": call.id,
-                        "content": output,
+                        "content": self._scrub(output),
                     })
                 if self.stop_requested:
                     return "Stopped by user."
             return "Stopped: reached the maximum number of agent steps for one turn."
         finally:
             clear_attribution()  # attribution never outlives the turn
+
+    def _scrub(self, output: str) -> str:
+        """Remove credentials from tool output before it joins the
+        conversation - which is to say, before it is sent to the provider.
+
+        A backstop for the ordinary case: a `printenv`, a `cat .env`, a stack
+        trace carrying a connection string. It is not a boundary and cannot
+        be one; the boundaries are the sandbox never holding a credential as
+        a string, an owner-only config file, and the permission gate.
+        """
+        if not self.redact_output:
+            return output
+        try:
+            from ..redact import redact
+            return redact(output, extra=self._known_secrets)
+        except Exception:
+            # A failure here must never lose the tool's result: the agent
+            # needs it to make progress, and redaction is the backstop.
+            return output
 
     def request_stop(self) -> None:
         """Stop after the current model call or tool finishes."""

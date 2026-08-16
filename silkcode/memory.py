@@ -62,8 +62,11 @@ def remember(ws: Workspace, text: str) -> str:
         ws.refresh()  # the file may be new; let the listing pick it up
         return f"Remembered in {MEMORY_RELPATH}: {text}"
 
+    from .statedir import ensure_ignored
+
     path = memory_path(ws)
     path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_ignored(path.parent)  # memory is ours, not part of their project
     with path.open("a") as f:
         f.write(entry)
     return f"Remembered in {MEMORY_RELPATH}: {text}"
