@@ -1,9 +1,14 @@
 # Silk Cloud — a fully hosted Silk Code
 
-**Status: design.** Nothing in this document is implemented yet. It is the
-architecture for taking the local-first harness in this repository and running
-it as a hosted product: sign in with GitHub, pick a repo, start working — no
-`pip install`, no API keys, no local model server.
+**Status: design, with pieces now landed.** The hosted product does not exist
+yet, but parts of this design have since been built on `main` and this document
+has been corrected to match: the sandbox credential boundary (§8) is
+implemented in `gitproxy.py`, and `redact.py` covers a secret-leak path §8
+originally missed. Where the code and this document disagree, the code wins.
+
+It is the architecture for taking the local-first harness in this repository
+and running it as a hosted product: sign in with GitHub, pick a repo, start
+working — no `pip install`, no API keys, no local model server.
 
 The guiding constraint is unchanged from the README:
 
@@ -460,12 +465,28 @@ competing one.
 - **Repo access:** the GitHub App's *installation* token, scoped to the repos
   the user selected, minted per session and short-lived. The user's own OAuth
   token should never be written into the container.
-- **Git credentials in the container:** a credential helper that fetches a
-  fresh token from the control plane on demand, so nothing durable sits on disk.
+- **Git credentials in the container: already solved, and better than this
+  document originally specified.** `silkcode/gitproxy.py` (on `main`) does not
+  give git the token at all — the clone's origin points at a loopback proxy
+  that adds the `Authorization` header on the way out, so the credential never
+  exists as a string anywhere the agent can read it. That closes `printenv`,
+  `git remote -v`, `cat .git/config`, and a `pre-push` hook the agent wrote
+  itself. It also scopes to one repository. Cloud should adopt this as-is
+  rather than the weaker "short-lived credential helper" idea it replaces.
 - **User secrets** (a project's own `.env`, test database URLs): encrypted at
   rest in the control plane, injected at container start. Accept that a user
   with shell access can read their own secrets — that is fine, they are theirs.
   What must never appear is *Silk's* secrets or *another tenant's*.
+- **Tool output is published to the model provider**, and this document
+  originally missed it. Whatever a command prints goes into the conversation,
+  and the conversation goes to whichever provider is answering — so a
+  `printenv`, a stack trace carrying a connection string, or a curl transcript
+  with an `Authorization` header leaks a live secret to a third party. This is
+  *sharper* under pooled credits (§5), because the traffic also transits our
+  gateway: we become a party to every such disclosure. `silkcode/redact.py`
+  (on `main`) is the backstop and is explicit that it is a backstop, not a
+  boundary. Cloud inherits it and must also state its own retention and
+  provider-training position (§17).
 
 ---
 
