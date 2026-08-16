@@ -22,6 +22,16 @@ def git(*args, cwd=None, check=True):
                                             "GIT_TERMINAL_PROMPT": "0"})
 
 
+def configure_identity(path):
+    """Set the identity in the repo itself, not just in the environment of
+    the commands this file runs. resync() invokes git through the product's
+    own helper, which inherits the ambient environment — and a CI runner has
+    no global identity, so a merge there fails with "Committer identity
+    unknown" while passing on a developer machine."""
+    git("config", "user.email", "t@t", cwd=path)
+    git("config", "user.name", "t", cwd=path)
+
+
 def commit(path, name, text="x"):
     (path / name).write_text(text)
     git("add", "-A", cwd=path)
@@ -44,6 +54,8 @@ def clones(tmp_path):
     theirs = tmp_path / "theirs"
     git("clone", "-q", str(origin), str(ours))
     git("clone", "-q", str(origin), str(theirs))
+    configure_identity(ours)
+    configure_identity(theirs)
     # so origin/HEAD resolves and the base can be discovered
     git("remote", "set-head", "origin", "main", cwd=ours)
     return Workspace(ours), theirs, origin
@@ -124,6 +136,7 @@ def _squash_merge_ours_into_main(ws, origin, tmp_path):
     one new commit holding the same tree, under a different sha."""
     integrator = tmp_path / "integrator"
     git("clone", "-q", str(origin), str(integrator))
+    configure_identity(integrator)
     git("fetch", "-q", "origin", "feature", cwd=integrator)
     git("merge", "--squash", "origin/feature", cwd=integrator)
     git("commit", "-qm", "Feature (#1)", cwd=integrator)
@@ -237,3 +250,32 @@ def test_resync_does_not_push_for_you(clones):
     message = resync(ws)
     assert "does not push" in message
     assert survey(ws).ahead == 1, "it pushed anyway"
+
+
+def test_a_merge_that_fails_for_another_reason_is_not_called_a_conflict(clones, monkeypatch):
+    """A merge fails for reasons other than conflicts — no configured
+    identity, a hook refusing it. Telling someone to resolve conflicts then
+    is advice they cannot act on, and it hides the real cause. (CI caught
+    this: the runner has no git identity, so every divergent merge reported
+    conflicts that did not exist.)"""
+    ws, theirs, _ = clones
+    commit(ws.root, "mine.txt")
+    commit(theirs, "theirs.txt")
+    git("push", "-q", "origin", "main", cwd=theirs)
+    # remove the identity so the merge commit cannot be created
+    git("config", "--unset", "user.email", cwd=ws.root)
+    git("config", "--unset", "user.name", cwd=ws.root)
+
+    from silkcode import sync as sync_mod
+    real = sync_mod._run
+
+    def no_identity(workspace, *args, **kwargs):
+        if args and args[0] == "merge":
+            return "git error (exit 128): Committer identity unknown"
+        return real(workspace, *args, **kwargs)
+
+    monkeypatch.setattr(sync_mod, "_run", no_identity)
+    message = sync_mod.resync(ws)
+    assert "conflict" not in message.lower(), message
+    assert "Committer identity unknown" in message
+    assert "unchanged" in message

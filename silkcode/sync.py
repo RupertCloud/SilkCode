@@ -256,8 +256,19 @@ def resync(ws: Workspace, remote: str = DEFAULT_REMOTE, base: str | None = None,
     # diverged
     out = _run(ws, "merge", "--no-edit", state.upstream or "@{u}", timeout=120)
     if not _ok(out):
-        return ("merge stopped with conflicts; resolve them and commit, "
-                f"then sync again.\n{out}")
+        # A merge fails for reasons other than conflicts - no configured
+        # identity, a hook refusing it, an unreadable index - and telling
+        # someone to "resolve the conflicts" then is advice they cannot act
+        # on. Ask git what is actually unmerged before claiming that.
+        unmerged = _run(ws, "diff", "--name-only", "--diff-filter=U")
+        if _ok(unmerged) and unmerged.strip():
+            files = unmerged.strip().splitlines()
+            return ("merge stopped with conflicts in "
+                    + ", ".join(files[:5])
+                    + (f" (+{len(files) - 5} more)" if len(files) > 5 else "")
+                    + "; resolve them and commit, then sync again.")
+        return (f"merge could not be completed: {out.strip()}\n"
+                "The branch is unchanged.")
     return f"merged {state.upstream} into {state.branch} ({state.behind} commit(s))."
 
 
