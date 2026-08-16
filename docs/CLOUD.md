@@ -412,6 +412,12 @@ Recommendation: ship pooled credits as the default experience and BYO-key as
 the escape hatch in the same release. It is the difference between "hosted Silk
 Code" and "hosted Silk Code you can't get stuck in."
 
+And BYO-key is not the revenue leak it looks like. A BYO-key user costs us no
+inference at all, so that tier carries the *best* gross margin in the product —
+see §12.1. It is a concession to users and an improvement to the P&L at the
+same time, which is a rare combination and an argument for shipping it early
+rather than reluctantly.
+
 ---
 
 ## 11. Roadmap
@@ -534,14 +540,156 @@ already on it. The Model Auto Router lands in M0, the usage dashboard
 the argument for doing it in this order: the first paying milestone also pays
 down existing roadmap debt.
 
-## 12. Open questions
+## 12. Revenue
+
+### 12.1 We are selling three things, and only one has good margin
+
+The instinct is "hosted product plus enterprise." That is the right destination
+but the wrong resolution, because a hosted session bundles three separable
+goods with very different economics:
+
+| What the user consumes | Our cost | Margin | Reality |
+| --- | --- | --- | --- |
+| **Inference** (tokens) | Provider price, direct pass-through | Thin | A commodity with published prices. Resellers compete this to near zero — the user can check our markup against DeepSeek's own price list in one click |
+| **Compute** (the Pod) | Node-hours on our cluster | Moderate | Real margin, but only at good utilization. Idle capacity and the gVisor tax eat it directly (§12.3) |
+| **The platform** (harness, UI, orchestration, teams, policy) | Engineering, amortized | High | This is the actual business |
+
+**Do not build the business on token markup.** Charging cost-plus on inference
+makes us a payment processor with extra steps, and it puts us in a price war
+with every other reseller. Inference should be billed at or near cost — as a
+convenience that removes the API-key step, not as the profit centre.
+
+The corollary is the reframe in §10: a **BYO-key user is our best-margin
+customer**, because they pay for platform and compute while carrying their own
+inference cost. That tier should be priced and marketed as a first-class
+option, not hidden as a grudging escape hatch.
+
+### 12.2 The pricing structure that follows
+
+Five tiers, each pointed at a different job:
+
+| Tier | What it is | Who it is for | Margin |
+| --- | --- | --- | --- |
+| **Local** | The MIT wheel, BYO key, free forever | Adoption engine | n/a — this is marketing |
+| **Free hosted** | Small monthly session-hour and credit allowance | Trial, conversion | Negative by design; cap it hard (§12.4) |
+| **Pro** | Monthly seat, included credits + session hours, overage billed | Individual developers | Moderate; breakage helps |
+| **Pro BYO-key** | Cheaper monthly seat, platform + compute only, uncapped inference | Developers who already hold keys, or want a specific model | **Highest** |
+| **Team / Enterprise** | Per seat annually + the §12.5 feature set | Organizations | Highest absolute |
+
+Two structural notes. **Included credits plus overage** beats pure pay-as-you-go
+for predictability on both sides, and unused allowance is real gross margin.
+And **unused credits are a balance-sheet liability**, not revenue — decide the
+expiry and refund policy before selling the first one, not after.
+
+The actual numbers must be set from live provider rates and the §12.3
+measurements. Do not pick them from intuition; the inputs are cheap to obtain
+and wrong pricing is expensive to unwind.
+
+### 12.3 Unit economics are an architecture problem
+
+Gross margin per session is:
+
+```
+revenue − (node_hours × node_rate)          ← §7 substrate
+        − (tokens × provider_rate)          ← §5 gateway
+        − (storage + egress)
+```
+
+Several decisions elsewhere in this document are therefore **direct COGS
+lines**, which is the argument for treating them as revenue work rather than
+infrastructure hygiene:
+
+- **The gVisor tax (§7.4)** — slower `npm install` means more node-seconds per
+  session. Gate 1 is not only a technical gate; it sets a gross-margin input.
+- **The warm pool (§7.4)** — pre-booted idle Pods are latency we buy with
+  margin. Pool size is a pricing decision wearing an ops costume.
+- **The three reapers (§7.5)** — an unreaped Pod bills until someone notices.
+  The orphan sweeper is a margin control.
+- **Abuse (§6)** — crypto mining is not primarily a security incident, it is
+  COGS with no matching revenue. On a free tier with pooled keys it is the
+  single fastest way to burn cash.
+- **Model routing (§5)** — the auto-router picking a cheaper adequate model for
+  a simple task is margin created at zero cost to the user's experience. On
+  pooled credits this compounds across every hosted session.
+
+**Instrument gross margin per session from M2's first beta user.** It is the
+number Gate 2 exists to establish, and it decides whether a free tier can exist
+at all.
+
+### 12.4 The free tier is the dangerous one
+
+Free, pooled keys, and arbitrary code execution is the highest-burn
+combination in this design. Anyone can sign up, spend our tokens, and run our
+CPU. Constrain it on all three axes at once — capped credits, capped
+session-hours, capped concurrency — plus GitHub account-age and verification
+signals (§6), and card-on-file beyond a token allowance.
+
+The safest generous free tier is **BYO-key**: unlimited use of the platform,
+zero inference cost to us. That is the offer to lead with, and it doubles as
+the proof that "the model is replaceable" is real.
+
+### 12.5 Enterprise: sell what the frontier labs structurally cannot
+
+Enterprise revenue will not come from being a cheaper Claude Code. Cursor,
+Copilot and Claude Code have distribution we will not out-spend, and a
+me-too pitch loses on every axis.
+
+The wedge is the thing already written on the front of the README: **the model
+is replaceable.** A large set of organizations cannot or will not send source
+code to a single US frontier lab — regulated industries, defence-adjacent
+work, EU and Gulf data-residency regimes, sovereignty policies, and anyone with
+a domestic-model mandate. For them, model agnosticism is not a preference, it
+is a procurement requirement, and the incumbents cannot offer it because their
+product *is* their model.
+
+That makes the enterprise product **bring your own model, bring your own
+cloud**:
+
+- **Self-hosted / BYOC** — the whole stack in the customer's cluster; code and
+  prompts never leave their perimeter. `silkcode` already runs against vLLM and
+  any OpenAI-compatible endpoint, so the hard part is packaging, not capability.
+- **Organization model gateway** — central policy over which models any
+  developer may use, with per-team routing and spend limits. Already on the
+  roadmap as SRS 80; §5's gateway is the implementation.
+- **SSO/SAML, audit logs, shared skills, pooled billing** — the rest of SRS 80,
+  and the M4 team work.
+- **Support and SLA**, priced annually per seat.
+
+**Open-core is the licensing shape this implies**, and it is the unresolved
+question in §13: the MIT harness drives adoption and is the reason a security
+team will approve us, while the control plane, gateway and enterprise features
+are what is actually sold. Where exactly that line falls needs deciding before
+`silkcloud` has much code in it, because moving it later is a re-licensing
+argument nobody enjoys.
+
+### 12.6 When money actually starts
+
+Revenue maps onto the §11 milestones, and deliberately starts before the
+expensive infrastructure exists:
+
+| Milestone | Revenue unlocked |
+| --- | --- |
+| **M0 Gateway** | First revenue. Credits sold to existing local users — no containers, no COGS beyond inference |
+| **M2 Hosted MVP** | Pro subscriptions in private beta; Gate 2 sets the real prices |
+| **M3 Public launch** | Free → Pro conversion at scale; BYO-key tier live |
+| **M4 Unlock** | Team seats, then enterprise — the long sales cycle that hosted revenue funds |
+
+The sequencing matters: M0 proves people will pay us for models before we
+spend a quarter building a cluster to run their code on.
+
+## 13. Open questions
 
 - **Warm pool from day one?** Cold Pod plus clone is seconds. The pool is the
   fix, but it means paying for idle capacity on our own nodes — a direct cost
   we now carry rather than a vendor's per-second billing problem.
-- **gVisor compatibility surface.** Phase 1 must measure this, not assume it.
+- **gVisor compatibility surface.** M1 must measure this, not assume it.
   Specifically: `npm install` wall-clock versus `runc`, and how many real
   projects need Docker-in-Docker (which `runsc` cannot give them at all).
+  This is a gross-margin input as well as a technical one (§12.3).
+- **Pricing inputs.** Credit-per-token rates, the seat price, and whether a
+  free tier can exist at all are all blocked on live provider rates plus Gate
+  2's measured cost per session. Nothing in §12 should be committed to a
+  public price page before those land.
 - **Node pool capacity planning.** Sessions per node, headroom for spikes, and
   what happens when the pool is full — queue the session, autoscale, or
   overflow to a second placement driver?
@@ -553,4 +701,7 @@ down existing roadmap debt.
   retention and provider training policies before launch, not after.
 - **Open-source boundary.** Does `silkcloud` stay MIT alongside `silkcode`, or
   is the control plane the proprietary part? This decision shapes how much of
-  the above can live in this repository.
+  the above can live in this repository — and it is now revenue-critical, since
+  the open-core split in §12.5 *is* the enterprise product. Decide it before
+  `silkcloud` has much code in it; moving the line later is a re-licensing
+  argument nobody enjoys.
