@@ -186,6 +186,15 @@ class RemoteBackend:
                 json={"command": command, "timeout": timeout},
                 headers=self._headers,
             )
+        except httpx.TimeoutException as exc:
+            # The command's own limit is enforced by the sandbox, which
+            # answers with a "timed out" result. Reaching this instead means
+            # the round trip itself stalled, and the caller's remedy is a
+            # different one, so say which happened.
+            raise ToolError(
+                f"the sandbox at {self.url} did not respond within the client "
+                f"timeout while running a command (limit was {timeout}s): {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise ToolError(f"sandbox request failed: {exc}") from exc
         if resp.status_code >= 400:
