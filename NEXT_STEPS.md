@@ -80,10 +80,29 @@ A fully hosted Silk Code: sign in with GitHub, pick a repo, start working —
 no install, no API keys. The agent runs in a per-session cloud container and
 reaches models through a metered gateway holding pooled provider keys.
 
-The architecture, the build order, and what in this codebase moves versus gets
-rewritten are in **[docs/CLOUD.md](docs/CLOUD.md)**. Phase 0 there (the metered
-model gateway) is shippable on its own and is also where the missing **Model
-Auto Router** naturally lives.
+The architecture, the roadmap, and what in this codebase moves versus gets
+rewritten are in **[docs/CLOUD.md](docs/CLOUD.md)**.
+
+The roadmap (CLOUD.md section 11) is five milestones behind one always-on
+track, ordered so the cheap reversible work comes first:
+
+- **Track A — foundations, startable now.** A `SessionStore` interface, opaque
+  session ids, a per-turn token budget generalized out of `swarm.py`, cost
+  accounting on the existing `Usage`, and provider failover. No hosting
+  decision required, and each one improves the local product — so a delayed
+  cloud launch wastes none of it. Track A also closes the **usage dashboard**
+  (SRS 48/49) above.
+- **M0 — Gateway.** The metered model proxy. No containers at all: local users
+  point `base_url` at it and buy credits. Ships the business model, and is
+  where the missing **Model Auto Router** above naturally lives.
+- **M1 — Runner under gVisor.** A measurement, not a feature — `npm install`
+  cost, cold start, Docker-in-Docker survey. Gates M2.
+- **M2 — Hosted MVP.** Sign in, pick a repo, work, push a branch. Private beta.
+- **M3 — Public launch.** Network containment, warm pool, reaping, caps, and
+  the BYO-key uncapped tier.
+- **M4 — What hosting unlocks.** Async tasks that need no browser open,
+  PR-first workflows, mobile, teams — which also closes most of **V0.3
+  enterprise** above.
 
 ## How to verify changes
 

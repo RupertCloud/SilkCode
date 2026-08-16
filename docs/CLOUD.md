@@ -414,38 +414,125 @@ Code" and "hosted Silk Code you can't get stuck in."
 
 ---
 
-## 11. Build order
+## 11. Roadmap
 
-Each phase is independently shippable.
+### 11.1 The shape of it
 
-**Phase 0 — Gateway only.** Build the metered OpenAI-compatible gateway; no
-containers, no control plane beyond accounts and a ledger. Local CLI users
-point `base_url` at it and buy credits. Ships the pooled-credit business model
-and the auto-router without any orchestration work, and de-risks the hardest
-correctness problem (transparent tool-call streaming) first.
+Five milestones on the critical path, and one track that runs alongside from
+day one:
 
-**Phase 1 — Runner image.** Container that clones a repo, runs `silkcode gui`
-against the gateway, and exits when idle. Driven by hand, `kubectl run` with
-the gVisor RuntimeClass. Proves the agent runs unchanged under `runsc` — and
-this is where the compatibility and `npm install` performance questions in §7.4
-get answered with measurements instead of guesses. Do it early; it is the item
-most likely to surprise us.
+```
+Track A ── foundations (also improve the local product) ────────────┐
+                                                                     │
+M0 Gateway ──▶ M1 Runner ──▶ M2 Hosted MVP ──▶ M3 Launch ──▶ M4 Unlock
+   (revenue)     ⚠ GATE 1      (private beta)    (public)     (why host)
+                                    ⚠ GATE 2      ⚠ GATE 3
+```
 
-**Phase 2 — Control plane and placement.** GitHub web OAuth, session records,
-`KubernetesPlacement` (start/attach/stop/sweep), authenticated in-cluster proxy
-to the Pod. Opaque session ids and the durable `SessionStore` land here. This is
-the first end-to-end hosted product.
+The ordering is deliberate: **M0 earns money without a single container, and
+M1 is a measurement whose result can change M2.** The expensive, irreversible
+work is scheduled last, behind the evidence that should inform it.
 
-**Phase 3 — Commerce and safety.** Billing, plan limits, per-session caps, the
-NetworkPolicy and egress allowlist, warm pool, the three-layer reaper, abuse
-signals. Also the mid-turn credits-exhausted stop generalized out of
-`swarm.py`. The Pod-hardening checklist in §7.2 is not Phase 3 — it ships with
-Phase 1, because a Pod without it is not safe to point at a real user even once.
+### 11.2 Track A — foundations, startable now
 
-**Phase 4 — What hosting unlocks.** Async tasks that run without a browser
-open, PR-first workflows, mobile, shared team workspaces, org-level model
-policy. These are the features a local-only harness cannot have, and the reason
-to host at all.
+None of these need a hosting decision, and every one of them improves the
+shipped local product. Doing them first means a delayed cloud launch wastes
+nothing.
+
+| | Work | Also gives local users |
+| --- | --- | --- |
+| A1 | Extract a `SessionStore` interface; keep JSON/`fcntl` as the local impl | Pluggable session storage |
+| A2 | Opaque session ids (ULID) replacing sequential ints (`sessions.py:52`) | Nothing — but it is a one-line-of-thinking change now and a migration later |
+| A3 | Generalize the swarm's `token-budget` stop (`swarm.py:420`) to ordinary turns | Per-session spend caps in the CLI and GUI |
+| A4 | Pricing table + cost-per-turn accounting on the existing `Usage` | **SRS 48/49 usage dashboard** — an open V0.2 gap |
+| A5 | Provider retry and failover on 429/5xx in the provider layer | Fewer hard failures on flaky upstreams |
+
+A4 and A5 are the two that matter most: A4 is the ledger's data model
+rehearsed locally, and A5 is the auto-router's mechanism.
+
+### 11.3 M0 — Gateway *(no containers at all)*
+
+The metered, OpenAI-compatible proxy from §5, plus accounts, ledger and
+billing. Local CLI and GUI users point `base_url` at it, buy credits, and stop
+managing API keys.
+
+**Done when:** a user with no provider key can `pip install silkcode`, sign in,
+and work — paying in credits.
+
+Why first: it ships the entire pooled-credit business model with zero
+orchestration work, and it de-risks the hardest correctness problem in the
+design — transparent SSE proxying of fragmented tool-call deltas (§5). It also
+closes the **Model Auto Router**, which `NEXT_STEPS.md` lists as the headline
+missing V0.2 item; server-side, it upgrades every hosted user at once.
+
+### 11.4 M1 — Runner under gVisor *(the measurement)*
+
+Container image with the toolchains, cloning a repo and running `silkcode gui`
+against M0's gateway. Driven by hand with `kubectl run`, RuntimeClass `gvisor`,
+and the full §7.2 hardened Pod spec from the very first run.
+
+**Done when:** the agent completes a real task under `runsc`, and we have
+numbers for `npm install` versus `runc`, cold-start, and how many representative
+projects need Docker-in-Docker.
+
+> **⚠ Gate 1 — is gVisor viable?** If the file-I/O tax is unacceptable after
+> `directfs` and a baked package cache, or if too many real projects need
+> nested containers, the answer is not "push on." It is to reconsider the
+> boundary (Kata/Firecracker on the same cluster) or to lean on the second
+> placement driver (§7.1). This gate is the reason M1 precedes M2.
+
+### 11.5 M2 — Hosted MVP *(private beta)*
+
+Control plane: GitHub web OAuth, session records, `KubernetesPlacement`
+(start/attach/stop/sweep), the in-cluster attach proxy, and the durable
+`SessionStore` backed by A1. `app.html` gains cookie auth and opaque ids.
+
+**Done when:** an invited user signs in, picks a repo, works, and pushes a
+branch — from a browser, with nothing installed.
+
+> **⚠ Gate 2 — what does a session actually cost?** Node-hours plus tokens per
+> real session, measured on beta traffic. This sets the free tier, or proves
+> there cannot be one. Deciding it before beta is guessing.
+
+### 11.6 M3 — Public launch *(safety and commerce)*
+
+Everything that makes it safe to hand to strangers: NetworkPolicy and the
+egress proxy (§7.3), warm pool (§7.4), the three reapers (§7.5), abuse signals,
+per-session caps, plan limits — and the **BYO-key tier from §10, in this
+milestone, not later**. It is one branch in the gateway and it is what makes
+"without limitations" true rather than aspirational.
+
+> **⚠ Gate 3 — does the egress allowlist break real work?** Run beta traffic
+> against it in report-only mode during M2 and count what it would have
+> blocked. An allowlist tuned on guesses becomes a support queue.
+
+### 11.7 M4 — What hosting unlocks
+
+Only now do the features that justify hosting over a local install:
+
+- **Async tasks** — the agent works with no browser open, and the result is a
+  PR. This is the single biggest unlock and it is impossible locally.
+- **PR-first workflow** — review, CI-failure follow-up, iterate on a branch.
+- **Mobile** — `app.html` is already a thin SSE client; the work is layout.
+- **Teams** — shared workspaces, org model policy, audit logs, pooled billing.
+  Closes most of **SRS 80 / V0.3 enterprise**, which the local product could
+  never really deliver.
+
+### 11.8 Explicitly deferred
+
+Named so they do not quietly consume M0–M3: persistent workspace volumes,
+GitLab, tree-sitter symbol indexing, per-user namespaces, multi-region, and
+anything in `NEXT_STEPS.md` Priorities 1–2 that is not on Track A. The
+Projects work (Priority 1) partly reshapes into M2's repo picker; the rest can
+wait.
+
+### 11.9 How this meets the existing roadmap
+
+The cloud work is not a detour from `NEXT_STEPS.md` — it completes three items
+already on it. The Model Auto Router lands in M0, the usage dashboard
+(SRS 48/49) in Track A, and most of V0.3 enterprise (SRS 80) in M4. That is
+the argument for doing it in this order: the first paying milestone also pays
+down existing roadmap debt.
 
 ## 12. Open questions
 
