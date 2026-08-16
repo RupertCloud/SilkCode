@@ -87,6 +87,38 @@ def send_and_wait(page, text, expected_reply):
     page.wait_for_selector(f".msg.assistant:has-text('{expected_reply}')", timeout=15000)
 
 
+def test_environment_page_renders(browser, gui_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+
+    # run a turn so there is usage to show
+    send_and_wait(page, "first request", "Reply in session one.")
+
+    page.click("#env-btn")
+    page.wait_for_selector("#env-modal.open")
+    page.wait_for_function(
+        "() => document.querySelectorAll('#env-credentials tr').length > 1")
+
+    creds = page.text_content("#env-credentials")
+    assert "deepseek" in creds and "stub" in creds
+    assert "sk-" not in creds  # no secret material on the page
+
+    assert "tokens across" in page.text_content("#env-usage-totals")
+    assert "session(s) open in this daemon" in page.text_content("#env-live-summary")
+    assert "stub-model" in page.text_content("#env-live")
+
+    # storing a key from the page shows it masked, never in full
+    page.fill("#env-credentials tr:nth-child(2) input.keyin", "sk-live-test-4242")
+    page.click("#env-credentials tr:nth-child(2) button.keybtn")
+    page.wait_for_function(
+        "() => document.getElementById('env-credentials').textContent.includes('…4242')")
+    assert "sk-live-test" not in page.text_content("#env-credentials")
+
+    page.click("#env-close")
+    assert not page.is_visible("#env-modal.open")
+
+
 def test_composer_visible_on_small_windows(browser, gui_url):
     # a small laptop window: the header wraps and vertical space is tight
     page = browser.new_page(viewport={"width": 900, "height": 560})
@@ -138,7 +170,15 @@ def test_composer_always_visible_and_sessions_switch(browser, gui_url):
     page.click("#project-confirm")
     page.wait_for_function(
         "sel => document.querySelector('#session-select').value !== sel", arg=first_label)
-    assert page.locator("#messages .msg").count() == 0
+    # the conversation is empty; a workspace-lock notice is expected because
+    # this second session opens the project the first one already holds
+    page.wait_for_function(
+        "() => !document.getElementById('messages').textContent.includes('Reply in session one.')")
+    assert page.locator("#messages .msg.user, #messages .msg.assistant").count() == 0
+    notice = page.locator("#messages .msg.notice")
+    if notice.count():
+        text = notice.first.text_content()
+        assert "already open in session-" in text, text  # a readable sentence
 
     send_and_wait(page, "second session request", "Reply in session two.")
     assert page.locator(".msg.assistant", has_text="Reply in session one.").count() == 0

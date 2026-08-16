@@ -160,6 +160,58 @@ def test_gui_sessions_list_and_resume(gui):
     assert missing.status_code == 404
 
 
+def test_gui_environment_page(gui, monkeypatch):
+    base, state, ws = gui
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    env = httpx.get(f"{base}/api/environment").json()
+    assert {"credentials", "usage", "live", "config_path", "running_count"} <= set(env)
+
+    # live sessions include the one this daemon opened
+    assert len(env["live"]) == 1
+    live = env["live"][0]
+    assert live["id"] == state.default_session_id
+    assert live["running"] is False
+    assert live["project"] == str(ws)
+    assert env["running_count"] == 0
+
+    # credentials never carry the secret itself
+    creds = {c["provider"]: c for c in env["credentials"]}
+    assert creds["deepseek"]["set"] is False
+    assert creds["stub"]["base_url"].startswith("http://127.0.0.1")
+
+    # a key can be stored and cleared from the page, and comes back masked only
+    resp = httpx.post(f"{base}/api/environment/key",
+                      json={"provider": "deepseek", "key": "sk-secret-value-8888"})
+    assert resp.status_code == 200
+    creds = {c["provider"]: c for c in resp.json()["credentials"]}
+    assert creds["deepseek"]["set"] is True
+    assert creds["deepseek"]["masked"] == "…8888"
+    assert "sk-secret-value" not in resp.text
+
+    resp = httpx.post(f"{base}/api/environment/key",
+                      json={"provider": "deepseek", "clear": True})
+    creds = {c["provider"]: c for c in resp.json()["credentials"]}
+    assert creds["deepseek"]["set"] is False
+
+    bad = httpx.post(f"{base}/api/environment/key",
+                     json={"provider": "nope", "key": "x"})
+    assert bad.status_code == 400
+
+
+def test_gui_environment_usage_after_a_turn(gui):
+    base, state, ws = gui
+    httpx.post(f"{base}/api/message", json={"text": "create hello.txt"})
+    assert wait_until(lambda: not state.running and (ws / "hello.txt").exists())
+
+    env = httpx.get(f"{base}/api/environment").json()
+    assert env["live"][0]["usage"]["total_tokens"] == 40
+    # the saved session feeds the aggregate view too
+    assert env["usage"]["totals"]["total_tokens"] >= 40
+    assert any(m["model"].endswith("stub-model") and m["total_tokens"] >= 40
+               for m in env["usage"]["by_model"])
+
+
 def test_gui_stop_endpoint(gui):
     base, state, _ws = gui
     resp = httpx.post(f"{base}/api/stop", json={})

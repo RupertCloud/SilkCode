@@ -37,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
     commands = {
         "models": cmd_models,
         "config": cmd_config,
+        "env": cmd_env,
         "sessions": cmd_sessions,
         "resume": cmd_resume,
         "gui": cmd_gui,
@@ -586,6 +587,77 @@ def cmd_mcp(argv: list[str]) -> int:
     for name, error in manager.errors.items():
         print(f"{name}: FAILED - {error}")
     manager.close()
+    return 0
+
+
+def cmd_env(argv: list[str]) -> int:
+    """Credentials, token usage and sessions — the CLI view of the GUI's
+    Environment page."""
+    parser = argparse.ArgumentParser(prog="silkcode env")
+    parser.add_argument("--set", metavar="PROVIDER",
+                        help="store a key for this provider (read from $SILKCODE_KEY "
+                             "or prompted, never echoed)")
+    parser.add_argument("--clear", metavar="PROVIDER", help="remove a stored key")
+    args = parser.parse_args(argv)
+
+    import os
+    from ..environment import clear_key, credentials, set_key, usage
+
+    config = Config.load()
+    if args.set:
+        key = os.environ.get("SILKCODE_KEY")
+        if not key:
+            import getpass
+            key = getpass.getpass(f"key for {args.set}: ")
+        try:
+            result = set_key(config, args.set, key)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"stored key {result['masked']} for {args.set} in {config.path}")
+        return 0
+    if args.clear:
+        try:
+            result = clear_key(config, args.clear)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(f"cleared stored key for {args.clear}"
+              + (f" ({result['note']})" if result["note"] else ""))
+        return 0
+
+    print(f"config: {config.path}   default model: {config.default_model}\n")
+    print("CREDENTIALS")
+    for c in credentials(config):
+        state = (f"set {c['masked']}" if c["set"]
+                 else ("MISSING" if c["needs_key"] else "not required"))
+        source = f" [{c['source']}]" if c["source"] else ""
+        env_var = f" ${c['env_var']}" if c["env_var"] else ""
+        print(f"  {c['provider']:<12} {state:<16}{source}{env_var}")
+
+    stats = usage()
+    totals = stats["totals"]
+    print(f"\nTOKEN USAGE   {totals['total_tokens']:,} total "
+          f"({totals['prompt_tokens']:,} in / {totals['completion_tokens']:,} out) "
+          f"across {totals['sessions']} session(s)")
+    for entry in stats["by_model"]:
+        if entry["total_tokens"]:
+            print(f"  {entry['model']:<32} {entry['total_tokens']:>10,} "
+                  f"({entry['sessions']} session(s))")
+    if stats["by_day"]:
+        print("\n  last 7 days:")
+        for day in stats["by_day"]:
+            print(f"    {day['day']}  {day['total_tokens']:>10,}")
+
+    store = SessionStore()
+    sessions = store.list()
+    instances = {s.get("instance") for s in sessions if s.get("instance")}
+    print(f"\nSESSIONS   {len(sessions)} saved"
+          + (f", from {len(instances)} GUI instance(s)" if instances else ""))
+    for s in sessions[:5]:
+        print(f"  #{s['id']:<5} {s['model']:<28} {s['title'][:40]}")
+    if len(sessions) > 5:
+        print(f"  ... and {len(sessions) - 5} more (silkcode sessions)")
     return 0
 
 

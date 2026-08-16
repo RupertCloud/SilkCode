@@ -382,6 +382,26 @@ later. Because the mined snapshot is the source of truth, tests run with the sna
 `PYTHONPATH` — otherwise an editable install would leak your current code into the "before"
 state and every task would look already-solved.
 
+## Environment: keys, usage, sessions
+
+The GUI's **⚙ Environment** page (and `silkcode env` in the terminal) answers what this
+install is holding, spending, and running:
+
+- **Credentials** — every provider, whether its key is set, and where the value in use
+  came from (an environment variable shadowing a stored key is shown as such). Keys are
+  displayed masked (`…4242`) and never sent to the browser in full; you can store or
+  clear a key per provider from the page.
+- **Token usage** — totals and a per-model breakdown across every saved session (CLI,
+  GUI and swarm alike), plus the last 7 days.
+- **Sessions** — how many are open in this daemon, which are running, on which project
+  and model, and their live token spend.
+
+```bash
+silkcode env                     # the same view in the terminal
+silkcode env --set deepseek      # store a key (read from $SILKCODE_KEY or prompted)
+silkcode env --clear deepseek    # remove a stored key
+```
+
 ## Context management
 
 The full conversation is sent to the model each turn. When the estimated size

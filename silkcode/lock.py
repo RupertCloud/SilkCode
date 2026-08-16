@@ -53,7 +53,22 @@ def _pid_alive(pid: int | None) -> bool:
 
 
 class LockError(RuntimeError):
-    """The workspace is locked by another owner."""
+    """The workspace is locked by another owner.
+
+    Carries `owner` and `pid` so callers can phrase their own message instead
+    of embedding this one mid-sentence.
+    """
+
+    def __init__(self, message: str, owner: str | None = None, pid: int | None = None):
+        super().__init__(message)
+        self.owner = owner
+        self.pid = pid
+
+    def holder(self) -> str:
+        """The lock holder, as a noun phrase: 'session-1 (pid 42)'."""
+        if not self.owner:
+            return str(self)
+        return f"{self.owner} (pid {self.pid})" if self.pid else self.owner
 
 
 def _lock_path(root: Path) -> Path:
@@ -109,7 +124,8 @@ def acquire(root: Path, owner: str) -> dict:
         if existing and existing.get("owner") != owner and not is_stale(existing):
             raise LockError(
                 f"workspace is locked by {existing['owner']} "
-                f"(pid {existing.get('pid')})"
+                f"(pid {existing.get('pid')})",
+                owner=existing["owner"], pid=existing.get("pid"),
             )
         lock = {"owner": owner, "pid": os.getpid(), "acquired_at": time.time()}
         p = _lock_path(root)
