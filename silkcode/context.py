@@ -12,6 +12,17 @@ MAX_INSTRUCTIONS_CHARS = 8_000
 
 
 def load_project_instructions(ws: Workspace) -> str:
+    from .remotews import RemoteWorkspace
+    if isinstance(ws, RemoteWorkspace):
+        try:
+            if not ws.is_file(INSTRUCTIONS_FILE):
+                return ""
+            text = ws.read_text(INSTRUCTIONS_FILE).strip()
+        except Exception:
+            return ""
+        if len(text) > MAX_INSTRUCTIONS_CHARS:
+            text = text[:MAX_INSTRUCTIONS_CHARS] + "\n... [truncated]"
+        return text
     path = ws.root / INSTRUCTIONS_FILE
     if not path.is_file():
         return ""

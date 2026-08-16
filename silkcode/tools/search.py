@@ -11,6 +11,16 @@ MAX_FILE_BYTES = 1_000_000
 
 
 def glob_files(ws: Workspace, pattern: str) -> str:
+    from ..remotews import RemoteWorkspace, glob_matches
+    if isinstance(ws, RemoteWorkspace):
+        matches = sorted(f for f in ws.list_files() if glob_matches(f, pattern))
+        if not matches:
+            return "No files matched."
+        truncated = len(matches) > MAX_RESULTS
+        body = "\n".join(matches[:MAX_RESULTS])
+        if truncated:
+            body += f"\n... ({len(matches) - MAX_RESULTS} more matches)"
+        return body
     try:
         matches = sorted(
             ws.relative(p)
@@ -29,6 +39,14 @@ def glob_files(ws: Workspace, pattern: str) -> str:
 
 
 def grep(ws: Workspace, pattern: str, path: str = ".", glob: str = "**/*") -> str:
+    from ..remotews import RemoteWorkspace
+    if isinstance(ws, RemoteWorkspace):
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ToolError(f"Invalid regex '{pattern}': {exc}") from exc
+        results = ws.backend.grep(ws.workspace_id, pattern, path=path, glob=glob)
+        return "\n".join(results) if results else "No matches found."
     try:
         regex = re.compile(pattern)
     except re.error as exc:

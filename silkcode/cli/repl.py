@@ -84,14 +84,11 @@ def _on_event(kind: str, data) -> None:
 
 def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None = None,
              prompt: str | None = None, grants: list[str] | None = None,
-             use_sandbox: bool = False, auto_push: bool = False) -> int:
-    try:
-        workspace = Workspace(path)
-    except ToolError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+             use_sandbox: bool = False, auto_push: bool = False,
+             remote: str | None = None) -> int:
     config = Config.load()
-    if use_sandbox:
+    if remote:
+        from ..remotews import RemoteWorkspace
         from ..execbackend import remote_backend_from_config
         try:
             backend = remote_backend_from_config(config.data)
@@ -99,11 +96,30 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
                 print("error: no sandbox configured; run 'silkcode sandbox connect <url>'", file=sys.stderr)
                 return 1
             backend.health()
-            workspace.exec_backend = backend
-            print(f"{DIM}commands run in sandbox: {backend.url}{RESET}")
+            workspace = RemoteWorkspace(backend, remote)
+            print(f"{CYAN}remote workspace{RESET} {remote}  {DIM}(repo lives in sandbox {backend.url}){RESET}")
         except ToolError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+    else:
+        try:
+            workspace = Workspace(path)
+        except ToolError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if use_sandbox:
+            from ..execbackend import remote_backend_from_config
+            try:
+                backend = remote_backend_from_config(config.data)
+                if backend is None:
+                    print("error: no sandbox configured; run 'silkcode sandbox connect <url>'", file=sys.stderr)
+                    return 1
+                backend.health()
+                workspace.exec_backend = backend
+                print(f"{DIM}commands run in sandbox: {backend.url}{RESET}")
+            except ToolError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
     store = SessionStore()
 
     spec = model_spec or (resume or {}).get("model") or config.default_model

@@ -35,8 +35,32 @@ def _python_symbols(path: Path, rel: str, out: list[str]) -> None:
             out.append(f"{rel}:{node.lineno}: def {node.name}({args})")
 
 
+def _python_symbols_text(text: str, rel: str, out: list[str]) -> None:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            out.append(f"{rel}:{node.lineno}: class {node.name}")
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = ", ".join(a.arg for a in node.args.args)
+            out.append(f"{rel}:{node.lineno}: def {node.name}({args})")
+
+
 def _regex_symbols(path: Path, rel: str, pattern: re.Pattern, out: list[str]) -> None:
     for lineno, line in enumerate(path.read_text(errors="replace").splitlines(), start=1):
+        m = pattern.match(line)
+        if m:
+            for kind, name in m.groupdict().items():
+                if name:
+                    label = {"func": "function", "cls": "class", "const": "function",
+                             "enum": "enum", "trait": "trait"}[kind]
+                    out.append(f"{rel}:{lineno}: {label} {name}")
+
+
+def _regex_symbols_text(text: str, rel: str, pattern: re.Pattern, out: list[str]) -> None:
+    for lineno, line in enumerate(text.splitlines(), start=1):
         m = pattern.match(line)
         if m:
             for kind, name in m.groupdict().items():
@@ -66,6 +90,35 @@ def _collect_source_files(base: Path) -> list[Path]:
 
 
 def symbols(ws: Workspace, path: str = ".") -> str:
+    from ..remotews import RemoteWorkspace
+    if isinstance(ws, RemoteWorkspace):
+        # remote: source files are fetched one at a time from the sandbox
+        if path != "." and ws.is_file(path.lstrip("/")):
+            files = [path.lstrip("/")]
+        else:
+            files = [f for f in ws.list_files()
+                     if f.endswith(SOURCE_SUFFIXES)
+                     and not any(part in IGNORED_DIRS or part.startswith(".")
+                                 for part in Path(f).parts)][:MAX_FILES]
+        out: list[str] = []
+        for rel in files:
+            try:
+                text = ws.read_text(rel)
+            except Exception:
+                continue
+            if rel.endswith(".py"):
+                _python_symbols_text(text, rel, out)
+            elif rel.endswith((".js", ".jsx", ".ts", ".tsx")):
+                _regex_symbols_text(text, rel, JS_PATTERN, out)
+            elif rel.endswith(".go"):
+                _regex_symbols_text(text, rel, GO_PATTERN, out)
+            elif rel.endswith(".rs"):
+                _regex_symbols_text(text, rel, RUST_PATTERN, out)
+            if len(out) >= MAX_LINES:
+                out = out[:MAX_LINES]
+                out.append("... [symbol list truncated]")
+                break
+        return "\n".join(out) if out else "No symbols found."
     base = ws.resolve(path)
     if base.is_file():
         files = [base]

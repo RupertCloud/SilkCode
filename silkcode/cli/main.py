@@ -68,6 +68,10 @@ def _repl_parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument("--sandbox", action="store_true",
                         help="run commands in the configured remote sandbox "
                              "(silkcode sandbox connect <url>)")
+    parser.add_argument("--remote", metavar="REPO",
+                        help="work on a GitHub repo that lives entirely in the sandbox "
+                             "(e.g. 'github:owner/repo'); the repo never touches this "
+                             "machine - requires a configured sandbox")
     parser.add_argument("--auto-push", action="store_true",
                         help="automatically push unpushed commits after each turn "
                              "(implies the push grant)")
@@ -93,7 +97,7 @@ def cmd_repl(argv: list[str]) -> int:
     from .repl import run_repl
     return run_repl(args.path, args.model, args.mode, prompt=args.prompt,
                     grants=_parse_grants(args.allow), use_sandbox=args.sandbox,
-                    auto_push=args.auto_push)
+                    auto_push=args.auto_push, remote=args.remote)
 
 
 REVIEW_PROMPT = (
@@ -130,11 +134,14 @@ def cmd_gui(argv: list[str]) -> int:
         restart_args += ["--allow", args.allow]
     if args.sandbox:
         restart_args += ["--sandbox"]
+    if args.remote:
+        restart_args += ["--remote", args.remote]
     if args.auto_push:
         restart_args += ["--auto-push"]
     return run_gui(args.path, args.model, args.mode, host=args.host, port=args.port,
                    grants=_parse_grants(args.allow), use_sandbox=args.sandbox,
-                   auto_push=args.auto_push, restart_args=restart_args)
+                   auto_push=args.auto_push, restart_args=restart_args,
+                   remote=args.remote)
 
 
 def cmd_models(argv: list[str]) -> int:

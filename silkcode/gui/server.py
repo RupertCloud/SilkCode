@@ -161,7 +161,8 @@ class AgentSession:
 class GuiState:
     def __init__(self, path: str, model_spec: str | None, mode: str,
                  grants: list[str] | None = None, use_sandbox: bool = False,
-                 auto_push: bool = False, instance: str | None = None):
+                 auto_push: bool = False, instance: str | None = None,
+                 remote: str | None = None):
         self.auto_push = auto_push
         if auto_push:
             grants = list(grants or []) + ["push"]
@@ -169,15 +170,27 @@ class GuiState:
         # tagged with it so `silkcode sessions` can tell instances apart when
         # several daemons run on the same machine.
         self.instance = instance
-        self.workspace = Workspace(path)
         self.config = Config.load()
-        if use_sandbox:
+        self.remote_spec = remote
+        if remote:
+            # remote-workspace mode: the repo lives entirely in the sandbox;
+            # this machine only ever sees the browser tab.
+            from ..remotews import RemoteWorkspace
             from ..execbackend import remote_backend_from_config
             backend = remote_backend_from_config(self.config.data)
             if backend is None:
                 raise ToolError("no sandbox configured; run 'silkcode sandbox connect <url>'")
             backend.health()
-            self.workspace.exec_backend = backend
+            self.workspace = RemoteWorkspace(backend, remote)
+        else:
+            self.workspace = Workspace(path)
+            if use_sandbox:
+                from ..execbackend import remote_backend_from_config
+                backend = remote_backend_from_config(self.config.data)
+                if backend is None:
+                    raise ToolError("no sandbox configured; run 'silkcode sandbox connect <url>'")
+                backend.health()
+                self.workspace.exec_backend = backend
         self.store = SessionStore()
         self.spec = model_spec or self.config.default_model
         self.config.resolve_model(self.spec)  # validate early
@@ -239,6 +252,8 @@ class GuiState:
         """Resolve a session's working directory to a Workspace. The default
         workspace is used for the very first session; a new session may point
         at another project (see new_session / /api/session/new)."""
+        if self.remote_spec:
+            return self.workspace  # remote mode: everything runs in the sandbox
         p = Path(cwd).expanduser().resolve()
         if str(p) in (str(self.workspace.root), ""):
             return self.workspace
@@ -249,11 +264,12 @@ class GuiState:
 
     def new_session(self, project: str | None = None) -> AgentSession:
         """Create a session. `project` is a 'github:owner/repo' spec or a local
-        directory; when None the session uses the app's default workspace."""
+        directory; when None the session uses the app's default workspace. In
+        remote-workspace mode every session uses the sandbox clone."""
         # unsaved open sessions also occupy their ids, not just those on disk
         session_id = max([self.store.new_id()] + [sid + 1 for sid in self.sessions])
         ws = self.workspace
-        if project:
+        if project and not self.remote_spec:
             choice = resolve_project(project)
             ws = choice.workspace
             record_recent_project(choice.kind, project, choice.label)
@@ -815,8 +831,23 @@ class GuiState:
         return out
 
     def tree(self, session_id: int | None = None) -> list[dict]:
+        from ..remotews import RemoteWorkspace
         workspace = self.get_session(session_id).workspace
         entries: list[dict] = []
+        if isinstance(workspace, RemoteWorkspace):
+            # remote: build the tree from the sandbox file listing
+            for f in workspace.list_files():
+                if len(entries) >= MAX_TREE_ENTRIES:
+                    break
+                parts = Path(f).parts
+                if any(p in IGNORED_DIRS or p.endswith(".egg-info") for p in parts):
+                    continue
+                entries.append({"path": f, "dir": False, "depth": len(parts) - 1})
+                for i in range(1, len(parts)):
+                    prefix = "/".join(parts[:i])
+                    if not any(e["path"] == prefix and e["dir"] for e in entries):
+                        entries.append({"path": prefix, "dir": True, "depth": i - 1})
+            return entries
 
         def walk(directory: Path, depth: int) -> None:
             if len(entries) >= MAX_TREE_ENTRIES:
@@ -839,7 +870,13 @@ class GuiState:
         return entries
 
     def read_file(self, rel_path: str, session_id: int | None = None) -> dict:
+        from ..remotews import RemoteWorkspace
         workspace = self.get_session(session_id).workspace
+        if isinstance(workspace, RemoteWorkspace):
+            rel = rel_path.lstrip("/")
+            if not workspace.is_file(rel):
+                raise ToolError(f"Not a file: {rel_path}")
+            return {"path": rel_path, "content": workspace.read_text(rel)}
         p = workspace.resolve(rel_path)
         if not p.is_file():
             raise ToolError(f"Not a file: {rel_path}")

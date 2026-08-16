@@ -93,6 +93,65 @@ class RemoteBackend:
             raise ToolError(f"sandbox health check failed: HTTP {resp.status_code}: {resp.text[:200]}")
         return resp.json()
 
+    # ---- remote-workspace protocol (the repo lives in the sandbox) ---------
+
+    def _ws_request(self, method: str, path: str, **kwargs) -> dict:
+        try:
+            resp = self._client.request(method, f"{self.url}{path}", headers=self._headers, **kwargs)
+        except httpx.HTTPError as exc:
+            raise ToolError(f"sandbox request failed: {exc}") from exc
+        if resp.status_code >= 400:
+            detail = resp.text[:200]
+            try:
+                detail = resp.json().get("error", detail)
+            except ValueError:
+                pass
+            raise ToolError(f"sandbox {method} {path} failed: HTTP {resp.status_code}: {detail}")
+        return resp.json()
+
+    def clone(self, workspace_id: str, url: str, token: str | None = None) -> None:
+        """Tell the sandbox to clone a repo into its own store (or fetch it
+        when already present). The repo never touches this machine."""
+        self._ws_request("POST", f"/clone/{workspace_id}",
+                         json={"url": url, "token": token})
+
+    def files(self, workspace_id: str) -> list[str]:
+        return self._ws_request("GET", f"/files/{workspace_id}").get("files", [])
+
+    def read(self, workspace_id: str, path: str) -> str:
+        import urllib.parse
+        return self._ws_request(
+            "GET", f"/read/{workspace_id}?path={urllib.parse.quote(path)}"
+        ).get("content", "")
+
+    def write(self, workspace_id: str, path: str, content: str) -> None:
+        self._ws_request("POST", f"/write/{workspace_id}",
+                         json={"path": path, "content": content})
+
+    def grep(self, workspace_id: str, pattern: str, path: str = ".",
+             glob: str = "**/*") -> list[str]:
+        return self._ws_request(
+            "POST", f"/grep/{workspace_id}",
+            json={"pattern": pattern, "path": path, "glob": glob},
+        ).get("matches", [])
+
+    def exec_json(self, workspace_id: str, command: str, timeout: int = 120) -> dict:
+        """Run `command` in the sandbox workspace without syncing anything up
+        (the sandbox owns the files). Returns the raw {"exit_code", "output"}."""
+        return self._ws_request(
+            "POST", f"/exec/{workspace_id}",
+            json={"command": command, "timeout": min(max(int(timeout), 1), 600)},
+        )
+
+    def exec_raw(self, workspace_id: str, command: str, timeout: int = 120) -> str:
+        data = self.exec_json(workspace_id, command, timeout=timeout)
+        output = str(data.get("output", "")).strip() or "(no output)"
+        if len(output) > MAX_OUTPUT_CHARS:
+            output = output[:MAX_OUTPUT_CHARS] + "\n... [output truncated]"
+        return f"[sandbox] exit code: {data.get('exit_code', '?')}\n{output}"
+
+    # ---- classic sync-mode exec (local workspace mirrored up) --------------
+
     def _sync(self, ws: Workspace) -> None:
         manifest = self._manifest(ws)
         if manifest == self._last_manifest:

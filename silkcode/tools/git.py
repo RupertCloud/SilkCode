@@ -41,6 +41,9 @@ def _with_trailers(message: str) -> str:
 
 
 def _git(ws: Workspace, *args: str, env: dict | None = None, timeout: int = 60) -> str:
+    from ..remotews import RemoteWorkspace
+    if isinstance(ws, RemoteWorkspace):
+        return ws.git(*args, env=env, timeout=timeout)
     run_env = None
     if env:
         run_env = dict(os.environ)

@@ -16,6 +16,19 @@ def memory_path(ws: Workspace) -> Path:
 
 
 def load_memory(ws: Workspace) -> str:
+    from .remotews import RemoteWorkspace
+    if isinstance(ws, RemoteWorkspace):
+        # the repo's memory lives in the sandbox clone, not on this machine
+        try:
+            if not ws.is_file(MEMORY_RELPATH):
+                return ""
+            text = ws.read_text(MEMORY_RELPATH).strip()
+        except Exception:
+            return ""
+        if len(text) > MAX_MEMORY_CHARS:
+            text = text[-MAX_MEMORY_CHARS:]
+            text = "... [older memory truncated]\n" + text
+        return text
     path = memory_path(ws)
     if not path.is_file():
         return ""
