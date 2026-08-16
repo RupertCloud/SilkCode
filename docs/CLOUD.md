@@ -561,6 +561,11 @@ down existing roadmap debt.
 
 ## 12. Revenue
 
+> **Read §13 first.** The margin logic below (§12.1, §12.3) holds anywhere. The
+> *pricing shapes* in §12.2 — monthly seats, self-serve credits, card billing —
+> assume a North American or European buyer. For the market this product is
+> actually aimed at, §13 replaces them.
+
 ### 12.1 We are selling three things, and only one has good margin
 
 The instinct is "hosted product plus enterprise." That is the right destination
@@ -675,7 +680,7 @@ cloud**:
 - **Support and SLA**, priced annually per seat.
 
 **Open-core is the licensing shape this implies**, and it is the unresolved
-question in §13: the MIT harness drives adoption and is the reason a security
+question in §14: the MIT harness drives adoption and is the reason a security
 team will approve us, while the control plane, gateway and enterprise features
 are what is actually sold. Where exactly that line falls needs deciding before
 `silkcloud` has much code in it, because moving it later is a re-licensing
@@ -717,7 +722,7 @@ expensive:
    BYO-key branch in §10. Build it once, generically: `(principal → upstream +
    credential)`. That single abstraction covers pooled credits, BYO-key, and
    the enterprise org gateway.
-3. **The open-core boundary** (§13). The MIT harness is not only marketing —
+3. **The open-core boundary** (§14). The MIT harness is not only marketing —
    it is the enterprise lead generator. Developers adopt it locally, security
    teams approve it because they can read it, and the organization then buys
    the control plane, gateway and policy layer. That is the standard open-core
@@ -742,7 +747,132 @@ expensive infrastructure exists:
 The sequencing matters: M0 proves people will pay us for models before we
 spend a quarter building a cluster to run their code on.
 
-## 13. Open questions
+## 13. The market this is actually for
+
+### 13.1 The customer
+
+Universities, public institutions and organizations across Africa, South and
+Southeast Asia, and Latin America. They want AI in their software work. Every
+mature harness available to them is built in the United States and coupled to a
+single American frontier lab.
+
+That coupling is the opening. For this buyer, model neutrality is not a
+preference or a philosophical position — it is what makes adoption *possible*:
+
+- **Cost.** DeepSeek, Qwen, GLM and MiniMax are a fraction of frontier-lab
+  prices. A harness that routes to a cheap-but-adequate model is worth more
+  here than anywhere else on earth. `BUILTIN_PROVIDERS` already covers exactly
+  these providers.
+- **Sovereignty.** National data rules, university IP policy, and a broad
+  political unwillingness to route public-sector source code through a single
+  foreign vendor.
+- **Infrastructure reality.** Intermittent connectivity, expensive bandwidth,
+  and a campus GPU server that already exists. `silkcode` already runs against
+  Ollama, vLLM and LM Studio — today a footnote in the README, and for this
+  market the headline feature.
+- **Auditability.** MIT licensing means a university can read it, teach from
+  it, modify it, and get it through procurement. A closed US SaaS clears none
+  of those bars.
+
+The incumbents cannot follow. Their product *is* their model, and their
+economics assume a customer paying $20–40 per seat per month.
+
+### 13.2 Why §12.2's pricing does not transfer
+
+Three structural facts, each of which breaks a standard SaaS assumption:
+
+1. **Per-seat monthly pricing fails.** $20–30/month is a meaningful share of a
+   developer's salary in much of this market, and a university with 5,000
+   computing students cannot pay 5,000 × anything. Charge the *institution*,
+   not the seat.
+2. **Collection is a real engineering and legal problem, not a checkbox.**
+   International card penetration is low, corporate cards rarer, and FX
+   controls and repatriation rules are real. Mobile money and local rails
+   (M-Pesa, Paystack, Flutterwave, PIX, UPI), bank transfer, and plain invoicing
+   against a purchase order matter more than Stripe Checkout. **If we cannot
+   collect payment, the business model is irrelevant** — this is the single
+   most under-estimated item in this document.
+3. **Budgets are annual, lumpy, and procurement-gated.** Institutions buy once
+   a fiscal year, through a tender or a framework agreement, often requiring a
+   local legal entity, tax registration, and a local invoice. Self-serve
+   conversion is not the motion; relationships and paperwork are.
+
+And a fourth, uncomfortable one: **we cannot out-price free.** Large US and
+Chinese vendors give product away in these markets for strategic lock-in. The
+counter is not discounting — it is neutrality, sovereignty, and not extracting
+their data or their students.
+
+### 13.3 Where the money actually is
+
+Six lines, roughly in order of how soon they can pay:
+
+| Line | What it is | Notes |
+| --- | --- | --- |
+| **Institutional site licence** | Annual, flat, unlimited seats inside one institution. Includes the multi-user control plane, admin and usage dashboards, SSO against their existing IdP, shared skills | The core product. Price by institution size and country tier, not headcount |
+| **Deployment and support** | Install into their cluster, wire up their model, integrate their IdP, keep it running | Frequently 30–50% of contract value in this market, and it is the line that makes the licence deliverable |
+| **Training and curriculum** | Workshops, instructor material, certification. The harness is MIT and readable, so it is teachable | Not a consolation prize — for universities this is often the thing they most want to buy |
+| **Donor and development programmes** | Digital-skills and AI-capacity funding from development banks, foundations and bilateral agencies | A sovereign, self-hostable, open AI platform is precisely the shape these programmes fund. Needs a named owner and real proposal work; it is a business-development discipline, not a side effect |
+| **Government and public sector** | National AI strategies, sovereign AI initiatives, e-government, national research and education networks | Longest cycle, largest contracts, strongest sovereignty pitch |
+| **Partner / OEM** | Regional clouds and telcos white-label the platform; revenue share | They already have the billing rails, the enterprise relationships and the local entity we lack. This is the fastest route around problem 2 above |
+
+**Managed hosting is a service line here, not the product.** Offer it in-region
+for organizations with no infrastructure — this is where the §7 Kubernetes work
+pays off — but expect the institutional licence and services to carry revenue.
+
+### 13.4 What this changes upstream
+
+This ICP is not a marketing overlay on the design above. It moves three things:
+
+**BYO-model becomes the default, not the escape hatch.** §10 framed pooled
+credits as the primary experience and BYO-key as the way out. For this market
+the polarity flips: most customers arrive with their own model — a campus vLLM
+box, a national cloud, a cheap Chinese API — and pooled credits are the
+convenience option for individuals. Good news for margin (§12.1), since the
+best-margin tier becomes the common case.
+
+**The single-tenant deployable control plane is promoted from option to
+product.** §12.6 argued for keeping it *possible*. Here it is the thing being
+sold, which raises the priority of a genuinely offline-capable install:
+distributable images, no phone-home requirement, no assumption of good
+bandwidth during setup, and a documented air-gapped path.
+
+**The roadmap order changes.** §11 put M0 (the credit-selling gateway) first
+because it monetizes fastest against a self-serve Western buyer. Against an
+institutional buyer, the first invoice comes from a campus deployment — which
+needs multi-user control plane, per-org model routing, SSO and an installer,
+and does *not* need credits, billing, warm pools or an abuse-hardened free
+tier. A plausible reordering:
+
+| | Western self-serve order (§11) | Institutional order |
+| --- | --- | --- |
+| First | M0 credit gateway | Org gateway (per-org upstreams, no credits) + M1 runner |
+| Then | M1, M2 hosted MVP | M2 control plane, multi-user, SSO, installer → **first paid pilot** |
+| Then | M3 public launch | Deployment, training, references |
+| Later | M4 teams and enterprise | M0 credits and M3 public hosting, for individuals and reach |
+
+The `principal → upstream` abstraction in §5 is what makes both orders the same
+codebase, which is the strongest argument yet for building it generically at
+the very first opportunity.
+
+### 13.5 What to prove first
+
+The cheapest possible validation, before any of the above is built:
+
+1. **One design-partner institution.** A single university or ministry willing
+   to co-design and pilot. Their procurement process, their model, their
+   hardware, their constraints — discovered by working with them rather than
+   guessed at here.
+2. **A collection path that actually works.** One real invoice paid, end to
+   end, in one target country. Do this early; it gates everything.
+3. **A campus deployment running against their own model.** `silkcode` can
+   almost do this today against a vLLM box. The gap is multi-user and
+   packaging, not capability — which means the first pilot is much closer than
+   the full hosted product.
+
+Everything in §§3–12 remains the right architecture. What §13 changes is who
+pays first, how they pay, and therefore what gets built first.
+
+## 14. Open questions
 
 - **Warm pool from day one?** Cold Pod plus clone is seconds. The pool is the
   fix, but it means paying for idle capacity on our own nodes — a direct cost
@@ -755,6 +885,16 @@ spend a quarter building a cluster to run their code on.
   free tier can exist at all are all blocked on live provider rates plus Gate
   2's measured cost per session. Nothing in §12 should be committed to a
   public price page before those land.
+- **Which order do we build in?** §13.4 sets out two roadmap orderings — the
+  self-serve one in §11 and the institutional one. They diverge at the very
+  first milestone, so this needs deciding before M0 starts, not during.
+- **Can we collect money?** Which target countries first, what payment rails
+  work there, and do we need a local legal entity or a partner of record to
+  invoice at all (§13.2)? This gates revenue independently of anything
+  technical and should be answered by someone this month.
+- **How offline must the appliance be?** Fully air-gapped, or merely tolerant
+  of bad bandwidth during install and updates? The answer changes packaging,
+  licensing enforcement and the update mechanism (§13.4).
 - **Node pool capacity planning.** Sessions per node, headroom for spikes, and
   what happens when the pool is full — queue the session, autoscale, or
   overflow to a second placement driver?
