@@ -175,6 +175,14 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         except ProviderError as exc:
             print(f"\n{RED}provider error: {exc}{RESET}", file=sys.stderr)
             return 1
+        if autopush_state["on"]:
+            # --auto-push means "after each turn", and a one-shot run is a
+            # turn. It is also the case that most needs it: nobody is at a
+            # prompt to type /push afterwards.
+            from ..tools.git import push_if_needed
+            pushed = push_if_needed(agent.workspace)
+            if pushed:
+                print(f"{DIM}auto-push: {pushed.splitlines()[0]}{RESET}")
         session["messages"] = agent.messages
         session["usage"] = {
             "prompt_tokens": agent.usage.prompt_tokens,

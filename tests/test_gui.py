@@ -832,3 +832,113 @@ def test_gui_restores_active_session_after_restart(tmp_path, monkeypatch):
     restarted = GuiState(str(workspace), None, "edit", instance=instance)
     assert restarted.default_session_id == other.id
     assert other.id in restarted.sessions
+
+
+# --------------------------------------------------------------------------
+# guards: what the API refuses
+#
+# These are the branches that stop a second request mutating a session while
+# its agent is mid-turn. A regression here does not raise anything — it
+# swaps the model or reverts files underneath a running agent.
+# --------------------------------------------------------------------------
+
+def _hold_session_running(state, session_id=None):
+    """Mark a session as running without actually starting a turn."""
+    session = state.get_session(session_id)
+    session.running = True
+    return session
+
+
+def test_a_second_message_is_refused_while_the_agent_runs(gui):
+    base, state, _ = gui
+    _hold_session_running(state)
+    resp = httpx.post(f"{base}/api/message", json={"text": "again"})
+    assert resp.status_code == 409
+    assert "already running" in resp.text
+
+
+def test_an_empty_message_is_rejected(gui):
+    base, _, _ = gui
+    for text in ("", "   "):
+        resp = httpx.post(f"{base}/api/message", json={"text": text})
+        assert resp.status_code >= 400
+        assert "empty message" in resp.text
+
+
+def test_the_model_cannot_be_switched_mid_turn(gui):
+    base, state, _ = gui
+    _hold_session_running(state)
+    resp = httpx.post(f"{base}/api/model", json={"spec": "stub"})
+    assert resp.status_code == 409
+    assert "while the agent is running" in resp.text
+
+
+def test_revert_is_refused_mid_turn(gui):
+    """Reverting under a running agent would restore files it is editing."""
+    base, state, _ = gui
+    _hold_session_running(state)
+    resp = httpx.post(f"{base}/api/revert", json={})
+    assert resp.status_code == 409
+
+
+def test_push_is_refused_mid_turn(gui):
+    base, state, _ = gui
+    _hold_session_running(state)
+    resp = httpx.post(f"{base}/api/push", json={})
+    assert resp.status_code == 409
+
+
+def test_an_unknown_mode_is_rejected(gui):
+    base, state, _ = gui
+    before = state.mode
+    resp = httpx.post(f"{base}/api/mode", json={"mode": "yolo"})
+    assert resp.status_code >= 400
+    assert state.mode == before, "a rejected mode must not be applied"
+
+
+def test_every_valid_mode_is_accepted(gui):
+    base, state, _ = gui
+    for mode in ("ask", "edit", "agent"):
+        assert httpx.post(f"{base}/api/mode", json={"mode": mode}).status_code == 200
+        assert state.mode == mode
+
+
+def test_answering_an_unknown_permission_request_is_a_404(gui):
+    base, _, _ = gui
+    resp = httpx.post(f"{base}/api/permission",
+                      json={"id": "no-such-request", "decision": "yes"})
+    assert resp.status_code == 404
+
+
+def test_grants_must_be_a_list(gui):
+    base, _, _ = gui
+    resp = httpx.post(f"{base}/api/github/grants", json={"grants": "push"})
+    assert resp.status_code >= 400
+    assert "must be a list" in resp.text
+
+
+def test_a_malformed_body_is_reported_not_a_crash(gui):
+    base, _, _ = gui
+    resp = httpx.post(f"{base}/api/message", content=b"{not json",
+                      headers={"Content-Type": "application/json"})
+    assert resp.status_code >= 400
+    assert "invalid JSON" in resp.text
+
+
+def test_unknown_routes_are_404(gui):
+    base, _, _ = gui
+    assert httpx.get(f"{base}/api/nope").status_code == 404
+    assert httpx.post(f"{base}/api/nope", json={}).status_code == 404
+
+
+def test_loading_a_session_that_does_not_exist_is_a_404(gui):
+    base, _, _ = gui
+    assert httpx.post(f"{base}/api/session", json={"id": 9999}).status_code == 404
+
+
+def test_switching_to_an_unknown_model_reports_the_error(gui):
+    base, state, _ = gui
+    before = state.get_session().agent.model
+    resp = httpx.post(f"{base}/api/model", json={"spec": "no-such-provider"})
+    assert resp.status_code >= 400
+    assert state.get_session().agent.model == before, "a failed switch must not change the model"

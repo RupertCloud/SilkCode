@@ -112,7 +112,16 @@ class Config:
         return cls(data, path)
 
     def save(self) -> None:
+        # The config holds API keys and GitHub tokens: keep it owner-only.
+        # Written before the content so a key never lands in a world-readable
+        # file, even briefly.
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            self.path.touch(mode=0o600)
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass  # exotic filesystems (e.g. some mounts) may refuse chmod
         self.path.write_text(json.dumps(self.data, indent=2) + "\n")
 
     @property

@@ -15,6 +15,7 @@ GUI (a New-session modal) share the same behavior:
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import subprocess
@@ -69,22 +70,80 @@ def parse_github_spec(spec: str) -> github_clone_spec:
 
 
 def local_path_for_github(owner: str, repo: str) -> Path:
+    """Where a GitHub repo is cloned locally.
+
+    The directory name must identify exactly one repository. Joining owner and
+    repo with a "-" does not: "-" is legal inside both, so facebook/react-native
+    and facebook-react/native produce the same name. That is not a cosmetic
+    clash - clone_github_repo reuses any directory that already has a .git, so
+    the second repo would silently hand back the first one's working tree under
+    the second one's label, and a push would land in the wrong repository.
+    A digest of the exact "owner/repo" keeps them apart.
+    """
     safe = re.sub(r"[^A-Za-z0-9._-]", "-", f"{owner}-{repo}")
-    return projects_dir() / safe
+    digest = hashlib.sha256(f"{owner}/{repo}".encode()).hexdigest()[:8]
+    return projects_dir() / f"{safe}-{digest}"
+
+
+def _legacy_path_for_github(owner: str, repo: str) -> Path:
+    """Where clones lived before the name carried a digest (see
+    local_path_for_github). Kept only to adopt an existing checkout."""
+    return projects_dir() / re.sub(r"[^A-Za-z0-9._-]", "-", f"{owner}-{repo}")
+
+
+def _origin_url(path: Path) -> str:
+    try:
+        proc = subprocess.run(["git", "-C", str(path), "remote", "get-url", "origin"],
+                              capture_output=True, text=True, timeout=10)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def _adopt_legacy_clone(owner: str, repo: str, dest: Path) -> None:
+    """Move a pre-digest clone to its new home, so upgrading does not strand
+    the checkout the user has been working in.
+
+    Only when the old directory really is this repository: the old name is
+    ambiguous by construction, so adopting it blindly is the very mix-up the
+    digest exists to prevent. The origin URL settles it.
+    """
+    legacy = _legacy_path_for_github(owner, repo)
+    if dest.exists() or not (legacy / ".git").is_dir():
+        return
+    url = _origin_url(legacy)
+    tail = url.rstrip("/").removesuffix(".git").lower()
+    if not tail.endswith(f"{owner}/{repo}".lower()):
+        return  # some other repository happens to share the old name
+    try:
+        legacy.rename(dest)
+    except OSError:
+        pass  # keep the old checkout where it is and clone fresh
 
 
 def clone_github_repo(owner: str, repo: str, token: str | None = None) -> Workspace:
-    """Clone (or update) a GitHub repo into our managed projects dir."""
+    """Clone (or update) a GitHub repo into our managed projects dir.
+
+    Credentials always come from the configured GitHub token, because the
+    picker lists whatever the token can see - private repositories included -
+    and a repo you were offered has to be a repo you can actually clone. The
+    `token` argument is kept for callers that pass one, but it is not the
+    source of the credential: git_credential_env reads the configured token
+    and feeds it to git through an askpass helper, so it never appears in a
+    URL or in .git/config.
+    """
+    from .github import git_credential_env
+
     dest = local_path_for_github(owner, repo)
-    dest.mkdir(parents=True, exist_ok=True)
+    _adopt_legacy_clone(owner, repo, dest)
+    env = dict(os.environ)
+    cred = git_credential_env()
+    if cred:
+        env.update(cred)
+
     if not (dest / ".git").is_dir():
+        dest.mkdir(parents=True, exist_ok=True)
         url = f"https://github.com/{owner}/{repo}.git"
-        env = dict(os.environ)
-        if token:
-            from .github import git_credential_env
-            cred = git_credential_env()
-            if cred:
-                env.update(cred)
         try:
             proc = subprocess.run(
                 ["git", "clone", url, str(dest)],
@@ -97,8 +156,9 @@ def clone_github_repo(owner: str, repo: str, token: str | None = None) -> Worksp
             raise ToolError(f"git clone {owner}/{repo} failed: {detail.splitlines()[0]}")
     else:
         try:
+            # the same credentials: fetching a private repo needs them too
             subprocess.run(["git", "-C", str(dest), "fetch", "--all", "--prune"],
-                           capture_output=True, text=True, timeout=300)
+                           capture_output=True, text=True, timeout=300, env=env)
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass  # offline is fine; use what we have
     return Workspace(str(dest))

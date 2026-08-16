@@ -19,7 +19,14 @@ from .workspace import ToolError, Workspace
 DEFAULT_API_URL = "https://api.github.com"
 API_VERSION = "2022-11-28"
 AGENT_TASKS_API_VERSION = "2026-03-10"  # required by the /agents endpoints
-REMOTE_PATTERN = re.compile(r"github\.com[:/](?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?$")
+# "github.com" must be the host, not merely a suffix of it: searching for it
+# anywhere matches evilgithub.com and self-hosted names like git.mygithub.com,
+# and every caller then acts on api.github.com - opening or merging a pull
+# request on a github.com repository that is not the workspace's remote at
+# all. Anchor it to a host boundary: start of string, after "//", or after
+# the credential "@".
+REMOTE_PATTERN = re.compile(
+    r"(?:^|//|@)github\.com[:/](?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?/?$")
 
 # Test hook: replaced to inject a mock transport.
 _make_client = lambda: httpx.Client(timeout=30.0)  # noqa: E731

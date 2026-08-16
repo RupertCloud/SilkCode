@@ -125,3 +125,29 @@ def test_remote_gui_state(sandbox_and_repo, monkeypatch):
     # the guarantee: nothing but the scratch .silkcode dir on this machine
     local = {str(p.relative_to(Path(st.workspace.root))) for p in Path(st.workspace.root).rglob("*")}
     assert all(f.startswith(".silkcode") for f in local)
+
+
+def test_memory_written_in_a_remote_session_can_be_read_back(sandbox_and_repo):
+    """remember() and load_memory() must agree on where memory lives.
+
+    The local root of a remote workspace is a scratch directory that stays
+    empty by design, so appending there writes the note somewhere
+    load_memory never looks and the session discards - the agent is told it
+    remembered something that was already gone.
+    """
+    from silkcode.memory import load_memory, remember
+
+    backend, repo_url, _base = sandbox_and_repo
+    ws = RemoteWorkspace(backend, repo_url)
+
+    assert load_memory(ws) == ""
+    remember(ws, "the parser is generated, do not edit it by hand")
+    assert "do not edit it by hand" in load_memory(ws)
+
+    # a second note must not replace the first
+    remember(ws, "deploys run from the release branch")
+    text = load_memory(ws)
+    assert "do not edit it by hand" in text and "release branch" in text
+
+    # and it lives in the sandbox, not on this machine
+    assert list(Path(ws.root).rglob("*")) == []

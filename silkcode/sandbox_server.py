@@ -68,19 +68,46 @@ def _resolve_under(base: Path, rel: str) -> Path:
     return p
 
 
-def _clone_repo(url: str, dest: Path, token: str | None = None) -> None:
-    """Clone `url` into `dest` (or fetch when already cloned). A token is
-    embedded in the origin URL so later pushes work without local
-    credentials; git redacts it from output."""
+def _askpass_script(directory: Path) -> Path:
+    """A credential helper that reads the token from the environment.
+
+    The token must not be embedded in the remote URL: git writes that URL
+    verbatim into .git/config, where it survives the clone and is readable by
+    anything that can see the workspace - `/read`, `/exec` running `cat
+    .git/config` or `git remote -v`, and therefore the agent itself, which
+    would carry the user's GitHub token into a third-party model's context.
+    Passing it through GIT_ASKPASS keeps it in the process environment only,
+    the same way the local client does it (see github.py).
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    askpass = directory / "git-askpass.sh"
+    if not askpass.exists():
+        askpass.write_text(
+            "#!/bin/sh\n"
+            'case "$1" in\n'
+            "  Username*) echo x-access-token ;;\n"
+            "  *) printenv SILKCODE_GIT_TOKEN ;;\n"
+            "esac\n"
+        )
+        askpass.chmod(0o700)
+    return askpass
+
+
+def _git_env(token: str | None, helper_dir: Path) -> dict:
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
-    dest.mkdir(parents=True, exist_ok=True)
     if token:
-        from urllib.parse import urlparse
-        parts = urlparse(url)
-        if parts.scheme in ("https", "http") and parts.hostname:
-            netloc = f"x-access-token:{token}@{parts.netloc}"
-            url = parts._replace(netloc=netloc).geturl()
+        env["GIT_ASKPASS"] = str(_askpass_script(helper_dir))
+        env["SILKCODE_GIT_TOKEN"] = token
+    return env
+
+
+def _clone_repo(url: str, dest: Path, token: str | None = None) -> None:
+    """Clone `url` into `dest` (or fetch when already cloned). The token is
+    supplied through a credential helper, so it never lands in .git/config
+    and later pushes still work."""
+    dest.mkdir(parents=True, exist_ok=True)
+    env = _git_env(token, dest.parent / ".silkcode-git")
     if (dest / ".git").is_dir():
         subprocess.run(["git", "-C", str(dest), "fetch", "--all", "--prune"],
                        capture_output=True, text=True, timeout=600, env=env)
@@ -130,6 +157,12 @@ class SandboxState:
     def __init__(self, base_dir: Path, token: str):
         self.base_dir = base_dir
         self.token = token
+        # Per-workspace git credentials, held in memory only. They used to
+        # live in the clone's origin URL, which put them in .git/config for
+        # anything reading the workspace to find; keeping them here means a
+        # git command can still authenticate without the workspace carrying
+        # the secret.
+        self.git_tokens: dict[str, str] = {}
 
     def workspace_dir(self, workspace_id: str) -> Path:
         if not WORKSPACE_ID_PATTERN.match(workspace_id):
@@ -219,10 +252,21 @@ class SandboxHandler(BaseHTTPRequestHandler):
                 timeout = min(max(int(request.get("timeout", 120)), 1), 600)
                 if not command:
                     return self._json({"error": "empty command"}, 400)
+                # A git command gets the workspace's credentials; nothing else
+                # does, so an ordinary command's environment stays clean.
+                # (A command is only recognized as git by its leading word,
+                # so this narrows incidental exposure - a repo scan, a `cat
+                # .git/config`, a `git remote -v` - rather than defending
+                # against a command deliberately written to read it back.)
+                stored = self.state.git_tokens.get(exec_match.group(1))
+                run_env = None
+                if stored and command.strip().split(" ")[0] == "git":
+                    run_env = _git_env(stored, workdir.parent / ".silkcode-git")
                 try:
                     proc = subprocess.run(
                         command, shell=True, cwd=workdir,
                         capture_output=True, text=True, timeout=timeout,
+                        env=run_env,
                     )
                     output = proc.stdout or ""
                     if proc.stderr:
@@ -239,6 +283,10 @@ class SandboxHandler(BaseHTTPRequestHandler):
                     return self._json({"error": "empty clone url"}, 400)
                 token = request.get("token")
                 _clone_repo(url, workdir, token=token)
+                if token:
+                    # remembered so later pushes authenticate without the
+                    # token being written into the workspace
+                    self.state.git_tokens[clone_match.group(1)] = str(token)
                 return self._json({"ok": True})
             if write_match:
                 workdir = self.state.workspace_dir(write_match.group(1))
