@@ -10,7 +10,8 @@ CLI or a local GUI.
 > **The coding environment belongs to the developer. The AI model is replaceable.**
 
 The full specification is in [SRS.md](SRS.md). The prioritized roadmap — what
-to build next and why — is in [NEXT_STEPS.md](NEXT_STEPS.md). This implementation
+to build next and why — is in [NEXT_STEPS.md](NEXT_STEPS.md), and the design for
+a fully hosted Silk Code is in [docs/CLOUD.md](docs/CLOUD.md). This implementation
 is V0.1: the Python agent runtime, the CLI, and the GUI (a local web app served
 by the Silk Code daemon — designed to be wrapped in Tauri later, per SRS
 sections 67-68).
