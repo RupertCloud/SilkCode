@@ -937,12 +937,56 @@ class GuiState:
         return available_projects()
 
 
+LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "127.0.1.1"}
+
+
+def is_loopback(host: str) -> bool:
+    return host in LOOPBACK_HOSTS or host.startswith("127.")
+
+
 class GuiHandler(BaseHTTPRequestHandler):
     state: GuiState = None  # type: ignore[assignment]
     html: bytes = b""
+    # Shared secret required on every request when the daemon is reachable
+    # beyond loopback. None (loopback only) keeps the local dev-server model.
+    token: str | None = None
 
     def log_message(self, format, *args):  # noqa: A002 - BaseHTTPRequestHandler API
         pass
+
+    def _presented_token(self) -> str:
+        """The token from the header, the cookie, or the query string."""
+        header = self.headers.get("Authorization", "")
+        if header.startswith("Bearer "):
+            return header[len("Bearer "):].strip()
+        cookie = self.headers.get("Cookie", "")
+        for part in cookie.split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == "silk_token":
+                return value
+        return (parse_qs(urlparse(self.path).query).get("token") or [""])[0]
+
+    def _authorized(self) -> bool:
+        """No token configured (loopback) means no check; otherwise every
+        request must carry it. Compared in constant time."""
+        if not self.token:
+            return True
+        import hmac
+        presented = self._presented_token()
+        return bool(presented) and hmac.compare_digest(presented, self.token)
+
+    def _deny(self) -> None:
+        body = (b"Unauthorized. This Silk Code daemon is reachable beyond this "
+                b"machine and requires its access token; open the URL printed "
+                b"when it started.")
+        try:
+            self.send_response(401)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
     def _json(self, data, status: int = 200) -> None:
         body = json.dumps(data).encode()
@@ -989,6 +1033,8 @@ class GuiHandler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
+        if not self._authorized():
+            return self._deny()
         parsed = urlparse(self.path)
         route = parsed.path
         params = parse_qs(parsed.query)
@@ -999,6 +1045,12 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")  # never serve a stale UI
+                if self.token:
+                    # the page was opened with ?token=...; keep it for the
+                    # fetches and the event stream that follow
+                    self.send_header(
+                        "Set-Cookie",
+                        f"silk_token={self.token}; Path=/; SameSite=Strict; HttpOnly")
                 self.send_header("Content-Length", str(len(self.html)))
                 self.end_headers()
                 self.wfile.write(self.html)
@@ -1055,6 +1107,8 @@ class GuiHandler(BaseHTTPRequestHandler):
             st.unsubscribe(q)
 
     def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
+        if not self._authorized():
+            return self._deny()
         st = self.state
         length = int(self.headers.get("Content-Length") or 0)
         try:
@@ -1155,7 +1209,8 @@ class GuiHandler(BaseHTTPRequestHandler):
 def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1",
             port: int = 8377, grants: list[str] | None = None,
             use_sandbox: bool = False, auto_push: bool = False,
-            restart_args: list[str] | None = None) -> int:
+            restart_args: list[str] | None = None, token: str | None = None,
+            remote: str | None = None) -> int:
     # Bind first so we know the real address (--port 0 picks an ephemeral one)
     # and can label this daemon's sessions with it; a busy address fails fast
     # with a clear message before any state is created.
@@ -1170,17 +1225,29 @@ def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1
     bound_host, bound_port = server.server_address[:2]
     try:
         state = GuiState(path, model_spec, mode, grants=grants, use_sandbox=use_sandbox,
-                         auto_push=auto_push, instance=f"{bound_host}:{bound_port}")
+                         auto_push=auto_push, instance=f"{bound_host}:{bound_port}",
+                         remote=remote)
     except (ToolError, ConfigError) as exc:
         print(f"error: {exc}")
         server.server_close()
         return 1
     GuiHandler.state = state
     GuiHandler.html = (Path(__file__).parent / "app.html").read_bytes()
+    # The daemon drives an agent that reads and writes files, runs commands and
+    # holds API keys. On loopback that is the usual local-dev trust model; the
+    # moment it is reachable from elsewhere it needs a credential, so one is
+    # required (and generated when not supplied).
+    if not is_loopback(host) and not token:
+        import secrets
+        token = secrets.token_urlsafe(24)
+        print("This daemon is reachable beyond this machine, so it requires an "
+              "access token.\nOpen the URL below (it carries the token); share it "
+              "with nobody you would not\ngive a shell on this machine.\n")
+    GuiHandler.token = token
     if restart_args:
         state.start_auto_reload(restart_args)
     display_host = "localhost" if bound_host in ("0.0.0.0", "::") else bound_host
-    url = f"http://{display_host}:{bound_port}"
+    url = f"http://{display_host}:{bound_port}" + (f"/?token={token}" if token else "")
     print(f"Silk Code GUI: {url}")
     print(f"workspace: {state.workspace.root}")
     first = state.get_session()

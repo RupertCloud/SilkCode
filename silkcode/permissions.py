@@ -30,6 +30,14 @@ HIGH_RISK_PATTERNS = [
     r"\breboot\b",
     r"curl[^|]*\|\s*(ba|z)?sh",
     r"wget[^|]*\|\s*(ba|z)?sh",
+    # Piping anything into an interpreter runs unreviewed content, whatever
+    # produced it: 'curl x | sh' is the famous case, but 'cat payload | sh'
+    # and 'fetch | python' are the same action with the download hidden a
+    # step earlier.
+    r"\|\s*(ba|z|k|da)?sh\b",
+    r"\|\s*(python\d?(\.\d+)?|perl|ruby|node|php)\b",
+    # eval executes text assembled at runtime - the shell's own back door
+    r"\beval\b",
 ]
 
 LOW_RISK_COMMANDS = {

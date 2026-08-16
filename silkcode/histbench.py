@@ -226,8 +226,12 @@ def run_task_tests(ws: Workspace, command: str, timeout: int = 300) -> str:
     mode: `import <project>` would resolve to the live working tree through
     site-packages, so the tests would pass even at the base commit.
     """
+    import shlex
+
     from .tools.shell import run_command
-    return run_command(ws, f'PYTHONPATH={ws.root}:"${{PYTHONPATH:-}}" {command}',
+    # quote the root: a workspace path may contain spaces or shell
+    # metacharacters, and this prefix is evaluated by a shell
+    return run_command(ws, f'PYTHONPATH={shlex.quote(str(ws.root))}:"${{PYTHONPATH:-}}" {command}',
                        timeout=timeout)
 
 
