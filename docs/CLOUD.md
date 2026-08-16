@@ -91,6 +91,10 @@ Everything below is the detail behind those paragraphs. §16 is distribution,
 §15 the market size, §14 what customers buy, §13 the market, §12 the money,
 §11 the roadmap, §§2–9 the architecture.
 
+**To act on this rather than read it**, start with
+[CLOUD_WORKSHEET.md](CLOUD_WORKSHEET.md) — the five decisions, five facts and
+three proofs that everything here is waiting on.
+
 ---
 
 ## 1. The three decisions this design rests on
