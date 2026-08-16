@@ -40,12 +40,30 @@ def load_memory(ws: Workspace) -> str:
 
 
 def remember(ws: Workspace, text: str) -> str:
+    from .remotews import RemoteWorkspace
+
     text = text.strip()
     if not text:
         return "Nothing to remember (empty text)."
+    stamp = datetime.date.today().isoformat()
+    entry = f"- [{stamp}] {text}\n"
+
+    if isinstance(ws, RemoteWorkspace):
+        # A remote workspace's local root is a scratch directory that stays
+        # empty on purpose - the repo lives in the sandbox. Appending there
+        # would write the note somewhere load_memory never looks and the
+        # session throws away, so the agent would be told it remembered
+        # something that was gone immediately. Write it where it is read.
+        try:
+            existing = ws.read_text(MEMORY_RELPATH) if ws.is_file(MEMORY_RELPATH) else ""
+        except Exception:
+            existing = ""
+        ws.write_text(MEMORY_RELPATH, existing + entry)
+        ws.refresh()  # the file may be new; let the listing pick it up
+        return f"Remembered in {MEMORY_RELPATH}: {text}"
+
     path = memory_path(ws)
     path.parent.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.date.today().isoformat()
     with path.open("a") as f:
-        f.write(f"- [{stamp}] {text}\n")
+        f.write(entry)
     return f"Remembered in {MEMORY_RELPATH}: {text}"
