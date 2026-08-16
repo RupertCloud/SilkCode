@@ -112,6 +112,9 @@ class SessionStore:
                 "cwd": data.get("cwd", ""),
                 "instance": data.get("instance"),
                 "updated": data.get("updated", 0),
+                # token spend, so usage can be summarized without loading
+                # every conversation (see silkcode/environment.py)
+                "usage": data.get("usage") or {},
             })
         return sorted(sessions, key=lambda s: s["updated"], reverse=True)
 

@@ -435,7 +435,10 @@ class GuiState:
 
     def _save_session(self, session: AgentSession) -> None:
         session.data["messages"] = session.agent.messages
-        session.data["model"] = session.spec
+        # record the resolved provider/model (as the CLI does), so a bare spec
+        # like "deepseek" doesn't merge different models in the usage view
+        session.data["model"] = (session.spec if "/" in session.spec
+                                 else f"{session.provider_name}/{session.model}")
         session.data["mode"] = session.permissions.mode
         session.data["usage"] = {
             "prompt_tokens": session.agent.usage.prompt_tokens,
@@ -795,6 +798,47 @@ class GuiState:
         self.config.set_provider(name, cfg)
         self.config.save()
 
+    # ---- environment: credentials, usage, live sessions (SRS 19, 48) -------
+
+    def live_sessions(self) -> list[dict]:
+        """Sessions open in this daemon right now, with their live spend."""
+        out = []
+        for session in self.sessions.values():
+            out.append({
+                "id": session.id,
+                "title": session.data.get("title", "") or "(new)",
+                "model": f"{session.provider_name}/{session.model}",
+                "project": str(session.workspace.root),
+                "running": session.running,
+                "swarm": bool((self.swarms.get(session.id) or {}).get("running")),
+                "locked_out": bool(session.lock_conflict),
+                "usage": session.usage_dict(),
+            })
+        return sorted(out, key=lambda s: s["id"])
+
+    def environment(self) -> dict:
+        from ..environment import overview
+        data = overview(self.config, self.store, self.live_sessions())
+        data["instance"] = self.instance
+        data["running_count"] = sum(1 for s in data["live"] if s["running"])
+        return data
+
+    def set_provider_key(self, provider: str, key: str) -> dict:
+        from ..environment import set_key
+        try:
+            set_key(self.config, provider, key)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+        return self.environment()
+
+    def clear_provider_key(self, provider: str) -> dict:
+        from ..environment import clear_key
+        try:
+            clear_key(self.config, provider)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from exc
+        return self.environment()
+
     def providers_info(self) -> list[dict]:
         out = []
         for name in sorted(self.config.providers):
@@ -938,6 +982,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json(st.providers_info())
             elif route == "/api/sessions":
                 self._json(st.sessions_summary())
+            elif route == "/api/environment":
+                self._json(st.environment())
             elif route == "/api/github/status":
                 self._json(st.github_status(sid))
             elif route == "/api/events":
@@ -1041,6 +1087,12 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json(st.swarm_status(sid))
             elif route == "/api/update":
                 self._json(st.update_service(body))
+            elif route == "/api/environment/key":
+                provider = str(body.get("provider", ""))
+                if body.get("clear"):
+                    self._json(st.clear_provider_key(provider))
+                else:
+                    self._json(st.set_provider_key(provider, str(body.get("key", ""))))
             elif route == "/api/github/token":
                 self._json(st.set_github_token(str(body.get("token", ""))))
             elif route == "/api/github/device":
