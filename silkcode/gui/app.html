@@ -35,13 +35,22 @@
   #files .entry:hover { background: var(--panel2); }
 
   #chat { display: flex; flex-direction: column; min-height: 0; }
-  #messages { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
-  .msg { max-width: 92%; padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; word-break: break-word; }
-  .msg.user { background: var(--user); align-self: flex-end; }
-  .msg.assistant { background: var(--panel2); align-self: flex-start; }
-  .msg.error { background: #4a2529; color: var(--err); align-self: stretch; font-family: var(--mono); font-size: 12px; }
-.msg.notice { background: #3a3220; color: #e8c766; align-self: stretch; font-family: var(--mono); font-size: 12px; }
-  .msg.tool { background: transparent; border: 1px dashed var(--border); color: var(--dim); font-family: var(--mono); font-size: 12px; align-self: flex-start; padding: 4px 10px; }
+  #messages { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 6px; }
+  .msg-wrap { display: flex; align-items: center; gap: 6px; max-width: 92%; }
+  .msg-wrap.user { align-self: flex-end; }
+  .msg-wrap.assistant, .msg-wrap.tool, .msg-wrap.error, .msg-wrap.notice { align-self: flex-start; }
+  .msg { max-width: 100%; padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { background: var(--user); }
+  .msg.assistant { background: var(--panel2); }
+  .msg.error { background: #4a2529; color: var(--err); font-family: var(--mono); font-size: 12px; }
+  .msg.notice { background: #3a3220; color: #e8c766; font-family: var(--mono); font-size: 12px; }
+  .msg.tool { background: transparent; border: 1px dashed var(--border); color: var(--dim); font-family: var(--mono); font-size: 12px; padding: 4px 10px; }
+  .msg-copy { flex: 0 0 auto; background: transparent; border: 1px solid var(--border); color: var(--dim);
+    border-radius: 7px; width: 26px; height: 26px; font-size: 13px; line-height: 1; cursor: pointer;
+    display: none; align-items: center; justify-content: center; }
+  .msg-wrap:hover .msg-copy { display: inline-flex; }
+  .msg-copy:hover { color: var(--text); border-color: var(--accent); }
+  .msg-copy.copied { color: var(--ok); border-color: var(--ok); }
   /* the chat bar is its own persistent grid row: it can never be pushed out or squeezed */
   #composer { grid-column: 2; grid-row: 3; display: flex; flex-shrink: 0; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); background: var(--panel); }
   #composer textarea { flex: 1; resize: none; height: 58px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font: inherit; }
@@ -432,13 +441,47 @@ let streamEl = null;          // assistant bubble currently being streamed into
 let currentSessionId = null;  // the session shown in this tab
 const permQueue = [];         // pending permission requests (all sessions)
 
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    // fallback for non-secure/older contexts
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } finally { document.body.removeChild(ta); }
+  }
+}
+
+function msgText(el) {
+  // streamed assistant bubbles keep their text directly on el.textContent;
+  // everything else lives inside a nested text span whose text is el.textContent.
+  return (el.textContent || "").trim();
+}
+
 function addMsg(kind, text) {
+  const wrap = document.createElement("div");
+  wrap.className = "msg-wrap " + kind;
   const div = document.createElement("div");
   div.className = "msg " + kind;
   div.textContent = text;
-  $("messages").appendChild(div);
+  const btn = document.createElement("button");
+  btn.className = "msg-copy";
+  btn.title = "Copy message";
+  btn.textContent = "⧉";
+  btn.onclick = () => {
+    copyToClipboard(msgText(div)).then(() => {
+        btn.textContent = "✓";
+        btn.classList.add("copied");
+        setTimeout(() => { btn.textContent = "⧉"; btn.classList.remove("copied"); }, 1500);
+      });
+  };
+  wrap.appendChild(div);
+  wrap.appendChild(btn);
+  $("messages").appendChild(wrap);
   $("messages").scrollTop = $("messages").scrollHeight;
-  return div;
+  return div;  // return the bubble so streaming/appending keeps working
 }
 
 function addToolMsg(name, args) {

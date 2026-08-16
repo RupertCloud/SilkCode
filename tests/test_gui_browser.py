@@ -95,6 +95,12 @@ def test_environment_page_renders(browser, gui_url):
     # run a turn so there is usage to show
     send_and_wait(page, "first request", "Reply in session one.")
 
+    # each message block carries a copy button that copies its text
+    copy_btns = page.locator("#messages .msg-wrap .msg-copy")
+    assert copy_btns.count() >= 2  # the user prompt and the assistant reply
+    first = copy_btns.first
+    assert first.get_attribute("title") == "Copy message"
+
     page.click("#env-btn")
     page.wait_for_selector("#env-modal.open")
     page.wait_for_function(
