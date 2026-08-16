@@ -165,6 +165,25 @@ then:
 4. swaps in the real provider key and streams the response back verbatim;
 5. records prompt/completion tokens and debits credits from a pricing table.
 
+### Resolve `principal → upstream`, not `model → pooled key`
+
+Step 3 is the one place a shortcut would be costly later. Written narrowly it
+maps a model name to *our* pooled key. Written generically it resolves a
+**principal** — user, organization, or session — to an `(upstream endpoint,
+credential)` pair, with the pooled key as merely the default case.
+
+That one abstraction covers all three products this design eventually sells:
+
+| Principal resolves to | Serves |
+| --- | --- |
+| Silk's pooled key | Hosted default (§5) |
+| The user's own key | BYO-key tier (§10) — our best-margin customer |
+| The organization's vLLM / Azure / Bedrock endpoint | Enterprise org gateway (§12.5) |
+
+It costs almost nothing to build this way at M0 and is an unpleasant refactor
+once a ledger, a cache and a router all assume a single global upstream. Build
+it generically first.
+
 ### Why the container must never hold a provider key
 
 A user can run arbitrary shell commands in their own container — that is the
@@ -662,7 +681,53 @@ are what is actually sold. Where exactly that line falls needs deciding before
 `silkcloud` has much code in it, because moving it later is a re-licensing
 argument nobody enjoys.
 
-### 12.6 When money actually starts
+### 12.6 Enterprise is the destination, not the starting point
+
+The enterprise product in §12.5 is close to the **inverse** of the hosted
+product in §§3–7:
+
+| | Hosted | Enterprise BYOC |
+| --- | --- | --- |
+| Who runs the containers | Us, our cluster | Them, their cluster |
+| Who holds the model keys | Us, pooled | Them, their vLLM/Azure/Bedrock |
+| Control plane shape | Multi-tenant SaaS | Single-tenant appliance |
+| Sales motion | Self-serve, minutes | 6–12 months, security review, SOC 2 |
+
+Same harness, same gateway, genuinely different products. Building both at
+once is how a small team ships neither, so **hosted comes first and funds the
+enterprise motion** — it produces the revenue, the reference logos, the
+operational track record, and the compliance groundwork that an enterprise
+buyer will ask for anyway.
+
+There is also a hard ordering constraint: **we cannot credibly sell "run this
+in your cluster" before we have run it in ours.** Our own M2/M3 deployment is
+the proof, the dogfood, and the reference architecture for the appliance.
+
+But three decisions have to be made *now*, because retrofitting them is
+expensive:
+
+1. **The control plane must be deployable single-tenant.** Not built yet, just
+   not foreclosed. Concretely: no hard dependency on one cloud's proprietary
+   managed services on the critical path — plain Postgres and S3-compatible
+   object storage, configuration through env and secrets, no assumption of our
+   own DNS or identity provider. A control plane that only runs in our account
+   is a rewrite when the first BYOC deal lands.
+2. **The gateway needs per-org upstreams from day one.** Routing a request to
+   *this customer's* vLLM endpoint is the same code path as the per-user
+   BYO-key branch in §10. Build it once, generically: `(principal → upstream +
+   credential)`. That single abstraction covers pooled credits, BYO-key, and
+   the enterprise org gateway.
+3. **The open-core boundary** (§13). The MIT harness is not only marketing —
+   it is the enterprise lead generator. Developers adopt it locally, security
+   teams approve it because they can read it, and the organization then buys
+   the control plane, gateway and policy layer. That is the standard open-core
+   motion, and it only works if the split is drawn deliberately rather than
+   discovered.
+
+Everything else about enterprise — SSO, audit logs, the packaging, SOC 2 — can
+wait for M4 and a real prospect. Do not build it on spec.
+
+### 12.7 When money actually starts
 
 Revenue maps onto the §11 milestones, and deliberately starts before the
 expensive infrastructure exists:
