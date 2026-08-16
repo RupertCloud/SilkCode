@@ -32,6 +32,8 @@ HELP = """Commands:
   /model [spec]      show or switch the model (e.g. /model ollama/qwen2.5-coder)
   /models            list configured providers
   /mode [m]          show or set permission mode: ask | edit | agent
+  /new [name] [tpl]  create a new project from a template and switch to it
+                     (e.g. /new todo-cli python-cli; no arguments prompts)
   /project [spec]    open another project (GitHub repo or local path) for this session
   /reload            re-read the config and rebuild the provider + MCP (e.g. a new
                      'timeout' for a slow provider) without losing this conversation
@@ -328,6 +330,8 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
     elif cmd == "/sessions":
         for s in store.list():
             print(f"#{s['id']:<5} {s['model']:<28} {s['title']}")
+    elif cmd == "/new":
+        _new_command(agent, session, arg)
     elif cmd == "/project":
         _project_command(agent, config, session, arg)
     elif cmd == "/reload":
@@ -399,6 +403,50 @@ def _reload_command(agent: Agent, config: Config, session: dict, mcp) -> object:
         except Exception:
             pass
     return new_mcp
+
+
+def _new_command(agent: Agent, session: dict, arg: str) -> None:
+    """Create a new project and point this session at it.
+
+    New projects land next to the current one (`/new sibling` in ~/code/app
+    creates ~/code/sibling) rather than inside it, so scaffolding never drops
+    an unrelated tree into the repository being worked on.
+    """
+    from pathlib import Path
+
+    from ..context import build_context
+    from ..project import record_recent_project
+    from ..remotews import RemoteWorkspace
+    from ..scaffold import (DEFAULT_TEMPLATE, create_project, format_result,
+                            prompt_for_new_project)
+    from ..workspace import ToolError
+
+    # A remote workspace's root is an empty local scratch dir; its parent is a
+    # temp directory nobody wants a new project in. Use the shell's cwd there.
+    parent = (Path.cwd() if isinstance(agent.workspace, RemoteWorkspace)
+              else agent.workspace.root.parent)
+    parts = arg.split()
+    if len(parts) > 2:
+        print(f"{RED}usage: /new [name] [template]{RESET}  "
+              f"(a name with spaces goes through the prompt: type /new alone)")
+        return
+    try:
+        if parts:
+            name, template = parts[0], (parts[1] if len(parts) > 1 else DEFAULT_TEMPLATE)
+            result = create_project(name, template=template, parent=parent)
+        else:
+            result = prompt_for_new_project(parent=parent)
+    except ToolError as exc:
+        print(f"{RED}{exc}{RESET}")
+        return
+
+    print(format_result(result))
+    record_recent_project("local", str(result.path), str(result.path))
+    workspace = result.workspace
+    agent.set_workspace(workspace, build_context(workspace))
+    session["cwd"] = str(workspace.root)
+    print(f"\n{BOLD}Opened project:{RESET} {CYAN}{workspace.root}{RESET}")
+    print(f"{DIM}Files and git now refer to {workspace.root}{RESET}")
 
 
 def _project_command(agent: Agent, config: Config, session: dict, arg: str) -> None:

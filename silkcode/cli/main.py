@@ -2,6 +2,7 @@
 
 Commands:
     silkcode [path] [--model M] [--mode ask|edit|agent]   interactive REPL
+    silkcode new [name] [--template T] [--dir D] [...]     scaffold a new project
     silkcode gui [path] [--port N] [--host H] [--model M] local web GUI
     silkcode models                                        list providers and models
     silkcode models add <name> --base-url URL [...]        onboard a provider/endpoint
@@ -36,6 +37,7 @@ from ..sessions import SessionStore
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     commands = {
+        "new": cmd_new,
         "models": cmd_models,
         "config": cmd_config,
         "env": cmd_env,
@@ -101,6 +103,80 @@ def cmd_repl(argv: list[str]) -> int:
     return run_repl(args.path, args.model, args.mode, prompt=args.prompt,
                     grants=_parse_grants(args.allow), use_sandbox=args.sandbox,
                     auto_push=args.auto_push, remote=args.remote)
+
+
+def cmd_new(argv: list[str]) -> int:
+    """Scaffold a new project from a template (SRS section 10: a session needs
+    a project, and sometimes the project does not exist yet)."""
+    from ..scaffold import (DEFAULT_TEMPLATE, TEMPLATES, create_project, format_result,
+                            get_template, prompt_for_new_project, template_names)
+    from ..workspace import ToolError
+
+    parser = argparse.ArgumentParser(
+        prog="silkcode new",
+        description="Create a new project from a template, git-init it, and "
+                    "optionally start working on it right away.")
+    parser.add_argument("name", nargs="?",
+                        help="project name; omit to be prompted for name and template")
+    parser.add_argument("--template", "-t", default=None,
+                        help=f"template to use (default: {DEFAULT_TEMPLATE}); "
+                             f"one of: {', '.join(template_names())}")
+    parser.add_argument("--dir", "-d", dest="parent", default=".",
+                        help="directory to create the project in (default: current)")
+    parser.add_argument("--describe", default="",
+                        help="one-line description, written into the README, "
+                             "SILKCODE.md and package metadata")
+    parser.add_argument("--no-git", action="store_true",
+                        help="do not run 'git init' or make the initial commit")
+    parser.add_argument("--force", action="store_true",
+                        help="scaffold into an existing non-empty directory "
+                             "(existing files are never overwritten)")
+    parser.add_argument("--list", action="store_true", help="list templates and exit")
+    parser.add_argument("--open", action="store_true",
+                        help="open the new project in the interactive REPL when done")
+    parser.add_argument("--prompt", "-p",
+                        help="after creating it, run one agent turn in the new project "
+                             "(e.g. 'add a --json flag to the CLI')")
+    parser.add_argument("--model", "-m", help="model spec for --prompt / --open")
+    parser.add_argument("--mode", choices=("ask", "edit", "agent"), default="ask",
+                        help="permission mode for --prompt / --open (default: ask)")
+    args = parser.parse_args(argv)
+
+    if args.list:
+        print("Templates:")
+        for name in template_names():
+            marker = "  (default)" if name == DEFAULT_TEMPLATE else ""
+            print(f"  {name:<12} {TEMPLATES[name].description}{marker}")
+        print("\nCreate one with: silkcode new <name> --template <template>")
+        return 0
+
+    try:
+        if args.template:
+            get_template(args.template)  # fail before creating anything
+        if args.name:
+            result = create_project(args.name, template=args.template or DEFAULT_TEMPLATE,
+                                    parent=args.parent, description=args.describe,
+                                    git=not args.no_git, force=args.force)
+        else:
+            result = prompt_for_new_project(parent=args.parent)
+    except ToolError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    from ..project import record_recent_project
+    record_recent_project("local", str(result.path), str(result.path))
+    print(format_result(result))
+
+    if args.prompt or args.open:
+        from .repl import run_repl
+        if args.prompt:
+            print()
+            code = run_repl(str(result.path), args.model, args.mode, prompt=args.prompt)
+            if code != 0:
+                return code
+        if args.open:
+            return run_repl(str(result.path), args.model, args.mode)
+    return 0
 
 
 REVIEW_PROMPT = (

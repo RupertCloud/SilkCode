@@ -88,6 +88,88 @@ def test_config_errors_are_reported_not_raised(home, capsys):
 
 
 # --------------------------------------------------------------------------
+# new (project creation)
+# --------------------------------------------------------------------------
+
+def test_new_lists_the_templates(home, capsys):
+    from silkcode.scaffold import TEMPLATES
+    code, out, _ = run(["new", "--list"], capsys)
+    assert code == 0
+    for name in TEMPLATES:
+        assert name in out
+
+
+def test_new_creates_a_project_and_remembers_it(home, tmp_path, capsys):
+    code, out, _ = run(["new", "My App", "--dir", str(tmp_path), "--no-git"], capsys)
+    assert code == 0
+    project = tmp_path / "my-app"
+    assert (project / "pyproject.toml").is_file()
+    assert (project / "SILKCODE.md").is_file()
+    assert str(project) in out
+    recent = json.loads((home / "recent_projects.json").read_text())
+    assert recent[0]["spec"] == str(project.resolve())
+
+
+def test_new_honors_the_template_flag(home, tmp_path, capsys):
+    code, out, _ = run(["new", "site", "-t", "web", "--dir", str(tmp_path), "--no-git"], capsys)
+    assert code == 0
+    assert (tmp_path / "site" / "index.html").is_file()
+    assert "web template" in out
+
+
+def test_new_rejects_an_unknown_template_before_creating_anything(home, tmp_path, capsys):
+    code, _, err = run(["new", "demo", "-t", "cobol", "--dir", str(tmp_path)], capsys)
+    assert code == 1
+    assert "unknown template" in err
+    assert not (tmp_path / "demo").exists()
+
+
+def test_new_rejects_a_bad_name(home, tmp_path, capsys):
+    code, _, err = run(["new", "nested/name", "--dir", str(tmp_path)], capsys)
+    assert code == 1
+    assert "path separator" in err
+
+
+def test_new_refuses_to_scribble_into_a_non_empty_directory(home, tmp_path, capsys):
+    (tmp_path / "taken").mkdir()
+    (tmp_path / "taken" / "keep.txt").write_text("mine\n")
+    code, _, err = run(["new", "taken", "--dir", str(tmp_path), "--no-git"], capsys)
+    assert code == 1
+    assert "--force" in err
+    assert (tmp_path / "taken" / "keep.txt").read_text() == "mine\n"
+
+
+def test_new_prompts_when_no_name_is_given(home, tmp_path, monkeypatch, capsys):
+    answers = iter(["prompted", "web", ""])
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers))
+    code, out, _ = run(["new", "--dir", str(tmp_path)], capsys)
+    assert code == 0
+    assert (tmp_path / "prompted" / "index.html").is_file()
+
+
+def test_new_prompt_flag_runs_one_agent_turn_in_the_new_project(home, tmp_path, monkeypatch, capsys):
+    seen = {}
+    monkeypatch.setattr("silkcode.cli.repl.run_repl",
+                        lambda *a, **k: seen.update(args=a, kwargs=k) or 0)
+    code, _, _ = run(["new", "demo", "--dir", str(tmp_path), "--no-git",
+                      "-p", "add a --json flag", "--mode", "agent"], capsys)
+    assert code == 0
+    assert seen["args"][0] == str((tmp_path / "demo").resolve())
+    assert seen["args"][2] == "agent"
+    assert seen["kwargs"]["prompt"] == "add a --json flag"
+
+
+def test_new_open_flag_starts_the_repl_in_the_new_project(home, tmp_path, monkeypatch, capsys):
+    seen = {}
+    monkeypatch.setattr("silkcode.cli.repl.run_repl",
+                        lambda *a, **k: seen.update(args=a, kwargs=k) or 0)
+    code, _, _ = run(["new", "demo", "--dir", str(tmp_path), "--no-git", "--open"], capsys)
+    assert code == 0
+    assert seen["args"][0] == str((tmp_path / "demo").resolve())
+    assert "prompt" not in seen["kwargs"]
+
+
+# --------------------------------------------------------------------------
 # models
 # --------------------------------------------------------------------------
 
