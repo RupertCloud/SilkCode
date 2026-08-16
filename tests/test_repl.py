@@ -368,3 +368,71 @@ def test_project_cancelled_from_the_picker_changes_nothing(repl, monkeypatch, ca
     before = repl["agent"].workspace.root
     slash(repl, "/project")
     assert repl["agent"].workspace.root == before
+
+
+# --------------------------------------------------------------------------
+# /new — creating a project from the REPL
+# --------------------------------------------------------------------------
+
+def test_new_creates_a_sibling_project_and_switches_to_it(repl, tmp_path, capsys):
+    """`/new` in ~/x/ws creates ~/x/thing, not ~/x/ws/thing: scaffolding must
+    not drop an unrelated tree inside the repository being worked on."""
+    slash(repl, "/new thing")
+    agent = repl["agent"]
+    created = (tmp_path / "thing").resolve()
+    assert (created / "pyproject.toml").is_file()
+    assert agent.workspace.root == created
+    assert repl["session"]["cwd"] == str(created)
+    assert str(created) in agent.messages[0]["content"]  # the model is reoriented
+
+
+def test_new_accepts_a_template_argument(repl, tmp_path, capsys):
+    slash(repl, "/new landing web")
+    assert (tmp_path / "landing" / "index.html").is_file()
+    assert repl["agent"].workspace.root == (tmp_path / "landing").resolve()
+
+
+def test_new_records_the_project_as_recent(repl, tmp_path, capsys):
+    from silkcode.project import recent_projects
+    slash(repl, "/new remembered")
+    assert str((tmp_path / "remembered").resolve()) in [r["spec"] for r in recent_projects()]
+
+
+def test_new_reports_a_bad_name_without_switching(repl, tmp_path, capsys):
+    before = repl["agent"].workspace.root
+    slash(repl, "/new ***")
+    assert repl["agent"].workspace.root == before
+    assert "no usable characters" in capsys.readouterr().out
+
+
+def test_new_reports_an_unknown_template_without_switching(repl, tmp_path, capsys):
+    before = repl["agent"].workspace.root
+    slash(repl, "/new demo cobol")
+    assert repl["agent"].workspace.root == before
+    assert not (tmp_path / "demo").exists()
+    assert "unknown template" in capsys.readouterr().out
+
+
+def test_new_from_the_prompt_uses_the_answers(repl, tmp_path, monkeypatch, capsys):
+    answers = iter(["Asked App", "web", "typed at the prompt"])
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers))
+    slash(repl, "/new")
+    created = (tmp_path / "asked-app").resolve()
+    assert (created / "index.html").is_file()
+    assert "typed at the prompt" in (created / "README.md").read_text()
+    assert repl["agent"].workspace.root == created
+
+
+def test_new_cancelled_from_the_prompt_changes_nothing(repl, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("builtins.input", lambda *a: "q")
+    before = repl["agent"].workspace.root
+    slash(repl, "/new")
+    assert repl["agent"].workspace.root == before
+
+
+def test_new_explains_a_multi_word_name(repl, tmp_path, capsys):
+    """`/new my new app` is a name with spaces, not three arguments."""
+    before = repl["agent"].workspace.root
+    slash(repl, "/new my new app")
+    assert repl["agent"].workspace.root == before
+    assert "usage: /new" in capsys.readouterr().out

@@ -137,6 +137,7 @@ tokens, e.g. DeepSeek):
 ```bash
 silkcode [path] [--model M] [--mode ask|edit|agent]   # interactive REPL
 silkcode -p "add input validation to the API" .       # one-shot, non-interactive
+silkcode new [name] [--template T] [--dir D]          # create a new project
 silkcode gui [path] [--port N]                        # local GUI
 silkcode review [path]                                # AI review of uncommitted changes
 silkcode models [add|pull|default]                    # provider/model management
@@ -150,8 +151,45 @@ silkcode connect github                               # set up GitHub access
 silkcode config                                       # show configuration
 ```
 
-REPL commands: `/model`, `/models`, `/mode`, `/project`, `/diff`, `/usage`, `/revert`,
-`/clear`, `/sessions`, `/help`, `/exit`.
+REPL commands: `/model`, `/models`, `/mode`, `/new`, `/project`, `/diff`, `/usage`,
+`/revert`, `/clear`, `/sessions`, `/help`, `/exit`.
+
+### Starting a new project
+
+`silkcode new` scaffolds a project that runs and tests on the first try — source,
+a test suite the runner already recognizes, a README, a `.gitignore`, and a
+`SILKCODE.md` with project instructions the agent reads on every turn. It then
+runs `git init` and makes the initial commit.
+
+```bash
+silkcode new --list                                   # show the templates
+silkcode new todo-cli --template python-cli           # ~/…/todo-cli, git-initialized
+silkcode new site -t web --dir ~/code                 # choose where it lands
+silkcode new api --describe "Invoice API for freelancers"
+silkcode new api -p "add a health endpoint and a test for it"   # build it out
+silkcode new api --open                               # create, then open the REPL in it
+silkcode new                                          # prompts for name and template
+```
+
+| Template | What you get |
+| --- | --- |
+| `python` (default) | package + `pyproject.toml` + pytest suite |
+| `python-cli` | argparse entry point, `[project.scripts]`, pytest suite |
+| `node` | ES-module package with a `node:test` suite (`npm test`) |
+| `web` | static HTML + CSS + JS, no build step |
+| `blank` | README, `.gitignore`, `SILKCODE.md` only |
+
+Names are slugified (`"My New App"` → `my-new-app`) and the package identifier
+follows (`my_new_app`). An existing non-empty directory is refused unless you pass
+`--force`, and even then existing files are never overwritten. `--no-git` skips the
+repository, scaffolding inside an existing checkout does not bury a nested one, and
+a missing git or unset committer identity degrades to a warning rather than losing
+the files.
+
+In the REPL, `/new <name> [template]` does the same thing and switches the session
+to the new project (created next to the current one, not inside it); `/new` with no
+arguments prompts. Either way the project is added to your recent projects, so the
+GUI's ＋ modal and `/project` offer it later.
 
 **Open a different project mid-session:** `/project` prompts you to pick a project for
 the session — either a GitHub repository you have access to (cloned for you into
