@@ -20,6 +20,8 @@ import argparse
 import datetime
 import json
 import sys
+import time
+from pathlib import Path
 
 from ..config import Config, ConfigError
 from ..providers import build_provider
@@ -290,17 +292,61 @@ def cmd_benchmark(argv: list[str]) -> int:
                         help="paired-condition run: each task twice, bare agent vs full harness "
                              "context, to measure the harness's contribution")
     parser.add_argument("--list", action="store_true", help="list available tasks and exit")
+    parser.add_argument("--from-history", nargs="?", const=".", metavar="REPO",
+                        help="build the task set from this repository's own merged work "
+                             "instead of the built-in suite (default: current directory)")
+    parser.add_argument("--limit", type=int, default=5,
+                        help="how many mined tasks to collect (default 5)")
+    parser.add_argument("--scan", type=int, default=60,
+                        help="how many recent changes to consider when mining (default 60)")
+    parser.add_argument("--difficulty",
+                        help="comma-separated tiers to keep when mining: easy,medium,hard")
+    parser.add_argument("--tasks-file", help="run a previously mined task file")
+    parser.add_argument("--mine-only", action="store_true",
+                        help="mine and save tasks without running any model")
     args = parser.parse_args(argv)
 
     from ..benchmark import TASKS, format_results, run_benchmark
+    from ..workspace import ToolError
     if args.list:
         for task in TASKS:
             print(f"{task.id:<16} {task.prompt[:80]}")
         return 0
+
+    mined_tasks = None
+    if args.from_history or args.tasks_file or args.mine_only:
+        from ..config import config_dir
+        from ..histbench import load_tasks, mine, save_tasks, to_bench_task
+        try:
+            if args.tasks_file:
+                mined = load_tasks(Path(args.tasks_file))
+                print(f"loaded {len(mined)} mined task(s) from {args.tasks_file}")
+            else:
+                difficulties = ([d.strip() for d in args.difficulty.split(",")]
+                                if args.difficulty else None)
+                mined = mine(args.from_history or ".", limit=args.limit, scan=args.scan,
+                             difficulties=difficulties, on_progress=print)
+                if not mined:
+                    print("error: no tasks could be mined; try --scan with a larger number "
+                          "or --difficulty easy", file=sys.stderr)
+                    return 1
+                out = save_tasks(mined, config_dir() / "benchmarks" /
+                                 f"tasks-{int(time.time())}.json")
+                print(f"\n{len(mined)} task(s) saved to {out}")
+        except ToolError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        for task in mined:
+            print(f"  {task.id:<16} [{task.difficulty}] {task.subject[:60]}")
+        if args.mine_only:
+            return 0
+        mined_tasks = [to_bench_task(t) for t in mined]
+
     specs = args.models or [Config.load().default_model]
     task_ids = [t.strip() for t in args.tasks.split(",")] if args.tasks else None
     try:
-        results = run_benchmark(specs, task_ids, ab=args.ab, on_progress=print)
+        results = run_benchmark(specs, task_ids, ab=args.ab, tasks=mined_tasks,
+                                on_progress=print)
     except (ConfigError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

@@ -32,6 +32,9 @@ class BenchTask:
     check: Callable[["Workspace", "BenchTask"], tuple[bool, str]]  # (passed, detail)
     solution: dict[str, str] = field(default_factory=dict)  # reference, used by tests
     protected: tuple[str, ...] = ()                         # files the agent must not change
+    # Optional: materialize a larger starting state (e.g. a repository
+    # snapshot) before `files` is written on top. Used by mined tasks.
+    setup: Callable[[Path], None] | None = None
 
 
 def _run_ok(ws: Workspace, command: str, expected_stdout: str | None = None) -> tuple[bool, str]:
@@ -153,6 +156,8 @@ def run_task(provider, model: str, task: BenchTask, max_context_tokens: int = 60
              include_context: bool = True, trace_path: Path | None = None) -> dict:
     with tempfile.TemporaryDirectory(prefix=f"silkbench-{task.id}-") as tmp:
         ws = Workspace(tmp)
+        if task.setup is not None:
+            task.setup(ws.root)  # e.g. a repository snapshot for mined tasks
         for name, content in task.files.items():
             path = ws.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,7 +197,7 @@ def run_task(provider, model: str, task: BenchTask, max_context_tokens: int = 60
 
 
 def run_benchmark(specs: list[str], task_ids: list[str] | None = None,
-                  ab: bool = False,
+                  ab: bool = False, tasks: list[BenchTask] | None = None,
                   on_progress: Callable[[str], None] = lambda s: None) -> dict:
     """Run the benchmark for one or more model specs.
 
@@ -200,11 +205,15 @@ def run_benchmark(specs: list[str], task_ids: list[str] | None = None,
     'baseline' with the bare agent, 'harness' with the project context
     injected. Everything else - task, model, prompts, permissions - is held
     constant, so the difference is the harness's contribution.
+
+    Pass `tasks` to run a specific set (e.g. mined from repository history,
+    see silkcode.histbench) instead of the built-in suite.
     """
     config = Config.load()
-    tasks = [t for t in TASKS if not task_ids or t.id in task_ids]
+    pool = tasks if tasks is not None else TASKS
+    tasks = [t for t in pool if not task_ids or t.id in task_ids]
     if not tasks:
-        raise ValueError(f"no matching tasks; available: {', '.join(t.id for t in TASKS)}")
+        raise ValueError(f"no matching tasks; available: {', '.join(t.id for t in pool)}")
     started = time.time()
     out_dir = config_dir() / "benchmarks"
     trace_dir = out_dir / f"traces-{int(started)}"

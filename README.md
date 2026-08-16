@@ -289,6 +289,30 @@ mode follows the paired-comparison design used by harness-evaluation protocols
 (e.g. Nimbalyst's): same task, model, prompts, and permissions in both conditions, so
 the delta isolates the harness's contribution.
 
+### Benchmarks from your own history
+
+Public benchmarks are contaminated — every model has trained on them — and generic.
+`--from-history` builds a **private** task set out of your repository's own merged work:
+
+```bash
+silkcode benchmark --from-history            # mine this repo, then benchmark on it
+silkcode benchmark --from-history --mine-only --limit 10   # just build the task set
+silkcode benchmark --tasks-file ~/.silkcode/benchmarks/tasks-123.json -m deepseek
+```
+
+For each change that touched both tests and code, Silk Code reconstructs the task the
+developer originally faced — the base commit plus that change's tests, with the commit
+message as the instruction — and keeps it only if **the tests fail on the base state and
+pass once the original implementation is applied**. That gate proves the tests really
+capture the change and that the task is solvable here. At benchmark time the test files
+are protected, so weakening or deleting them fails the task rather than passing it.
+
+Tasks are tiered by size (`easy` ≥20 changed lines/1 file, `medium` ≥50/2, `hard` ≥100/3;
+filter with `--difficulty`) and saved as JSON so a set can be replayed against new models
+later. Because the mined snapshot is the source of truth, tests run with the snapshot on
+`PYTHONPATH` — otherwise an editable install would leak your current code into the "before"
+state and every task would look already-solved.
+
 ## Context management
 
 The full conversation is sent to the model each turn. When the estimated size
