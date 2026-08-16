@@ -46,22 +46,22 @@
   .msg.notice { background: #3a3220; color: #e8c766; font-family: var(--mono); font-size: 12px; }
   .msg.tool { background: transparent; border: 1px dashed var(--border); color: var(--dim); font-family: var(--mono); font-size: 12px; padding: 4px 10px; }
 
-  /* fenced code / terminal blocks inside message bubbles */
-  .codeblock { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; margin: 8px 0; overflow: hidden; }
-  .codeblock:first-child { margin-top: 0; }
-  .codeblock:last-child { margin-bottom: 0; }
-  .codeblock .cb-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px;
-    background: var(--panel); border-bottom: 1px solid var(--border); }
-  .codeblock .cb-lang { font-size: 11px; font-family: var(--mono); color: var(--accent);
-    text-transform: uppercase; letter-spacing: .06em; margin-right: auto; }
-  .codeblock pre { margin: 0; padding: 10px 12px; overflow-x: auto; font-family: var(--mono);
-    font-size: 12px; line-height: 1.5; color: var(--text); white-space: pre; }
-  .codeblock .cb-ico { background: transparent; border: 1px solid var(--border); color: var(--dim);
-    border-radius: 6px; font-size: 11px; padding: 2px 7px; cursor: pointer; font-family: inherit; }
-  .codeblock .cb-ico:hover { color: var(--text); border-color: var(--accent); }
-  .codeblock .cb-ico.copied, .codeblock .cb-ico.queued { color: var(--ok); border-color: var(--ok); }
-  .codeblock .cb-icorun { background: var(--panel2); }
-  .msg.assistant .line { white-space: pre-wrap; word-break: break-word; }
+  /* special code / terminal bubbles: distinct cards, not inline boxes */
+  .code-bubble { position: relative; max-width: 92%; align-self: stretch; margin: 2px 0;
+    background: #101318; border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 10px; overflow: hidden; font-family: var(--mono); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+  .code-bubble .cb-head { display: flex; align-items: center; gap: 6px; padding: 5px 10px;
+    background: #181c22; border-bottom: 1px solid var(--border); }
+  .code-bubble .cb-lang { font-size: 11px; font-family: var(--mono); color: var(--accent);
+    text-transform: uppercase; letter-spacing: .08em; margin-right: auto; }
+  .code-bubble .cb-ico { background: transparent; border: 1px solid var(--border); color: var(--dim);
+    border-radius: 6px; font-size: 11px; padding: 2px 8px; cursor: pointer; font-family: inherit; }
+  .code-bubble .cb-ico:hover { color: var(--text); border-color: var(--accent); }
+  .code-bubble .cb-ico.copied, .code-bubble .cb-ico.queued { color: var(--ok); border-color: var(--ok); }
+  .code-bubble .cb-icorun { background: var(--panel); color: var(--ok); }
+  .code-bubble pre { margin: 0; padding: 10px 12px; overflow-x: auto; font-family: var(--mono);
+    font-size: 12.5px; line-height: 1.55; color: #d7dae0; white-space: pre; }
+  .msg.assistant .line, .msg.user .line { white-space: pre-wrap; word-break: break-word; }
   .msg-copy { flex: 0 0 auto; background: transparent; border: 1px solid var(--border); color: var(--dim);
     border-radius: 7px; width: 26px; height: 26px; font-size: 13px; line-height: 1; cursor: pointer;
     display: none; align-items: center; justify-content: center; }
@@ -502,49 +502,128 @@ function addMsg(kind, text) {
   return div;  // return the bubble so streaming/appending keeps working
 }
 
-// ---- fenced code / terminal blocks inside messages -------------------------
+// ---- special code / terminal bubbles ---------------------------------------
 
 const CODE_FENCE = /^(`{3,})[ \t]*([\w+-]*)[ \t]*\n([\s\S]*?)^\1[ \t]*$/gm;
 
-// Build a bubble's inner DOM from raw text, turning ```lang ... ``` fences into
-// styled code blocks, each with copy + "run in terminal" buttons. Returns true
-// if any code block was rendered.
-function renderMessageContent(el, raw) {
-  let html = "", last = 0, count = 0;
-  let m;
+function splitCode(raw) {
+  // returns [{type:"text",text} | {type:"code",lang,code}]; text may be empty
+  const parts = [];
+  let last = 0, m;
   CODE_FENCE.lastIndex = 0;
   while ((m = CODE_FENCE.exec(raw)) !== null) {
-    html += esc(raw.slice(last, m.index));
-    const lang = m[2] || "";
-    const code = m[3].replace(/\s+$/, "");
-    const isShell = !lang || /^(bash|sh|zsh|shell|console|terminal|cmd|powershell)$/.test(lang);
-    html +=
-      `<div class="codeblock" data-shell="${isShell ? "1" : ""}">` +
-      `<div class="cb-head"><span class="cb-lang">${esc(lang || "code")}</span>` +
-      `<button class="cb-ico cb-copy" title="Copy code">⧉ copy</button>` +
-      (isShell ? `<button class="cb-ico cb-icorun" title="Run this command in the workspace">▶ run</button>` : ``) +
-      `</div><pre><code>${esc(code)}</code></pre></div>`;
+    const prose = raw.slice(last, m.index);
+    if (prose.trim()) parts.push({type: "text", text: prose});
+    parts.push({type: "code", lang: m[2] || "code", code: m[3].replace(/\s+$/, "")});
     last = m.index + m[0].length;
-    count++;
   }
-  if (!count) return false;
-  html += esc(raw.slice(last));
-  el.innerHTML = `<span class="line">${html}</span>`;
-  el.classList.add("formatted");
-  // wire the block buttons
-  el.querySelectorAll(".codeblock").forEach((block) => {
-    const rawCode = block.querySelector("pre code").textContent;
-    block.querySelector(".cb-copy").onclick = () => {
-      copyToClipboard(rawCode).then(() => {
-        const b = block.querySelector(".cb-copy");
-        b.textContent = "✓ copied"; b.classList.add("copied");
-        setTimeout(() => { b.textContent = "⧉ copy"; b.classList.remove("copied"); }, 1500);
-      });
-    };
-    const runBtn = block.querySelector(".cb-icorun");
-    if (runBtn) runBtn.onclick = () => runInstruction(rawCode, runBtn);
-  });
+  const tail = raw.slice(last);
+  if (tail.trim()) parts.push({type: "text", text: tail});
+  return parts;
+}
+
+function isShellLang(lang) {
+  return !lang || /^(bash|sh|zsh|shell|console|terminal|cmd|powershell)$/.test(lang);
+}
+
+// Build a special code bubble element (distinct from a chat message bubble).
+function makeCodeBubble(lang, code) {
+  const isShell = isShellLang(lang);
+  const head = document.createElement("div");
+  head.className = "cb-head";
+  const lbl = document.createElement("span");
+  lbl.className = "cb-lang";
+  lbl.textContent = lang === "code" ? (isShell ? "$ terminal" : "code") : lang;
+  const copy = document.createElement("button");
+  copy.className = "cb-ico cb-copy";
+  copy.title = "Copy code";
+  copy.textContent = "⧉ copy";
+  copy.onclick = () => {
+    copyToClipboard(code).then(() => {
+      copy.textContent = "✓ copied"; copy.classList.add("copied");
+      setTimeout(() => { copy.textContent = "⧉ copy"; copy.classList.remove("copied"); }, 1500);
+    });
+  };
+  head.appendChild(lbl);
+  head.appendChild(copy);
+  if (isShell) {
+    const run = document.createElement("button");
+    run.className = "cb-ico cb-icorun";
+    run.title = "Run this command in the workspace";
+    run.textContent = "▶ run";
+    run.onclick = () => runInstruction(code, run);
+    head.appendChild(run);
+  }
+  const pre = document.createElement("pre");
+  const codeEl = document.createElement("code");
+  codeEl.textContent = code;
+  pre.appendChild(codeEl);
+  const bubble = document.createElement("div");
+  bubble.className = "code-bubble";
+  bubble.appendChild(head);
+  bubble.appendChild(pre);
+  return bubble;
+}
+
+// Build a normal prose message wrapper (bubble + per-message copy button),
+// mirroring what addMsg() creates.
+function makeProseWrap(kind, text) {
+  const w = document.createElement("div");
+  w.className = "msg-wrap " + kind;
+  const b = document.createElement("div");
+  b.className = "msg " + kind;
+  b.textContent = text;
+  const btn = document.createElement("button");
+  btn.className = "msg-copy";
+  btn.title = "Copy message";
+  btn.textContent = "⧉";
+  btn.onclick = () => {
+    copyToClipboard(msgText(b)).then(() => {
+      btn.textContent = "✓";
+      btn.classList.add("copied");
+      setTimeout(() => { btn.textContent = "⧉"; btn.classList.remove("copied"); }, 1500);
+    });
+  };
+  w.appendChild(b);
+  w.appendChild(btn);
+  return w;
+}
+
+// Rebuild a formatted message: prose goes back into a normal message bubble,
+// each fenced code chunk becomes its own special code bubble in the thread.
+// Returns true if the message contained code.
+function renderFormattedBubble(el, raw) {
+  const parts = splitCode(raw);
+  const hasCode = parts.some(p => p.type === "code");
+  if (!hasCode) return false;
+  const messages = $("messages");
+  const wrap = el.parentElement;                 // the .msg-wrap container
+  const kind = el.classList.contains("user") ? "user" : "assistant";
+  let anchor = wrap;
+  for (const part of parts) {
+    let node;
+    if (part.type === "code") {
+      node = makeCodeBubble(part.lang, part.code);
+    } else {
+      node = makeProseWrap(kind, part.text.replace(/\s+$/, ""));
+    }
+    messages.insertBefore(node, anchor.nextSibling);
+    anchor = node;
+  }
+  wrap.remove();                                   // drop the original mixed bubble
+  el.__raw = undefined;                            // no longer eligible for refix
   return true;
+}
+
+function formatAllMessages() {
+  // iterate over a snapshot: we replace/remove nodes as we go
+  const bubbles = Array.from(document.querySelectorAll("#messages .msg-wrap .msg"));
+  for (const el of bubbles) {
+    if (el.classList.contains("formatted")) continue;
+    const raw = el.__raw || el.textContent;
+    el.classList.add("formatted");
+    el.__rendered = renderFormattedBubble(el, raw);
+  }
 }
 
 // Ask the agent to execute a terminal command. Routing it through /api/message
@@ -564,17 +643,6 @@ async function runInstruction(cmd, btn) {
   }
   btn.textContent = "✓ queued";
   setTimeout(() => { btn.textContent = "▶ run"; btn.classList.remove("queued"); }, 2500);
-}
-
-// Refinalize every non-streaming bubble: apply code-block rendering to bubbles
-// that were streamed as plain text or loaded from a transcript. Bubbles with no
-// fences are left untouched so live streaming isn't disturbed.
-function formatAllMessages() {
-  document.querySelectorAll("#messages .msg").forEach((el) => {
-    if (el.classList.contains("formatted")) return;
-    if (!el.__raw) { el.__raw = el.textContent; }
-    renderMessageContent(el, el.__raw);
-  });
 }
 
 function addToolMsg(name, args) {

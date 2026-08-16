@@ -209,8 +209,8 @@ def test_composer_always_visible_and_sessions_switch(browser, gui_url):
 
 
 def test_code_blocks_render_with_copy_and_run_buttons(browser, gui_url):
-    """Fenced code/terminal blocks inside a message render as styled code blocks
-    with copy + run-in-terminal controls."""
+    """Fenced code inside a message render as their OWN special code bubbles —
+    distinct cards in the thread, not inline boxes."""
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(gui_url)
     page.wait_for_selector("#input")
@@ -223,13 +223,16 @@ def test_code_blocks_render_with_copy_and_run_buttons(browser, gui_url):
         formatAllMessages();
     }""")
 
-    # the prose turns into a text block, each fence becomes a .codeblock
-    assert page.locator("#messages .codeblock").count() == 2
+    # the original mixed bubble is replaced: each fence becomes its own
+    # .code-bubble (full-width special card), prose stays in normal bubbles
+    assert page.locator("#messages .code-bubble").count() == 2
     assert page.locator("#messages pre code").nth(0).text_content() == "npm install\nnpm test"
+    # the prose 'Install deps:' / 'Done.' remain as assistant bubbles
+    assert page.locator("#messages .msg.assistant", has_text="Install deps").count() == 1
+    assert page.locator("#messages .msg.assistant", has_text="Done.").count() == 1
 
     # shell block gets a run button; the python one does not
-    shell = page.locator("#messages .codeblock[data-shell=1]")
-    assert shell.count() == 1
-    assert shell.locator(".cb-icorun").count() == 1
-    assert page.locator("#messages .codeblock .cb-copy").count() == 2
-    assert page.locator("#messages .codeblock.cb-icorun, #messages .codeblock .cb-icorun").count() == 1
+    run_btns = page.locator("#messages .code-bubble .cb-icorun")
+    assert run_btns.count() == 1
+    assert run_btns.first.text_content().strip() == "▶ run"
+    assert page.locator("#messages .code-bubble .cb-copy").count() == 2
