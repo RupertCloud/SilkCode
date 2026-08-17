@@ -191,6 +191,12 @@ to the new project (created next to the current one, not inside it); `/new` with
 arguments prompts. Either way the project is added to your recent projects, so the
 GUI's ＋ modal and `/project` offer it later.
 
+**The full how-to** — creating, opening, switching, teaching the agent about a codebase,
+verifying and shipping it, remote/sandboxed projects, and troubleshooting — is at
+[silkcode.web.app/projects.html](https://silkcode.web.app/projects.html)
+([source](docs/projects.html)). The same guide is built into the GUI: the **? How-to**
+button in the PROJECT pane.
+
 **Open a different project mid-session:** `/project` prompts you to pick a project for
 the session — either a GitHub repository you have access to (cloned for you into
 `~/.silkcode/projects/`) or a directory you type in. Passing a spec directly skips the

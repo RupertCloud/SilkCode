@@ -505,3 +505,35 @@ def test_the_diff_panel_says_plainly_when_there_is_nothing(browser, gui_url):
     text = page.text_content("#viewer-pre")
     assert "No uncommitted changes on main." in text
     assert "## " not in text
+
+
+def test_the_projects_howto_opens_and_hands_off_to_the_picker(browser, gui_url):
+    """The how-to is reachable from the PROJECT pane, explains creation (which
+    only the terminal can do) with a copyable command, and can hand the user
+    straight to the project picker."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#tree div", timeout=15000)
+
+    page.click("#projects-help-btn")
+    page.wait_for_selector("#projects-help-modal.open")
+    body = page.text_content("#projects-help-modal")
+    for expected in ("silkcode new", "SILKCODE.md", "python-cli", "workspace lock"):
+        assert expected in body, f"the how-to never mentions {expected!r}"
+
+    # the modal scrolls inside itself rather than growing past the window
+    overflowing = page.evaluate(
+        """() => { const m = document.querySelector('#projects-help-modal .modal');
+                   return m.getBoundingClientRect().height > window.innerHeight; }""")
+    assert not overflowing, "the how-to modal is taller than the window"
+
+    # Escape closes it, like every other dismissible surface
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#projects-help-modal", state="hidden")
+
+    # and "Open a project…" swaps the how-to for the picker
+    page.click("#projects-help-btn")
+    page.wait_for_selector("#projects-help-modal.open")
+    page.click("#projects-help-open")
+    page.wait_for_selector("#project-modal.open")
+    assert not page.is_visible("#projects-help-modal .modal")
