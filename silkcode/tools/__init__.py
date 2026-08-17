@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import files, git, search, shell, symbols, testing
+from ..liveserver import live_server
 from ..github import (
     github_agent_task_get,
     github_agent_task_start,
@@ -119,6 +120,19 @@ _register(Tool(
         "timeout": {"type": "integer", "description": "Timeout in seconds (default 120, max 600)"},
     }, ["command"]),
     func=shell.run_command,
+    kind="command",
+))
+
+_register(Tool(
+    name="live_server",
+    description=("Start (or stop/check) a live preview server for the workspace. It serves the "
+                 "project over HTTP and reloads the open page automatically whenever a file "
+                 "changes — handy while building web pages. No external dependency needed."),
+    parameters=_params({
+        "action": {"type": "string", "description": "start, stop or status (default start)"},
+        "port": {"type": "integer", "description": "Port to listen on (0 picks a free port)"},
+    }, []),
+    func=live_server,
     kind="command",
 ))
 

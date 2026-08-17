@@ -544,7 +544,8 @@ silkcode/
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox
 ├── sandbox_server.py  reference Silk Sandbox Protocol server (self-hosted)
-├── tools/           read/write/edit, glob/grep, run_command, run_tests, git status/diff/log/commit
+├── tools/           read/write/edit, glob/grep, run_command, run_tests, live_server, git status/diff/log/commit
+├── liveserver.py    built-in live preview server: serve the workspace + auto-reload pages on change
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
 ├── swarm.py         multi-agent improvement loop (tester/critic/worker, 0-10 scoring)
 ├── update.py        self-update: pull from git, hot-apply via GUI daemon restart
