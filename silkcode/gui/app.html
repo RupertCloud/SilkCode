@@ -19,6 +19,15 @@
     background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 13px;
   }
   header button { cursor: pointer; } header button:hover { border-color: var(--accent); }
+  /* Controls grouped by consequence, with a rule between the groups: an
+     outward-facing action should not sit at the same weight as a settings
+     button just because both are buttons. */
+  header .hgroup { display: inline-flex; align-items: center; gap: 6px; }
+  header .hgroup + .hgroup { border-left: 1px solid var(--border); padding-left: 12px; }
+  /* Push is the only header control that leaves this machine, and it cannot
+     be taken back once it lands. */
+  header button.outward { border-color: var(--warn); color: var(--warn); font-weight: 600; }
+  header button.outward:hover { background: var(--warn); color: #241d0c; border-color: var(--warn); }
   header .spacer { flex: 1; }
   header .usage { color: var(--dim); font-size: 12px; }
   #status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); display: inline-block; }
@@ -101,6 +110,7 @@
   #viewer { flex: 1; overflow: auto; background: var(--bg); margin: 0 10px 10px; border: 1px solid var(--border); border-radius: 0 6px 6px 6px; }
   #viewer pre { padding: 10px 12px; font: 12px/1.45 var(--mono); white-space: pre; }
   .dline.add { color: var(--ok); } .dline.del { color: var(--err); } .dline.hunk { color: var(--accent); }
+  .dline.quiet { color: var(--dim); }
 
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; align-items: center; justify-content: center; z-index: 10; }
   .modal-bg.open { display: flex; }
@@ -183,16 +193,24 @@
   <button id="new-session" aria-label="New session" title="Start a new conversation">＋</button>
   <button id="close-session" aria-label="Close this session" title="Stop and close this session; releases its workspace lock so another session can take over the project">✕</button>
   <label>Model <select id="model-select"></select></label>
-  <button id="add-model">+ Add model</button>
-  <button id="github-btn">GitHub</button>
-  <button id="env-btn" title="Keys, token usage and running sessions">⚙ Environment</button>
-  <button id="swarm-btn" title="Multi-agent improvement loop: tester, critic and worker iterate until this project scores 10/10">🐝 Swarm</button>
-  <button id="update-btn" title="Pull the latest Silk Code from git; the daemon restarts itself with the new code">↻ Update</button>
   <label>Mode <select id="mode-select">
     <option value="ask">ask</option><option value="edit">edit</option><option value="agent">agent</option>
   </select></label>
-  <button id="revert" title="Undo the last turn's file changes">↩ Revert</button>
-  <button id="push-btn" title="Push the current branch to the remote">⇧ Push</button>
+
+  <span class="hgroup" role="group" aria-label="Repository actions">
+    <button id="revert" title="Undo the last turn's file changes">↩ Revert</button>
+    <button id="push-btn" class="outward"
+            title="Push the current branch to the remote — this leaves your machine">⇧ Push</button>
+  </span>
+
+  <span class="hgroup" role="group" aria-label="Settings and tools">
+    <button id="add-model">+ Add model</button>
+    <button id="github-btn">GitHub</button>
+    <button id="env-btn" title="Keys, token usage and running sessions">⚙ Environment</button>
+    <button id="swarm-btn" title="Multi-agent improvement loop: tester, critic and worker iterate until this project scores 10/10">🐝 Swarm</button>
+    <button id="update-btn" title="Pull the latest Silk Code from git; the daemon restarts itself with the new code">↻ Update</button>
+  </span>
+
   <span class="usage" id="usage"></span>
   <span class="usage" id="session"></span>
 </header>
@@ -859,17 +877,70 @@ function setTab(tab) {
 }
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => { setTab(b.dataset.tab); if (b.dataset.tab === "diff") loadDiff(); });
 
+// `git status --short --branch` leads with a porcelain line like
+// "## main...origin/main [ahead 1]". Printed raw above "(no changes)" it
+// reads as though something is there when nothing is. Turn it into a
+// sentence and keep the file list, which is the part worth reading.
+function describeStatus(status) {
+  const lines = (status || "").split("\n").filter(l => l.trim());
+  const head = lines.find(l => l.startsWith("## ")) || "";
+  const files = lines.filter(l => !l.startsWith("## "));
+  let branch = head.slice(3).split("...")[0].trim();
+  const tracking = head.match(/\[([^\]]+)\]/);   // e.g. "ahead 1, behind 2"
+  if (branch === "No commits yet on") branch = "";
+  return {branch, tracking: tracking ? tracking[1] : "", files};
+}
+
 async function loadDiff() {
   if (activeTab !== "diff") return;
   const data = await api("/api/diff");
   const pre = $("viewer-pre");
   pre.innerHTML = "";
-  const text = (data.status ? data.status + "\n\n" : "") + (data.diff || "(no changes)");
-  for (const line of text.split("\n")) {
+
+  // git reports failures as text through the same field, so a directory
+  // that is not a repository would otherwise be rendered as "1 changed
+  // file" whose name is the error.
+  const failure = [data.status, data.diff]
+    .find(v => (v || "").trim().startsWith("git error"));
+  if (failure) {
     const span = document.createElement("span");
-    span.className = "dline " + (line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : line.startsWith("@@") ? "hunk" : "");
-    span.textContent = line + "\n";
+    span.className = "dline quiet";
+    span.textContent = failure.trim().split("\n")[0] + "\n";
     pre.appendChild(span);
+    return;
+  }
+
+  const {branch, tracking, files} = describeStatus(data.status);
+  const diff = (data.diff || "").trim();
+  const noDiff = !diff || diff === "(no changes)";
+
+  const add = (text, cls) => {
+    const span = document.createElement("span");
+    span.className = "dline " + (cls || "");
+    span.textContent = text + "\n";
+    pre.appendChild(span);
+  };
+
+  const where = branch ? `on ${branch}` : "";
+  if (noDiff && !files.length) {
+    add(["No uncommitted changes", where, tracking && `(${tracking})`]
+        .filter(Boolean).join(" ") + ".", "quiet");
+    return;
+  }
+
+  const count = files.length === 1 ? "1 changed file" : `${files.length} changed files`;
+  add([count, where, tracking && `(${tracking})`].filter(Boolean).join(" "), "quiet");
+  for (const line of files) add("  " + line.trim());
+  if (noDiff) {
+    add("");
+    add("Nothing to diff — the changes are staged or untracked.", "quiet");
+    return;
+  }
+  add("");
+  for (const line of diff.split("\n")) {
+    add(line, line.startsWith("+") ? "add"
+             : line.startsWith("-") ? "del"
+             : line.startsWith("@@") ? "hunk" : "");
   }
 }
 

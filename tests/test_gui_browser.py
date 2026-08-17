@@ -419,6 +419,94 @@ def test_the_credentials_table_says_where_a_missing_key_would_come_from(browser,
     assert "— · $" not in text, "an em-dash placeholder was printed next to a real source"
 
 
+def test_push_is_not_weighted_like_a_settings_button(browser, gui_url):
+    """Push leaves this machine and cannot be taken back. It sat at the same
+    weight as Environment purely because both are buttons."""
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+
+    push = page.locator("#push-btn")
+    assert "outward" in (push.get_attribute("class") or ""), \
+        "Push carries no marking distinguishing it from a settings control"
+    assert "leaves your machine" in (push.get_attribute("title") or "")
+
+    # it renders differently, not just semantically
+    styles = page.evaluate("""() => {
+        const of = id => {
+            const s = getComputedStyle(document.getElementById(id));
+            return {border: s.borderTopColor, weight: s.fontWeight};
+        };
+        return {push: of('push-btn'), env: of('env-btn')};
+    }""")
+    assert styles["push"]["border"] != styles["env"]["border"], \
+        "Push looks identical to a settings button"
+
+    # and the header is grouped rather than one undifferentiated row
+    assert page.locator("header .hgroup").count() >= 2
+    groups = page.evaluate(
+        """() => Array.from(document.querySelectorAll('header .hgroup'))
+                     .map(g => g.getAttribute('aria-label'))""")
+    assert all(groups), "each header group should be named for screen readers"
+
+
+def test_the_diff_panel_does_not_print_raw_porcelain(browser, gui_url):
+    """`git status --short --branch` leads with "## main...origin/main".
+    Printed above "(no changes)" it reads as though something is there."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+    page.click("#tabs button[data-tab='diff']")
+    page.wait_for_function(
+        "() => document.getElementById('viewer-pre').textContent.trim().length > 0")
+
+    text = page.text_content("#viewer-pre")
+    assert "## " not in text, f"porcelain branch line shown to the user: {text!r}"
+    # the fixture workspace is not a repository, so what should appear is
+    # git's own complaint — not "1 changed file" whose name is the error
+    assert "not a git repository" in text, text
+    assert "changed file" not in text, "a git failure was rendered as a file list"
+
+
+def test_the_diff_panel_lists_what_changed(browser, gui_url, tmp_path):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+
+    # the fixture workspace is not a repo; point the panel at a real one
+    page.route("**/api/diff*", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({
+            "status": "## main...origin/main [ahead 1]\n M src/app.py\n?? extra.txt",
+            "diff": "diff --git a/src/app.py b/src/app.py\n@@ -1 +1 @@\n-old\n+new\n",
+        })))
+    page.click("#tabs button[data-tab='diff']")
+    page.wait_for_function(
+        "() => document.getElementById('viewer-pre').textContent.includes('changed file')")
+
+    text = page.text_content("#viewer-pre")
+    assert "2 changed files on main" in text
+    assert "ahead 1" in text, "tracking state is worth surfacing"
+    assert "src/app.py" in text and "extra.txt" in text
+    assert "## " not in text
+
+
+def test_the_diff_panel_says_plainly_when_there_is_nothing(browser, gui_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+    page.route("**/api/diff*", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"status": "## main...origin/main", "diff": "(no changes)"})))
+    page.click("#tabs button[data-tab='diff']")
+    page.wait_for_function(
+        "() => document.getElementById('viewer-pre').textContent.includes('No uncommitted')")
+
+    text = page.text_content("#viewer-pre")
+    assert "No uncommitted changes on main." in text
+    assert "## " not in text
+
+
 def test_the_projects_howto_opens_and_hands_off_to_the_picker(browser, gui_url):
     """The how-to is reachable from the PROJECT pane, explains creation (which
     only the terminal can do) with a copyable command, and can hand the user
