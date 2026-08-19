@@ -1,9 +1,14 @@
 # Silk Cloud — a fully hosted Silk Code
 
-**Status: design.** Nothing in this document is implemented yet. It is the
-architecture for taking the local-first harness in this repository and running
-it as a hosted product: sign in with GitHub, pick a repo, start working — no
-`pip install`, no API keys, no local model server.
+**Status: design, with pieces now landed.** The hosted product does not exist
+yet, but parts of this design have since been built on `main` and this document
+has been corrected to match: the sandbox credential boundary (§8) is
+implemented in `gitproxy.py`, and `redact.py` covers a secret-leak path §8
+originally missed. Where the code and this document disagree, the code wins.
+
+It is the architecture for taking the local-first harness in this repository
+and running it as a hosted product: sign in with GitHub, pick a repo, start
+working — no `pip install`, no API keys, no local model server.
 
 The guiding constraint is unchanged from the README:
 
@@ -22,13 +27,20 @@ This document is long. The short version:
 Every serious competitor — Claude Code, Cursor, Copilot — is American and tied
 to one American AI company: their price, their model, your code sent to them.
 
-**Who we are building for.** Universities, ministries and organizations across
-Africa, Asia and Latin America. They want AI in their software work and have
-three needs no US tool meets together: **cheaper models**, **their own
-machines**, and **their own rules about where code goes**. Silk Code already
-does all three — cheap providers, Ollama/vLLM on their own hardware, and an MIT
-licence anyone can read, teach from and modify. The incumbents cannot copy
-this, because their product *is* their model.
+**Who we are building for.** Banks and fintechs, governments, universities and
+smaller companies across Africa, Asia and Latin America. They want AI in their
+software work and have three needs no US tool meets together: **cheaper
+models**, **their own machines**, and **their own rules about where code
+goes**. Silk Code already does all three — cheap providers, Ollama/vLLM on
+their own hardware, and an MIT licence anyone can read, teach from and modify.
+The incumbents cannot copy this, because their product *is* their model.
+
+**Who pays first is probably financial services.** For a regulated bank,
+keeping source code in-country is a rule, not a preference — so where
+regulation blocks the US tools, our competition is not Copilot, it is *nothing*.
+Banks and fintechs also have budget, infrastructure and a normal way to buy
+software. Universities and ministries matter strategically, but they are slower
+and poorer. See §14.5.
 
 **What "Cloud" adds.** Today Silk Code is one person on one laptop. Cloud makes
 it serve a whole institution: everyone signs in, work runs on the institution's
@@ -64,8 +76,29 @@ there is no vendor, invoice or accountable party. Open source wins the security
 review; the contract is what makes adoption possible. §14 has the detail,
 including which parts stay MIT and which are commercial.
 
-Everything below is the detail behind those paragraphs. §14 is what customers
-buy, §13 the market, §12 the money, §11 the roadmap, §§2–9 the architecture.
+**Is coding a big enough market?** As a wedge, yes; as the whole business,
+probably not. What this repository actually contains is an *agent runtime* —
+model routing, tool calling, permissions, sandboxing, sessions, MCP — of which
+coding is the first application. Coding is the right opening because it is
+measurable, has an identifiable buyer, and already works. The platform then
+expands *inside the account*, after delivery. Broaden the platform, not the
+pitch. §15.
+
+**How it reaches institutions.** Not through marketing spend. The free MIT tool
+creates champions inside organizations; universities are a channel rather than
+only a customer, because their students become the developers who ask for it;
+local partners carry the contract and the vendor approval. The step everyone
+gets wrong is the handoff from champion to procurement — build the security
+whitepaper, DPA template and price sheet early, because without them bottom-up
+adoption stalls exactly when it should become revenue. §16.
+
+Everything below is the detail behind those paragraphs. §16 is distribution,
+§15 the market size, §14 what customers buy, §13 the market, §12 the money,
+§11 the roadmap, §§2–9 the architecture.
+
+**To act on this rather than read it**, start with
+[CLOUD_WORKSHEET.md](CLOUD_WORKSHEET.md) — the five decisions, five facts and
+three proofs that everything here is waiting on.
 
 ---
 
@@ -432,12 +465,28 @@ competing one.
 - **Repo access:** the GitHub App's *installation* token, scoped to the repos
   the user selected, minted per session and short-lived. The user's own OAuth
   token should never be written into the container.
-- **Git credentials in the container:** a credential helper that fetches a
-  fresh token from the control plane on demand, so nothing durable sits on disk.
+- **Git credentials in the container: already solved, and better than this
+  document originally specified.** `silkcode/gitproxy.py` (on `main`) does not
+  give git the token at all — the clone's origin points at a loopback proxy
+  that adds the `Authorization` header on the way out, so the credential never
+  exists as a string anywhere the agent can read it. That closes `printenv`,
+  `git remote -v`, `cat .git/config`, and a `pre-push` hook the agent wrote
+  itself. It also scopes to one repository. Cloud should adopt this as-is
+  rather than the weaker "short-lived credential helper" idea it replaces.
 - **User secrets** (a project's own `.env`, test database URLs): encrypted at
   rest in the control plane, injected at container start. Accept that a user
   with shell access can read their own secrets — that is fine, they are theirs.
   What must never appear is *Silk's* secrets or *another tenant's*.
+- **Tool output is published to the model provider**, and this document
+  originally missed it. Whatever a command prints goes into the conversation,
+  and the conversation goes to whichever provider is answering — so a
+  `printenv`, a stack trace carrying a connection string, or a curl transcript
+  with an `Authorization` header leaks a live secret to a third party. This is
+  *sharper* under pooled credits (§5), because the traffic also transits our
+  gateway: we become a party to every such disclosure. `silkcode/redact.py`
+  (on `main`) is the backstop and is explicit that it is a backstop, not a
+  boundary. Cloud inherits it and must also state its own retention and
+  provider-training position (§17).
 
 ---
 
@@ -839,7 +888,8 @@ Three structural facts, each of which breaks a standard SaaS assumption:
 1. **Per-seat monthly pricing fails.** $20–30/month is a meaningful share of a
    developer's salary in much of this market, and a university with 5,000
    computing students cannot pay 5,000 × anything. Charge the *institution*,
-   not the seat.
+   not the seat. (One exception, and it is a large one: regulated financial
+   institutions pay per developer at enterprise rates — see §14.5.)
 2. **Collection is a real engineering and legal problem, not a checkbox.**
    International card penetration is low, corporate cards rarer, and FX
    controls and repatriation rules are real. Mobile money and local rails
@@ -986,7 +1036,7 @@ costs an individual developer nothing, because a single user never needed it.
 That asymmetry is what makes open-core work here rather than being a tax on
 goodwill.
 
-Licence choice for the commercial half is a live decision (§15) — permissive,
+Licence choice for the commercial half is a live decision (§17) — permissive,
 copyleft, or source-available all behave differently when a large cloud decides
 to resell us.
 
@@ -998,19 +1048,81 @@ sold:
 
 | Segment | Buying | Product | Cycle |
 | --- | --- | --- | --- |
+| **Bank / regulated financial** | Regulatory compliance, code that provably never leaves, audit trail | On-prem appliance + support + SLA + audit | 9–18 months, vendor-risk gated |
+| **Fintech / payments** | The same, with less legacy and more urgency | Appliance or in-region private deployment | Months — the fastest of the serious buyers |
 | **Government / ministry** | Sovereignty, accountability, compliance, local presence | Self-hosted appliance + support + SLA | Longest, largest, tender-based |
 | **Department / agency unit** | A working setup someone maintains | Appliance or in-region hosting, smaller contract | Medium, budget-holder decides |
 | **University / campus** | Multi-user, SSO, teaching material, research freedom | Annual institution licence + training | Annual, procurement-gated |
 | **School** | Something turnkey, plus curriculum | Hosted, or a very simple appliance; often grant-funded | Short but tiny budget — volume play |
 | **SME** | Working AI coding with no IT department | **Hosted, self-serve, pay as you go** | Immediate, card or mobile money |
 
-That last row matters more than it looks: **SMEs rescue the hosted product.**
-They will never run a cluster, so the pooled-credit hosted service in §§3–7 is
-exactly right for them — it is simply not what a ministry buys. Both products
-have a home, and §13.4's reordering is about which one earns first, not about
-abandoning either.
+Two rows carry more weight than the rest. **SMEs rescue the hosted product** —
+they will never run a cluster, so the pooled-credit service in §§3–7 is exactly
+right for them even though it is not what a ministry buys. And **banks and
+fintech are where the money is**, for reasons that invert several assumptions
+made earlier in this document.
 
-### 14.5 The honest risks
+### 14.5 Banks and fintech invert the assumptions
+
+§13 was written around institutions with small budgets, slow procurement and
+weak infrastructure. Regulated financial institutions are the opposite on every
+axis, and they are the best-fitting customer in the document:
+
+- **Regulation makes it mandatory, not preferred.** Central-bank rules on data
+  residency and third-party processing mean many banks *cannot* send source
+  code to a foreign AI service at all. This is a hard bar, not a preference —
+  and the strongest possible version of the §13.1 sovereignty argument.
+- **There is no incumbent to displace.** Where regulation blocks the US tools,
+  the alternative is not Copilot — it is *no AI coding tooling*. Competing
+  against nothing is a far better position than competing with Cursor on
+  features.
+- **They have money.** Unlike a university, a bank has a real software budget
+  and is used to paying six figures for developer tooling.
+- **They have infrastructure and know how to buy.** Own datacentres, security
+  teams, existing procurement paths for licensed software with support. The
+  appliance is the natural shape for them.
+- **They have developers at scale.** Core banking, mobile money, payment
+  integrations — real seat counts, not a pilot classroom.
+
+**Open source is an advantage here, not a complication.** Banks routinely
+require *source-code escrow* so they are not stranded if a vendor fails; an
+MIT harness satisfies that by construction. Their security team can audit the
+code directly, turning what is normally a six-month third-party-risk blocker
+into a selling point.
+
+What they demand on top of §14.1: vendor risk assessment, penetration-test
+reports, immutable audit logs of what the AI touched, role-based access and
+segregation of duties, strict network segmentation or air-gap, data-loss
+guarantees, liability and indemnity terms, and business-continuity commitments.
+
+Three consequences:
+
+1. **Per-seat pricing works here** — the §13.2 objection is an
+   education-and-government constraint, not a universal one. Price banks per
+   developer at enterprise rates and institutions per site; the products are
+   the same, the price metric is not.
+2. **Audit logs and RBAC move up the roadmap.** They sit in M4 today (§11.7).
+   For this segment they are not a later tier, they are table stakes for the
+   first conversation.
+3. **Fintech is the better beachhead than banks.** Mobile-money operators,
+   payment processors and digital banks have the same regulatory driver with
+   less legacy and far shorter cycles. Land fintech first, use it as the
+   reference that survives a bank's vendor-risk review.
+
+**The honest obstacle is third-party risk management.** A young company with no
+SOC 2, no audited financials and few references will struggle to clear a tier-1
+bank's onboarding, however good the product is. Two mitigations: start with
+fintechs and mid-tier banks whose process is lighter, and partner with a local
+systems integrator who has already cleared vendor onboarding and can carry the
+contract (§13.3's partner line, which pays off twice here).
+
+**This is plausibly who pays first.** Universities remain strategically
+valuable — adoption, talent, references, teaching — but they are slow and poor.
+Financial services can fund the company while education builds the ecosystem,
+and §13.4's roadmap ordering holds either way, since both need multi-user,
+per-org model routing and the installer before anything else.
+
+### 14.6 The honest risks
 
 - **Some will self-host and never pay.** They will. Universities especially.
   Treat them as references, talent pipeline and credibility rather than lost
@@ -1024,7 +1136,207 @@ abandoning either.
   for an SME, *"because you would need an engineer you do not have."* Rehearse
   it; it is the objection that decides deals.
 
-## 15. Open questions
+## 15. Is coding a big enough market?
+
+### 15.1 What is actually in this repository is not a coding tool
+
+Read `silkcode/` as an outsider and the coding parts are the smallest part of
+it. What is really there is an **agent runtime**: a model-agnostic provider
+layer, a tool-calling loop, a permission and approval model
+(`permissions.py`), sandboxed execution (`execbackend.py`), session
+persistence, skills and memory, and **MCP support** (`mcp.py`) for attaching
+arbitrary external tools.
+
+Coding is the first *application* of that runtime, not the runtime itself. The
+file, git and shell tools are the coding application; swap them for an
+institution's own systems over MCP and the same harness does procurement
+review, data analysis, or back-office automation.
+
+So the honest positioning is **a sovereign AI agent platform, starting with
+software development** — and every hard part of it (model neutrality, running
+on their infrastructure, permissioned actions, audit) transfers to every other
+application unchanged.
+
+### 15.2 Broaden the platform, not the pitch
+
+The failure mode is obvious and common: reposition as "an AI platform for
+everything," and become vapourware to every buyer. Coding is the right wedge
+precisely because it is narrow:
+
+- **It is measurable.** Code shipped, tests passing, review time saved. Most
+  agent use cases cannot show that in a pilot.
+- **The buyer is identifiable.** A head of engineering exists, has a budget,
+  and feels the problem. "AI for the organization" has no such owner.
+- **It is already built.** V0.1 works today.
+
+The expansion is **within the account, after delivery** — land a bank's
+engineering team on coding, then sell the same platform to their operations
+and compliance functions once it is already installed, approved and trusted.
+Land-and-expand, not a broader opening pitch.
+
+**MCP is the mechanism** and it is already in the codebase. An institution
+connects its own systems as MCP servers and the harness does non-coding work
+without us writing a single integration. That is the cheapest possible route
+from "coding tool" to "platform," and it is mostly a packaging and
+documentation exercise rather than new engineering.
+
+### 15.3 Size it by institutions, not by developers
+
+"Developers × monthly seat price" is the wrong sum for this market and makes
+coding look far too small. The right one is **institutions × contract value**.
+
+A single bank on a platform contract is worth several hundred individual
+subscriptions, and platform contracts grow inside the account as more
+departments adopt. That changes the arithmetic from a thin developer-tools
+market into an enterprise-software one — which is what §14.5 is really saying.
+
+Two honest caveats. **Coding alone, in emerging markets alone, is probably not
+a venture-scale market** — the platform expansion in §15.2 is what makes the
+ceiling high enough, and it should be a deliberate plan rather than a hope.
+And **sovereignty demand is not limited to these regions**; European public
+sector and regulated industries want the same thing. That is expansion room,
+not a reason to lose focus now.
+
+### 15.4 Which other fields, and how to pick them
+
+"Which industries could use an AI agent" is not a useful question — the answer
+is all of them. The useful one is which fields share the four properties that
+make *this* architecture the right one:
+
+1. **The data cannot leave.** Sovereignty is the whole pitch; a field without
+   that constraint is one where we have no advantage over Copilot.
+2. **The agent must take actions, not just answer.** Tool calling, permission
+   prompts and audit are what we built. If a chatbot would do, we are overkill.
+3. **The output is checkable.** This is the strongest predictor of success and
+   the most commonly ignored. Coding works for agents because tests pass or
+   fail. A field with a verifiable result — the query runs, the plan applies,
+   the report reconciles, the clause matches the template — will work. "Write
+   me a strategy" will disappoint and burn credibility.
+4. **The work is artifact-shaped.** Files in a directory, versioned and
+   diffable. The `Workspace` model transfers directly, and version history is
+   itself valuable to regulated buyers.
+
+That filter produces three tiers, in order of how little new engineering each
+needs:
+
+**Tier 1 — same workspace, different file types.** Barely new domains at all:
+data and analytics engineering (SQL, dbt, notebooks), infrastructure and DevOps
+(Terraform, Kubernetes manifests, CI configs), security engineering (patching,
+detection rules, incident runbooks), and QA automation — `tools/testing.py`
+already exists. New prompts and a few tools; the rest is unchanged.
+
+**Tier 2 — documents as artifacts.** New tools, same runtime: regulatory and
+compliance reporting (banks file enormous volumes of rule-bound, versioned
+documents — plausibly the highest-value non-coding use in a bank), procurement
+and tender documents for government and universities, contract review, and
+grant writing and reporting for the donor-funded programmes in §13.3. Git
+history over documents is a feature to a regulator, not an accident.
+
+**Tier 3 — their systems, over MCP.** Back-office operations, reconciliation
+and exception handling, ticket triage, research assistance, public-service
+delivery. Highest value and highest stakes, because the agent is acting on live
+systems — which is exactly where permissions and audit earn their keep.
+
+**Poor fits, named so they are not drifted into.** Customer-facing chat and
+support bots are a different product with different constraints, commoditised
+and competitive. Purely generative-creative work has no verification and no
+sovereignty driver. Clinical decision support carries regulatory and liability
+weight a small company should not take on.
+
+**The selection rule is not "which market is biggest."** It is: *what else does
+this buyer, in this account, already own?* Expansion follows the org chart, not
+the industry analyst. For a bank: coding → data engineering → infrastructure →
+security → compliance reporting → back-office, where the first four report to
+the same person. For a university: coding → research computing → grant
+reporting → administration. For government: coding → procurement documents →
+service delivery.
+
+Every one of these needs the same four things already built — the model on
+their infrastructure, permissioned tool calling, an audit trail, and a
+versioned workspace. That is what makes this one platform rather than six
+products.
+
+## 16. Distribution: getting into institutional hands
+
+We cannot outspend anyone on marketing, and institutional buying in these
+markets is relationship-led rather than inbound-led. Distribution therefore has
+to be structural, not promotional.
+
+### 16.1 Open source is the marketing budget
+
+`pip install silkcode` is the top of the funnel. A developer inside a bank
+tries it on their own machine, likes it, and becomes an internal champion —
+who then asks for the version the organization can actually deploy. Bottom-up
+adoption creating top-down demand is the only motion that costs us nothing per
+prospect.
+
+This makes the free local tool a **distribution asset, not a giveaway**, and it
+argues for spending real effort on first-run experience, documentation and
+install reliability — the things that decide whether a curious developer
+becomes a champion.
+
+### 16.2 Universities are a channel, not only a customer
+
+The most valuable thing a university gives us is not its licence fee. Students
+learn on Silk Code, graduate, join banks, fintechs and ministries, and ask for
+the tool they already know. That is how MATLAB, SAS, AutoCAD and JetBrains won
+their enterprise markets, and it is a two-to-four year pipeline that compounds.
+
+Reframed: **academic licensing is a marketing expense, not a revenue line.**
+Price it accordingly — free or near-free, with training and curriculum as the
+paid part — and measure it on graduates placed, not fees collected.
+
+### 16.3 Partners carry the contract
+
+Local systems integrators and resellers already have the relationships, the
+vendor approvals and the ability to invoice locally (§13.2). Giving them margin
+buys distribution we cannot build ourselves, and it solves the vendor-risk
+problem in §14.5 at the same time.
+
+Train and certify them so deployments scale without our headcount. A partner
+who can install and support it is worth more than an ad campaign.
+
+### 16.4 The champion-to-procurement handoff
+
+**This is the highest-leverage thing in this section, and where most
+open-source companies fail.** A champion who loves the tool still has to get it
+through their organization, and they cannot do that with enthusiasm alone. They
+need artifacts:
+
+- a security whitepaper and architecture overview
+- a data-processing agreement template
+- a penetration-test summary
+- a clear price sheet with the institutional shape (§14.4)
+- two reference customers they can name
+
+Build that pack early — it is cheap, it is reusable, and without it every
+bottom-up adoption stalls at exactly the moment it was about to become revenue.
+
+### 16.5 The rest of the channel mix
+
+- **Regulator and ministry relations.** Getting onto an approved-vendor list,
+  or being referenced in a national AI strategy, outperforms any amount of
+  advertising in this market.
+- **Developer communities.** Local meetups, hackathons and training networks
+  are strong, underserved and high-trust. Cheap, and they feed §16.1.
+- **Industry bodies.** Banking and fintech associations, and national research
+  and education networks, are where institutional buyers already cluster.
+- **Proof over promotion.** A live demo running against *their* model on
+  modest hardware persuades this buyer more than any deck. Reference logos are
+  the dominant buying signal — the first flagship customer is worth
+  disproportionate effort and discount.
+
+### 16.6 What not to do
+
+Do not buy ads against Copilot or Cursor keywords; we lose that auction and the
+comparison. Do not lead with "cheaper than Copilot" — it invites a price war
+and ignores that for many of these buyers the US tools are not an option at all
+(§14.5). Do not pitch the platform before delivering the wedge. And do not
+launch a public hosted service to "get traction" before an institution has
+paid — §13.4 already sequenced that, and marketing pressure is exactly what
+tends to reverse it.
+
+## 17. Open questions
 
 - **Warm pool from day one?** Cold Pod plus clone is seconds. The pool is the
   fix, but it means paying for idle capacity on our own nodes — a direct cost
