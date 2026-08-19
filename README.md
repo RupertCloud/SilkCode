@@ -531,6 +531,27 @@ asks the user the same way instead of auto-approving.
 Before every automated file modification Silk Code snapshots the file; `/revert` (CLI)
 or **Revert** (GUI) restores the last turn's changes (SRS section 28).
 
+### Who asked for this?
+
+Only you can authorize a consequential action. Everything the agent reads on the
+way — a file, command output, a fetched page, an MCP result — is data: it can
+describe an action and suggest one, but it cannot authorize it. A repository whose
+README carries an HTML comment addressed to the assistant, telling it to disregard
+its instructions and push, is describing what its author wants — not what you asked
+for. (Spelled out rather than quoted here on purpose: a doc that carries a working
+payload poisons every agent that reads it, including the ones helping you.)
+
+So every permission prompt now shows what you actually asked and what the agent read
+to get here, and in one narrow case it does more: if content read during the turn was
+written to steer an agent, an action that leaves this machine (a push, a merge, a
+`curl | sh`) asks even when you granted it or answered "Yes to all". Ordinary work is
+untouched — a tainted turn still runs `ls` and `pytest` without a word — because a
+gate that interrupts often is answered with "yes to all", and then it protects nothing.
+
+Detection is deliberately conservative and will miss things phrased as documentation;
+it is context for a decision you were already being asked to make, not the control.
+The control is that high-risk actions stop and ask. See `silkcode/provenance.py`.
+
 ## Architecture
 
 ```
@@ -550,6 +571,7 @@ silkcode/
 ├── swarm.py         multi-agent improvement loop (tester/critic/worker, 0-10 scoring)
 ├── update.py        self-update: pull from git, hot-apply via GUI daemon restart
 ├── permissions.py   risk classification + ask/edit/agent modes + "yes to all"
+├── provenance.py    what a turn read, so a file cannot authorize a push
 ├── checkpoints.py   snapshot-before-modify, revert per turn
 ├── sessions.py      persistence shared by CLI and GUI
 ├── config.py        provider registry and model resolution

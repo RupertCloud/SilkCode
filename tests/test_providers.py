@@ -233,3 +233,53 @@ def test_build_provider_retries_from_config():
     assert p.retries == 5 and p.retry_delay == 0.5
     with pytest.raises(ProviderError, match="retries"):
         build_provider("x", {"type": "openai_compat", "base_url": "http://h/v1", "retries": "lots"})
+
+
+def test_the_cli_starts_without_importing_an_http_stack():
+    """httpx costs most of the interpreter's startup, and the commands people
+    run most often — sessions, config, env, --help — never talk to a model.
+
+    Measured in a fresh interpreter, because this session has already
+    imported everything.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys, silkcode.cli.main;"
+        "print('httpx' if 'httpx' in sys.modules else 'clean')"
+    )
+    out = subprocess.run([sys.executable, "-c", probe],
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "clean", (
+        "importing the CLI pulled in httpx; something in the import chain "
+        "reaches a provider or an HTTP client at module level")
+
+
+def test_a_provider_still_loads_when_one_is_actually_built():
+    """Laziness must not become breakage."""
+    from silkcode.providers import build_provider
+
+    provider = build_provider("x", {"type": "openai_compat",
+                                    "base_url": "http://127.0.0.1:1/v1"})
+    assert provider.__class__.__name__ == "OpenAICompatProvider"
+    ollama = build_provider("y", {"type": "ollama", "base_url": "http://127.0.0.1:1"})
+    assert ollama.__class__.__name__ == "OllamaProvider"
+
+
+def test_the_provider_classes_are_still_importable_by_name():
+    """`from silkcode.providers import OllamaProvider` is public API."""
+    from silkcode.providers import OllamaProvider, OpenAICompatProvider
+
+    assert OllamaProvider.__name__ == "OllamaProvider"
+    assert OpenAICompatProvider.__name__ == "OpenAICompatProvider"
+
+
+def test_an_unknown_provider_type_is_still_rejected():
+    import pytest as _pytest
+
+    from silkcode.providers import ProviderError, build_provider
+
+    with _pytest.raises(ProviderError, match="Unknown provider type"):
+        build_provider("x", {"type": "not-a-thing", "base_url": "http://x"})

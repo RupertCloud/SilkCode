@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import weakref
 from enum import IntEnum
 from typing import Callable
 
@@ -116,12 +117,19 @@ class PermissionManager:
     MODES = ("ask", "edit", "agent")
 
     def __init__(self, mode: str = "ask", asker: Asker | None = None,
-                 grants: set[str] | list[str] | None = None):
+                 grants: set[str] | list[str] | None = None,
+                 provenance=None):
         if mode not in self.MODES:
             raise ValueError(f"Unknown permission mode '{mode}'; expected one of {self.MODES}")
         self.mode = mode
         self.asker: Asker = asker or (lambda prompt: "no")
         self.grants: set[str] = {g for g in (grants or []) if g in GRANTABLE}
+        # Where this turn's instructions came from. Only the human's request
+        # can authorize a consequential action; anything the agent read is
+        # data. See silkcode/provenance.py.
+        self._watched: "weakref.WeakSet" = weakref.WeakSet()
+        self._provenance = None
+        self.provenance = provenance
         self._always_write = False
         self._always_commands: set[str] = set()
         self._always_all = False
@@ -143,14 +151,56 @@ class PermissionManager:
             return True
         return decision == "yes"
 
+    @property
+    def provenance(self):
+        """The most recently registered turn record, kept for callers that
+        read this attribute directly. The gate itself uses every watched
+        record, not just this one."""
+        return self._provenance
+
+    @provenance.setter
+    def provenance(self, value) -> None:
+        self._provenance = value
+        self.watch(value)
+
+    def watch(self, provenance) -> None:
+        """Follow an agent's turn record. A swarm gives several agents one
+        permission manager, and any of them can be the one that read a
+        poisoned file, so this tracks all of them rather than only the first.
+        The reference is weak and counts only while a turn is running: a
+        worker that finished an hour ago must not still be gating pushes."""
+        if provenance is not None:
+            self._watched.add(provenance)
+            if self._provenance is None:
+                self._provenance = provenance
+
+    def _live(self) -> list:
+        """Turn records for turns that are actually running right now."""
+        return [p for p in list(self._watched) if getattr(p, "active", False)]
+
+    def _tainted(self) -> bool:
+        """Whether this turn has read content written to steer the agent."""
+        return any(p.tainted for p in self._live())
+
+    def _context(self) -> str:
+        """Provenance to show with a prompt, as a trailing block or ""."""
+        parts = [p.explain() for p in self._live()]
+        joined = "\n".join(p for p in parts if p)
+        return f"\n\n{joined}" if joined else ""
+
     def check_command(self, command: str) -> bool:
-        if self._always_all:
-            return True
         risk = classify_command(command)
+        # An action that reaches outside this machine is the one case where a
+        # standing approval is not enough: if this turn read something that
+        # tried to give the agent orders, the human sees it before it lands.
+        outward = risk == Risk.HIGH
+        if self._always_all and not (outward and self._tainted()):
+            return True
         if risk == Risk.LOW:
             return True
         operation = git_operation(command)
-        if operation is not None and operation in self.grants:
+        if operation is not None and operation in self.grants \
+                and not (outward and self._tainted()):
             return True
         if risk == Risk.MEDIUM:
             if self.mode == "agent":
@@ -158,12 +208,14 @@ class PermissionManager:
             head = command.strip().split()[0] if command.strip() else command
             if head in self._always_commands:
                 return True
-            decision = self.asker(f"Run command ({risk.name} risk): {command}")
+            decision = self.asker(f"Run command ({risk.name} risk): {command}"
+                                  + self._context())
             if decision == "always":
                 self._always_commands.add(head)
                 return True
             return decision == "yes"
-        return self.asker(f"Run HIGH-RISK command: {command}") == "yes"
+        return self.asker(f"Run HIGH-RISK command: {command}"
+                          + self._context()) == "yes"
 
     def check_mcp(self, qualified_name: str) -> bool:
         """External MCP tools are treated like medium-risk commands."""
