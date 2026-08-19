@@ -18,20 +18,21 @@ sections 67-68).
 
 ## Install
 
-Without building from source — grab the wheel from the
-[latest release](https://github.com/RupertCloud/SilkCode/releases/latest):
-
 ```bash
-pip install https://github.com/RupertCloud/SilkCode/releases/download/v0.1.0/silkcode-0.1.0-py3-none-any.whl
+pip install git+https://github.com/RupertCloud/SilkCode
 # or isolated, with pipx:
-pipx install https://github.com/RupertCloud/SilkCode/releases/download/v0.1.0/silkcode-0.1.0-py3-none-any.whl
+pipx install git+https://github.com/RupertCloud/SilkCode
 ```
 
-Or from source:
+Or from a clone, for working on Silk Code itself:
 
 ```bash
-pip install -e .          # from a clone of this repository
+pip install -e .
 ```
+
+Once a tagged release is published, the wheel from the
+[latest release](https://github.com/RupertCloud/SilkCode/releases/latest) installs the
+same way — `pip install <url-of-the-.whl>` — without needing git on the machine.
 
 Requires Python 3.10+. The only runtime dependency is `httpx`.
 

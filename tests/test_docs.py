@@ -172,3 +172,59 @@ def test_the_gui_exposes_the_howto_and_can_open_a_project_from_it():
 
 def test_the_gui_howto_points_at_the_published_page():
     assert "silkcode.web.app/projects.html" in APP.read_text(encoding="utf-8")
+
+
+# ---- the install instructions point at something that exists ----------------
+
+README = ROOT / "README.md"
+_RELEASE_ASSET = re.compile(r"releases/download/(v[^/\s)]+)/")
+
+
+def _git(*args: str) -> str | None:
+    import subprocess
+    try:
+        out = subprocess.run(["git", *args], cwd=ROOT, capture_output=True,
+                             text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() if out.returncode == 0 else None
+
+
+def _tags() -> set[str] | None:
+    """The repository's tags, or None when git cannot tell us.
+
+    A shallow clone reports no tags whether or not any exist, which would turn
+    a real, correctly documented release into a failure. CI checks out with
+    fetch-depth: 0 for exactly this; anywhere else we decline to judge.
+    """
+    if _git("rev-parse", "--is-shallow-repository") == "true":
+        return None
+    listed = _git("tag")
+    return set(listed.split()) if listed is not None else None
+
+
+@pytest.mark.parametrize("path", [README, LANDING, HOWTO],
+                         ids=["readme", "landing", "howto"])
+def test_no_page_tells_people_to_install_a_release_that_does_not_exist(path):
+    """The README and the landing page both once led with
+
+        pip install https://.../releases/download/v0.1.0/silkcode-0.1.0-...whl
+
+    while no release had been published, so the very first command a new user
+    ran returned 404. A documented release asset is only real once the tag is.
+    """
+    tags = _tags()
+    if tags is None:
+        pytest.skip("shallow or non-git checkout; the tag list is not trustworthy")
+    referenced = set(_RELEASE_ASSET.findall(path.read_text(encoding="utf-8")))
+    missing = sorted(referenced - tags)
+    assert not missing, (
+        f"{path.name} documents a download from {missing}, which is not a tag in "
+        "this repository. Cut the release first, or document `pip install "
+        "git+https://github.com/RupertCloud/SilkCode` instead.")
+
+
+def test_the_install_command_we_do_document_is_one_that_works_today():
+    text = README.read_text(encoding="utf-8")
+    assert "pip install git+https://github.com/RupertCloud/SilkCode" in text
+    assert "pip install -e ." in text, "the from-a-clone path is still worth showing"

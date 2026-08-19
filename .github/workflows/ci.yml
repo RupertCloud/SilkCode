@@ -13,6 +13,11 @@ jobs:
         python-version: ["3.10", "3.12"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # tests/test_docs.py checks that a documented release download URL
+          # corresponds to a tag that exists; the default shallow checkout
+          # fetches no tags, so it would call every real release a phantom
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}

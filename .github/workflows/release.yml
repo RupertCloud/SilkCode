@@ -23,6 +23,23 @@ jobs:
       - run: pip install -e ".[dev]" build
       - run: pytest -q
       - run: python -m build
+      # pytest above runs against the source tree, which is not what anyone
+      # installs. A wheel that is missing gui/app.html passes every test in
+      # this repository and then fails on the user's first `silkcode gui`.
+      - name: Smoke-test the wheel we are about to publish
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/relcheck
+          /tmp/relcheck/bin/pip install --quiet dist/*.whl
+          cd /tmp   # outside the checkout, so nothing resolves via the source tree
+          /tmp/relcheck/bin/silkcode --help > /dev/null
+          /tmp/relcheck/bin/python - <<'PY'
+          import pathlib, silkcode, silkcode.cli, silkcode.gui.server, silkcode.scaffold
+          page = pathlib.Path(silkcode.__file__).parent / "gui" / "app.html"
+          assert page.is_file() and page.stat().st_size > 10_000, \
+              f"the GUI page did not make it into the wheel: {page}"
+          print("wheel smoke test passed:", silkcode.__file__)
+          PY
       - name: Resolve tag and version
         run: |
           TAG="${{ github.event.inputs.version || github.ref_name }}"
