@@ -62,6 +62,13 @@ class Agent:
         # Per-owner optimistic-concurrency registry for the file tools: this
         # agent's reads/writes never mask another session's stale base.
         self._fp_registry: dict = {}
+        # Where this turn's instructions came from, so the permission gate
+        # can tell the human whether an outward-facing action traces back to
+        # their request or to something the agent read.
+        from ..provenance import TurnProvenance
+        self.provenance = TurnProvenance()
+        if hasattr(permissions, "watch"):
+            permissions.watch(self.provenance)
         # Literal credentials this installation holds, so tool output that
         # happens to print one is scrubbed before it reaches the provider.
         # Resolved once per agent: it reads the config and the environment.
@@ -100,6 +107,7 @@ class Agent:
             set_attribution(model=f"{self.provider.name}/{self.model}", session=self.session_id)
         self.stop_requested = False
         self.checkpoints.begin()
+        self.provenance.begin(user_input)
         self.messages.append({"role": "user", "content": user_input})
         try:
             for _ in range(MAX_STEPS):
@@ -123,6 +131,7 @@ class Agent:
             return "Stopped: reached the maximum number of agent steps for one turn."
         finally:
             clear_attribution()  # attribution never outlives the turn
+            self.provenance.end()  # nor does what this turn read
 
     def _scrub(self, output: str) -> str:
         """Remove credentials from tool output before it joins the
@@ -238,6 +247,9 @@ class Agent:
         self.on_event("tool_start", {"name": call.name, "args": args})
         if tool is None:
             output = self._execute_mcp(call.name, args)
+            # An MCP result is the least trusted content the agent sees: it
+            # came off the network, through a server this process does not own.
+            self._note_source(call.name, args, output)
             self.on_event("tool_result", {"name": call.name, "output": output})
             return output
         try:
@@ -248,8 +260,19 @@ class Agent:
             output = f"Error: bad arguments for {call.name}: {exc}"
         except Exception as exc:  # surface unexpected failures to the model
             output = f"Error: {type(exc).__name__}: {exc}"
+        self._note_source(call.name, args, output)
         self.on_event("tool_result", {"name": call.name, "output": output})
         return output
+
+    def _note_source(self, name: str, args: dict, output: str) -> None:
+        """Record what this turn read. Tool output describes the world; it
+        never carries the authority to approve an action."""
+        try:
+            detail = args.get("path") or args.get("command") or args.get("url") or ""
+            label = f"{name}({str(detail)[:60]})" if detail else name
+            self.provenance.record(label, str(output), kind="tool")
+        except Exception:
+            pass  # provenance is context for a human, never a failure path
 
     def _execute_mcp(self, qualified: str, args: dict) -> str:
         if not self.permissions.check_mcp(qualified):
