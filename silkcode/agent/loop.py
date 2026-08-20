@@ -108,6 +108,7 @@ class Agent:
         self.stop_requested = False
         self.checkpoints.begin()
         self.provenance.begin(user_input)
+        self._note_project_sources()
         self.messages.append({"role": "user", "content": user_input})
         try:
             for _ in range(MAX_STEPS):
@@ -263,6 +264,24 @@ class Agent:
         self._note_source(call.name, args, output)
         self.on_event("tool_result", {"name": call.name, "output": output})
         return output
+
+    def _note_project_sources(self) -> None:
+        """Record what the repository put in front of the model before this
+        turn started.
+
+        SILKCODE.md, project memory and the skill descriptions reach the
+        conversation without any tool being called, so nothing else in the
+        turn would ever record them — they are the one input the provenance
+        record used to miss entirely. Re-read each turn rather than cached
+        from start-up: the agent edits files, and one of the files it can edit
+        is the one telling it what to do.
+        """
+        try:
+            from ..context import project_sources
+            for label, text in project_sources(self.workspace):
+                self.provenance.record(label, text, kind="file")
+        except Exception:
+            pass  # provenance is context for a human, never a failure path
 
     def _note_source(self, name: str, args: dict, output: str) -> None:
         """Record what this turn read. Tool output describes the world; it
