@@ -23,16 +23,34 @@ jobs:
       - run: pip install -e ".[dev]" build
       - run: pytest -q
       - run: python -m build
+      - name: Resolve tag and version
+        run: |
+          TAG="${{ github.event.inputs.version || github.ref_name }}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
       # pytest above runs against the source tree, which is not what anyone
       # installs. A wheel that is missing gui/app.html passes every test in
       # this repository and then fails on the user's first `silkcode gui`.
+      #
+      # The filename check is the same class of bug one step earlier: the
+      # release notes below link .../$TAG/silkcode-$VERSION-py3-none-any.whl,
+      # but the wheel is named from silkcode.__version__. Tag v0.2.0 while the
+      # code still says 0.1.0 and the release publishes with a download link
+      # that 404s on its own page.
       - name: Smoke-test the wheel we are about to publish
         run: |
           set -euo pipefail
+          WHEEL="dist/silkcode-${VERSION}-py3-none-any.whl"
+          test -f "$WHEEL" || {
+            echo "::error::Tag $TAG expects $WHEEL, but the build produced:"
+            ls -1 dist/
+            echo "::error::Bump __version__ in silkcode/__init__.py to $VERSION, or tag v$(python -c 'import silkcode; print(silkcode.__version__)')."
+            exit 1
+          }
           python -m venv /tmp/relcheck
-          /tmp/relcheck/bin/pip install --quiet dist/*.whl
+          /tmp/relcheck/bin/pip install --quiet "$WHEEL"
           cd /tmp   # outside the checkout, so nothing resolves via the source tree
-          /tmp/relcheck/bin/silkcode --help > /dev/null
+          /tmp/relcheck/bin/silkcode --version
           /tmp/relcheck/bin/python - <<'PY'
           import pathlib, silkcode, silkcode.cli, silkcode.gui.server, silkcode.scaffold
           page = pathlib.Path(silkcode.__file__).parent / "gui" / "app.html"
@@ -40,11 +58,6 @@ jobs:
               f"the GUI page did not make it into the wheel: {page}"
           print("wheel smoke test passed:", silkcode.__file__)
           PY
-      - name: Resolve tag and version
-        run: |
-          TAG="${{ github.event.inputs.version || github.ref_name }}"
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
-          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
       - name: Create GitHub release with wheel and sdist
         uses: softprops/action-gh-release@v2
         with:

@@ -14,6 +14,7 @@ Commands:
     silkcode swarm [path] [--model M] [...]                multi-agent improvement loop
     silkcode update [--branch B]                           pull updates and hot-apply them
     silkcode sync [path] [--apply]                         check/reconcile a branch that moved
+    silkcode version [--json]                              what this install is, and how to update it
 
 Run several GUI instances on one machine - each on its own --host/--port and
 project. Session ids are unique across instances and every session is tagged
@@ -53,6 +54,7 @@ def main(argv: list[str] | None = None) -> int:
         "update": cmd_update,
         "sandbox": cmd_sandbox,
         "sync": cmd_sync,
+        "version": cmd_version,
     }
     if argv and argv[0] in commands:
         try:
@@ -64,7 +66,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _repl_parser(prog: str) -> argparse.ArgumentParser:
+    from ..version import build_id
     parser = argparse.ArgumentParser(prog=prog)
+    parser.add_argument("--version", "-V", action="version",
+                        version=f"Silk Code {build_id()}",
+                        help="print the version and exit "
+                             "('silkcode version' for the full report)")
     parser.add_argument("path", nargs="?", default=".", help="workspace directory (default: current)")
     parser.add_argument("--model", "-m", help="model spec, e.g. 'deepseek' or 'ollama/qwen2.5-coder'")
     parser.add_argument("--mode", choices=("ask", "edit", "agent"), default="ask", help="permission mode")
@@ -752,6 +759,21 @@ def cmd_config(argv: list[str]) -> int:
     print(json.dumps(redacted, indent=2) if redacted else "{}")
     print("\nBuilt-in providers: " + ", ".join(sorted(Config().providers)))
     print("API keys are read from environment variables (e.g. DEEPSEEK_API_KEY) unless set in the config.")
+    return 0
+
+
+def cmd_version(argv: list[str]) -> int:
+    """Report what this install actually is, in enough detail to act on."""
+    parser = argparse.ArgumentParser(
+        prog="silkcode version",
+        description="Print the version, the commit it was built from, and how "
+                    "to update this particular install.")
+    parser.add_argument("--json", action="store_true",
+                        help="machine-readable output (for bug reports and scripts)")
+    args = parser.parse_args(argv)
+
+    from ..version import info, report
+    print(json.dumps(info(), indent=2) if args.json else report())
     return 0
 
 

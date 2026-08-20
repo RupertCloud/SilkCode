@@ -150,6 +150,7 @@ silkcode test [path] [--command CMD]                  # run the project's tests 
 silkcode mcp [add|remove]                             # manage MCP servers
 silkcode connect github                               # set up GitHub access
 silkcode config                                       # show configuration
+silkcode version [--json]                             # what this install is
 ```
 
 REPL commands: `/model`, `/models`, `/mode`, `/new`, `/project`, `/diff`, `/usage`,
@@ -317,6 +318,30 @@ persisted on disk and survive the restart; the browser reloads automatically.
 This works for git-checkout installs (a clone or `pip install -e .`); wheel
 installs carry no git metadata, so update those with `pip install -U silkcode`.
 The GUI's **↻ Update** header button does the same thing.
+
+### Which version am I running?
+
+Because `silkcode update` pulls whatever is on the remote, the release number
+alone identifies nothing — everyone tracking `main` runs different code while
+`__version__` says the same thing. So a build id is the release plus, on a
+checkout, the commit it sits on:
+
+```bash
+silkcode --version          # Silk Code 0.1.0+gd4e5f6a
+silkcode version            # + commit, branch, install path, Python, platform
+silkcode version --json     # the same, for a bug report or a script
+```
+
+| Build id | Means |
+| --- | --- |
+| `0.1.0` | a released wheel — exactly what was tagged |
+| `0.1.0+gd4e5f6a` | a checkout sitting on commit `d4e5f6a` |
+| `0.1.0+gd4e5f6a.dirty` | …with uncommitted changes on top |
+
+`silkcode version` also names the right way to upgrade *this* install, which
+differs between the two. The GUI page carries the build of the daemon that
+served it, so a tab left open across an update notices it has gone stale and
+says so instead of quietly running against newer server code.
 
 ## Project instructions, memory, and skills
 
@@ -573,6 +598,7 @@ silkcode/
 ├── update.py        self-update: pull from git, hot-apply via GUI daemon restart
 ├── permissions.py   risk classification + ask/edit/agent modes + "yes to all"
 ├── provenance.py    what a turn read, so a file cannot authorize a push
+├── version.py       build identity: release + commit, for installs that track a branch
 ├── checkpoints.py   snapshot-before-modify, revert per turn
 ├── sessions.py      persistence shared by CLI and GUI
 ├── config.py        provider registry and model resolution

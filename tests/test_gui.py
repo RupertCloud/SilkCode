@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 import socket
 import struct
 import sys
@@ -15,7 +16,7 @@ import httpx
 import pytest
 from conftest import sse_response
 
-from silkcode.gui.server import GuiHandler, GuiState
+from silkcode.gui.server import GuiHandler, GuiState, _stamped_app_html
 from silkcode.lock import owner_of
 from silkcode.tools.files import write_file
 from silkcode.workspace import ToolError
@@ -53,7 +54,9 @@ def gui(tmp_path, stub_server, monkeypatch):
         pass
 
     Handler.state = state
-    Handler.html = (Path(__file__).resolve().parents[1] / "silkcode" / "gui" / "app.html").read_bytes()
+    # stamped, exactly as run_gui serves it, so the page's idea of the build
+    # matches the one /api/state reports
+    Handler.html = _stamped_app_html()
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -944,3 +947,51 @@ def test_switching_to_an_unknown_model_reports_the_error(gui):
     resp = httpx.post(f"{base}/api/model", json={"spec": "no-such-provider"})
     assert resp.status_code >= 400
     assert state.get_session().agent.model == before, "a failed switch must not change the model"
+
+
+# ---- the page knows which daemon handed it over -----------------------------
+
+def test_the_page_and_the_daemon_agree_on_the_build(gui):
+    """The GUI shows a "reload me" banner when its own UI_VERSION differs from
+    the version /api/state reports. Both were the frozen literal "0.1.0", so
+    the banner could never fire — and could never be wrong either. Now that it
+    carries a real build id, a disagreement here would put a warning in front
+    of every user on every load."""
+    base, _state, _ws = gui
+    page = httpx.get(f"{base}/").text
+    ui = re.search(r'const UI_VERSION = "([^"]*)"', page)
+    assert ui, "the page no longer declares UI_VERSION; the staleness check is gone"
+    assert ui.group(1) == httpx.get(f"{base}/api/state").json()["version"]
+
+
+def test_the_served_page_carries_the_build_not_the_source_literal():
+    """`silkcode update` swaps the server's code while a browser tab still
+    holds the page from the build before it. That is only detectable if the
+    served page carries the serving daemon's identity rather than a literal
+    checked into the file, so on a checkout the two must differ."""
+    from silkcode.version import build_id
+    on_disk = (Path(__file__).resolve().parents[1] / "silkcode" / "gui" / "app.html").read_bytes()
+    served = _stamped_app_html()
+    stamped = re.search(rb'const UI_VERSION = "([^"]*)"', served).group(1).decode()
+    assert stamped == build_id()
+    if build_id() != re.search(rb'const UI_VERSION = "([^"]*)"', on_disk).group(1).decode():
+        assert served != on_disk, "the build id was never stamped into the page"
+
+
+def test_stamping_never_costs_us_the_page():
+    """If the literal is ever renamed, the GUI must still load. A staleness
+    hint is not worth a blank screen."""
+    import silkcode.gui.server as server
+
+    original = server.Path
+    class _Fake:
+        def __init__(self, *_a): pass
+        @property
+        def parent(self): return self
+        def __truediv__(self, _o): return self
+        def read_bytes(self): return b"<html>no version literal here</html>"
+    try:
+        server.Path = _Fake
+        assert _stamped_app_html() == b"<html>no version literal here</html>"
+    finally:
+        server.Path = original
