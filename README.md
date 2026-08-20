@@ -224,6 +224,14 @@ directory, so different sessions can work on different codebases side by side.
 Sessions are saved to the same store as the CLI — resume any of them from the picker
 or with `silkcode resume <id>` (SRS section 47).
 
+The picker lists the sessions of the project you have open, and follows you when you
+switch to a session on another project. Sessions are stored per machine rather than
+per project, so an unscoped list mixed every repository you had ever opened into
+every switcher. Nothing is hidden away, though: when other projects have sessions,
+the last entry says how many and where, and choosing it regroups the list by project
+so you can jump straight to one. `silkcode sessions` in the terminal is
+machine-wide and still lists all of them.
+
 **Multiple GUI instances on one machine:** run one daemon per project and address —
 each instance gets its own port (and optionally its own bind address):
 

@@ -13,7 +13,7 @@ playwright_sync = pytest.importorskip("playwright.sync_api")
 
 from conftest import sse_response  # noqa: E402
 
-from silkcode.gui.server import GuiHandler, GuiState  # noqa: E402
+from silkcode.gui.server import GuiHandler, GuiState, _stamped_app_html  # noqa: E402
 
 
 def _chromium_path():
@@ -71,7 +71,10 @@ def gui_url(tmp_path, stub_server, monkeypatch):
         pass
 
     Handler.state = state
-    Handler.html = (Path(__file__).resolve().parents[1] / "silkcode" / "gui" / "app.html").read_bytes()
+    # stamped, as run_gui serves it; the raw file's UI_VERSION would not match
+    # the build /api/state reports and every page would open with the stale-
+    # version banner covering the header
+    Handler.html = _stamped_app_html()
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -537,3 +540,104 @@ def test_the_projects_howto_opens_and_hands_off_to_the_picker(browser, gui_url):
     page.click("#projects-help-open")
     page.wait_for_selector("#project-modal.open")
     assert not page.is_visible("#projects-help-modal .modal")
+
+
+# ---- the switcher shows this project, not every project ---------------------
+
+@pytest.fixture
+def two_project_gui(tmp_path, stub_server, monkeypatch):
+    """A daemon opened on `alpha`, with saved sessions in `alpha` and `beta`.
+
+    Session files live per machine, not per project, so before this was scoped
+    the switcher listed `beta`'s work while you were looking at `alpha`.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("SILKCODE_HOME", str(home))
+    alpha, beta = tmp_path / "alpha", tmp_path / "beta"
+    for d in (alpha, beta):
+        d.mkdir()
+        (d / "README.md").write_text("# demo\n")
+
+    server = stub_server([])
+    server.thread.start()
+    (home / "config.json").write_text(json.dumps({
+        "default_model": "stub",
+        "providers": {"stub": {"type": "openai_compat", "base_url": server.base_url,
+                               "default_model": "stub-model"}},
+    }))
+
+    from silkcode.sessions import SessionStore, new_session
+    store = SessionStore()
+    for project, title in ((alpha, "alpha work"), (beta, "beta work"),
+                           (beta, "more beta work")):
+        store.save(new_session(store.new_id(), title=title, model="stub/stub-model",
+                               cwd=str(project), mode="edit", instance="127.0.0.1:1"))
+
+    state = GuiState(str(alpha), None, "edit")
+
+    class Handler(GuiHandler):
+        pass
+
+    Handler.state = state
+    Handler.html = _stamped_app_html()
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_address[1]}", alpha, beta
+    httpd.shutdown()
+    httpd.server_close()
+    server.httpd.shutdown()
+    server.httpd.server_close()
+
+
+def wait_for_switcher(page):
+    """#input is in the static HTML, so waiting on it proves nothing about
+    init() having run. Wait for the switcher to actually hold sessions."""
+    page.wait_for_function(
+        "document.querySelectorAll('#session-select option').length > 0")
+
+
+def test_the_switcher_lists_only_the_open_projects_sessions(browser, two_project_gui):
+    url, _alpha, _beta = two_project_gui
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(url)
+    wait_for_switcher(page)
+
+    options = page.locator("#session-select option").all_text_contents()
+    assert any("alpha work" in o for o in options), f"the open project is missing: {options}"
+    assert not any("beta work" in o for o in options), \
+        f"another project's sessions are in the switcher: {options}"
+
+
+def test_the_other_projects_are_one_click_away_not_gone(browser, two_project_gui):
+    """Scoping the list must not strand work: everything else is behind a
+    single entry that says how much is there."""
+    url, _alpha, _beta = two_project_gui
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(url)
+    wait_for_switcher(page)
+
+    reveal = page.locator("#session-select option[value='__all__']")
+    assert reveal.count() == 1, "no way to reach sessions in other projects"
+    assert "2 sessions" in reveal.text_content(), reveal.text_content()
+
+    page.select_option("#session-select", "__all__")
+    # optgroups inside a closed <select> are never "visible"; wait on the DOM
+    page.wait_for_function(
+        "document.querySelectorAll('#session-select optgroup').length >= 2")
+
+    groups = page.locator("#session-select optgroup").all_text_contents()
+    labels = page.eval_on_selector_all(
+        "#session-select optgroup", "els => els.map(e => e.label)")
+    assert any("this project" in label for label in labels), labels
+    assert any("beta" in label for label in labels), labels
+    assert any("beta work" in text for text in groups), groups
+
+
+def test_a_daemon_with_one_project_shows_no_reveal(browser, gui_url):
+    """The entry only appears when there is something behind it — an empty
+    "other projects" row would be noise in every single-project install."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    wait_for_switcher(page)
+    assert page.locator("#session-select option[value='__all__']").count() == 0
