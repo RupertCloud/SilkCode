@@ -49,6 +49,44 @@ MAX_TREE_ENTRIES = 2000
 PERMISSION_TIMEOUT = 600  # seconds; deny if the browser never answers
 
 
+def _flag(params: dict, name: str) -> bool:
+    """A query flag: ?all=1, ?all=true, or a bare ?all."""
+    if name not in params:
+        return False
+    value = (params[name] or [""])[0].strip().lower()
+    return value in ("", "1", "true", "yes", "on")
+
+
+def _normalized(path: str) -> str:
+    """A directory in a form two spellings of it can be compared in.
+
+    Sessions record whatever path they were opened with, so the same project
+    arrives as `~/code/app`, `/home/me/code/app` and `/home/me/code/app/` on
+    different days. Resolved without requiring the directory to still exist —
+    a deleted project's sessions must still group together rather than
+    scattering into everyone else's list.
+    """
+    if not path:
+        return ""
+    try:
+        return str(Path(path).expanduser().resolve())
+    except OSError:
+        return str(Path(path)).rstrip("/\\")
+
+
+def _same_project(cwd: str | None, project: str) -> bool:
+    """Whether a session belongs to the project currently open.
+
+    A session with no recorded directory predates per-project workspaces.
+    There is no project to file it under, so it stays visible rather than
+    disappearing from every list at once: showing it in the wrong place is a
+    smaller harm than losing it.
+    """
+    if not cwd:
+        return True
+    return _normalized(cwd) == _normalized(project)
+
+
 def _transcript_from_messages(messages: list[dict]) -> list[dict]:
     out: list[dict] = []
     for m in messages:
@@ -300,7 +338,19 @@ class GuiState:
         self.broadcast({"type": "reload", "session": session.id})
         return session
 
-    def sessions_summary(self) -> list[dict]:
+    def sessions_summary(self, session_id: int | None = None,
+                         all_projects: bool = False) -> list[dict]:
+        """Sessions for the project currently open, most recent first.
+
+        Session files are stored per machine, not per project, so this used to
+        list every session this user had ever opened anywhere: work on one
+        repository showed up in the switcher of another, and the more projects
+        you used the less the list meant. It is scoped to the open project now.
+
+        `all_projects=True` returns everything, for the switcher's "other
+        projects" reveal — nothing is hidden past one click, and picking a
+        session from elsewhere still opens it against its own workspace.
+        """
         loaded = {
             s.id: {"id": s.id, "title": s.data.get("title", ""), "model": s.spec,
                    "cwd": str(s.workspace.root), "running": s.running, "open": True,
@@ -315,7 +365,37 @@ class GuiState:
                                        "model": saved["model"], "cwd": saved.get("cwd", ""),
                                        "running": False, "open": False,
                                        "instance": saved.get("instance")}
-        return sorted(loaded.values(), key=lambda s: s["id"], reverse=True)
+        rows = sorted(loaded.values(), key=lambda s: s["id"], reverse=True)
+        if all_projects:
+            return rows
+        here = self.project_root(session_id)
+        # The session being viewed always belongs in its own list, even if its
+        # directory has since been moved or removed underneath us.
+        return [s for s in rows
+                if _same_project(s.get("cwd"), here) or s["id"] == session_id]
+
+    def project_root(self, session_id: int | None = None) -> str:
+        """The project the given session is open on — what "this project"
+        means for filtering. Not the daemon's start-up workspace: a session
+        can be opened on another project (see new_session), and the switcher
+        has to follow the session you are actually looking at."""
+        try:
+            return str(self.get_session(session_id).workspace.root)
+        except (FileNotFoundError, ToolError):
+            return str(self.workspace.root)
+
+    def other_projects(self, session_id: int | None = None) -> list[dict]:
+        """Projects with sessions that this project's list does not show, so
+        the switcher can say how much is behind the reveal instead of hiding
+        an unknown quantity."""
+        here = self.project_root(session_id)
+        counts: dict[str, int] = {}
+        for s in self.sessions_summary(session_id, all_projects=True):
+            cwd = s.get("cwd") or ""
+            if cwd and not _same_project(cwd, here):
+                counts[cwd] = counts.get(cwd, 0) + 1
+        return [{"path": path, "label": Path(path).name or path, "count": n}
+                for path, n in sorted(counts.items(), key=lambda kv: -kv[1])]
 
     # ---- compatibility accessors (default session) -------------------------
 
@@ -466,7 +546,8 @@ class GuiState:
 
     # ---- queries / mutations ----------------------------------------------
 
-    def state(self, session_id: int | None = None) -> dict:
+    def state(self, session_id: int | None = None,
+              all_projects: bool = False) -> dict:
         from ..version import build_id
         session = self.get_session(session_id)
         return {
@@ -482,7 +563,11 @@ class GuiState:
             "swarm_running": bool(self.swarms.get(session.id, {}).get("running")),
             "auto_push": self.auto_push,
             "usage": session.usage_dict(),
-            "sessions": self.sessions_summary(),
+            "sessions": self.sessions_summary(session.id, all_projects),
+            # what the switcher's reveal would add, so it can say how
+            # much is there instead of hiding an unknown quantity
+            "other_projects": self.other_projects(session.id),
+            "project": str(session.workspace.root),
             "lock_conflict": session.lock_conflict,
             "lock": lock_state(session.workspace.root),
         }
@@ -1133,7 +1218,7 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(self.html)
             elif route == "/api/state":
-                self._json(st.state(sid))
+                self._json(st.state(sid, _flag(params, "all")))
             elif route == "/api/transcript":
                 self._json(st.get_session(sid).transcript_snapshot())
             elif route == "/api/tree":
@@ -1148,7 +1233,7 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/providers":
                 self._json(st.providers_info())
             elif route == "/api/sessions":
-                self._json(st.sessions_summary())
+                self._json(st.sessions_summary(sid, _flag(params, "all")))
             elif route == "/api/environment":
                 self._json(st.environment())
             elif route == "/api/github/status":

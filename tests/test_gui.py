@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import re
 import socket
 import struct
@@ -625,9 +626,15 @@ def test_gui_two_instances_different_ports_and_projects(tmp_path, monkeypatch):
     assert saved_a["cwd"] == str(repo_a.resolve()) and saved_a["instance"] == "127.0.0.1:8377"
     assert saved_b["cwd"] == str(repo_b.resolve()) and saved_b["instance"] == "127.0.0.1:8378"
 
-    # summaries show the other instance's sessions too, tagged with their own
-    # address so users can tell them apart
-    summary = {s["id"]: s for s in daemon_a.sessions_summary()}
+    # These daemons are on different projects, so daemon A's switcher shows
+    # its own project only - that is the point of the scoping.
+    scoped = {s["id"] for s in daemon_a.sessions_summary()}
+    assert daemon_a.default_session_id in scoped
+    assert daemon_b.default_session_id not in scoped
+
+    # Unscoped, the other instance's sessions are all there, each tagged with
+    # its own address so two daemons can be told apart in one list.
+    summary = {s["id"]: s for s in daemon_a.sessions_summary(all_projects=True)}
     assert summary[daemon_a.default_session_id]["instance"] == "127.0.0.1:8377"
     assert summary[daemon_b.default_session_id]["instance"] == "127.0.0.1:8378"
     assert summary[daemon_b.default_session_id]["open"] is False
@@ -995,3 +1002,89 @@ def test_stamping_never_costs_us_the_page():
         assert _stamped_app_html() == b"<html>no version literal here</html>"
     finally:
         server.Path = original
+
+
+# ---- sessions belong to the project you have open ---------------------------
+
+def _seed(store, project, title):
+    from silkcode.sessions import new_session
+    data = new_session(store.new_id(), title=title, model="stub/stub-model",
+                       cwd=str(project), mode="edit", instance="127.0.0.1:1")
+    store.save(data)
+    return data["id"]
+
+
+def test_the_session_list_is_scoped_to_the_open_project(gui, tmp_path):
+    """Session files are per machine, not per project, so this listed every
+    session the user had ever opened anywhere — work on one repository showing
+    up in the switcher of another."""
+    base, state, workspace = gui
+    other = tmp_path / "other-project"
+    other.mkdir()
+    from silkcode.sessions import SessionStore
+    store = SessionStore()
+    mine = _seed(store, workspace, "in this project")
+    theirs = _seed(store, other, "in another project")
+
+    listed = {s["id"] for s in httpx.get(f"{base}/api/sessions").json()}
+    assert mine in listed
+    assert theirs not in listed, "another project's session is in the list"
+
+
+def test_nothing_is_stranded_by_the_scoping(gui, tmp_path):
+    """Hiding work would be worse than showing too much of it: ?all=1 returns
+    everything, and the state names the projects behind the reveal."""
+    base, state, workspace = gui
+    other = tmp_path / "other-project"
+    other.mkdir()
+    from silkcode.sessions import SessionStore
+    theirs = _seed(SessionStore(), other, "in another project")
+
+    everything = {s["id"] for s in httpx.get(f"{base}/api/sessions?all=1").json()}
+    assert theirs in everything
+
+    reported = httpx.get(f"{base}/api/state").json()["other_projects"]
+    assert [p["label"] for p in reported] == ["other-project"]
+    assert reported[0]["count"] == 1
+
+
+def test_the_list_follows_the_session_you_are_looking_at(gui, tmp_path):
+    """A session can be opened on another project, so the scope cannot be the
+    daemon's start-up workspace — it has to be the project of the session in
+    front of you."""
+    base, state, workspace = gui
+    other = tmp_path / "other-project"
+    other.mkdir()
+    from silkcode.sessions import SessionStore
+    store = SessionStore()
+    mine = _seed(store, workspace, "in this project")
+    theirs = _seed(store, other, "in another project")
+
+    switched = httpx.post(f"{base}/api/session", json={"id": theirs})
+    assert switched.status_code == 200
+
+    listed = {s["id"] for s in httpx.get(f"{base}/api/sessions?session={theirs}").json()}
+    assert theirs in listed
+    assert mine not in listed, "the list stayed on the daemon's start-up project"
+
+
+def test_the_same_project_spelled_differently_is_the_same_project(gui, tmp_path):
+    """Sessions record whatever path they were opened with, so a trailing
+    slash or an unresolved `..` must not split one project into two."""
+    base, state, workspace = gui
+    from silkcode.sessions import SessionStore
+    odd = _seed(SessionStore(), f"{workspace}{os.sep}", "trailing separator")
+    listed = {s["id"] for s in httpx.get(f"{base}/api/sessions").json()}
+    assert odd in listed, "a trailing separator hid a session from its own project"
+
+
+def test_a_session_with_no_recorded_project_is_not_lost(gui):
+    """Sessions predating per-project workspaces have no cwd. There is nowhere
+    to file them, so they stay visible rather than vanishing from every list."""
+    base, state, _ws = gui
+    from silkcode.sessions import SessionStore
+    store = SessionStore()
+    legacy = _seed(store, "", "from before projects")
+
+    listed = {s["id"] for s in httpx.get(f"{base}/api/sessions").json()}
+    assert legacy in listed

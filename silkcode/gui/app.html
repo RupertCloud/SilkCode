@@ -995,7 +995,32 @@ $("model-select").onchange = async (e) => {
 $("mode-select").onchange = (e) => api("/api/mode", {mode: e.target.value}).catch(err => alert(err.message));
 $("stop").onclick = () => api("/api/stop", {session_id: currentSessionId}).catch(() => {});
 
-function renderSessions(sessions, currentId) {
+// The switcher lists the open project's sessions. Session files are stored
+// per machine rather than per project, so it used to show every session this
+// user had ever opened anywhere — work on one repository cluttering the
+// switcher of another. Everything else is one click away, under "other
+// projects", grouped so it is obvious what belongs where.
+let showAllProjects = false;
+let otherProjects = [];
+
+function sessionLabel(s) {
+  const mark = s.running ? "⏳ " : (s.open ? "● " : "");
+  return `#${s.id} ${mark}${s.title || "(new)"}`.slice(0, 60);
+}
+
+function sessionOption(s) {
+  const opt = document.createElement("option");
+  opt.value = s.id;
+  opt.textContent = sessionLabel(s);
+  opt.title = s.cwd || "";
+  return opt;
+}
+
+function projectName(path) {
+  return (path || "").split(/[\\/]/).filter(Boolean).slice(-1)[0] || path || "(unknown)";
+}
+
+function renderSessions(sessions, currentId, project) {
   const sel = $("session-select");
   sel.innerHTML = "";
   if (!sessions.some(s => s.id === currentId)) {
@@ -1003,26 +1028,57 @@ function renderSessions(sessions, currentId) {
     opt.value = currentId; opt.textContent = `#${currentId} (current)`;
     sel.appendChild(opt);
   }
-  for (const s of sessions) {
-    const opt = document.createElement("option");
-    opt.value = s.id;
-    const mark = s.running ? "⏳ " : (s.open ? "● " : "");
-    const cwd = s.cwd ? " …/" + s.cwd.split(/[\\/]/).slice(-2).join("/") : "";
-    opt.textContent = (`#${s.id} ${mark}${s.title || "(new)"}${cwd}`).slice(0, 72);
-    opt.title = s.cwd || "";
-    sel.appendChild(opt);
+  if (showAllProjects) {
+    // grouped, with the project you are in first so it stays findable
+    const byProject = new Map();
+    for (const s of sessions) {
+      const key = s.cwd || project || "";
+      if (!byProject.has(key)) byProject.set(key, []);
+      byProject.get(key).push(s);
+    }
+    const keys = [...byProject.keys()].sort((a, b) =>
+      (a === project ? -1 : b === project ? 1 : projectName(a).localeCompare(projectName(b))));
+    for (const key of keys) {
+      const group = document.createElement("optgroup");
+      group.label = projectName(key) + (key === project ? " (this project)" : "");
+      for (const s of byProject.get(key)) group.appendChild(sessionOption(s));
+      sel.appendChild(group);
+    }
+  } else {
+    for (const s of sessions) sel.appendChild(sessionOption(s));
+    const elsewhere = otherProjects.reduce((n, p) => n + p.count, 0);
+    if (elsewhere > 0) {
+      const opt = document.createElement("option");
+      opt.value = "__all__";
+      const where = otherProjects.length === 1
+        ? `in ${projectName(otherProjects[0].path)}`
+        : `in ${otherProjects.length} other projects`;
+      opt.textContent = `⋯ ${elsewhere} session${elsewhere === 1 ? "" : "s"} ${where}`;
+      opt.title = otherProjects.map(p => `${p.path} (${p.count})`).join("\n");
+      sel.appendChild(opt);
+    }
   }
   sel.value = currentId;
 }
 
 async function refreshSessionList() {
   try {
-    const state = await api("/api/state?session=" + currentSessionId);
-    renderSessions(state.sessions, currentSessionId);
+    const state = await api("/api/state?session=" + currentSessionId
+                            + (showAllProjects ? "&all=1" : ""));
+    otherProjects = state.other_projects || [];
+    renderSessions(state.sessions, currentSessionId, state.project);
   } catch (e) {}
 }
 
 $("session-select").onchange = async (e) => {
+  if (e.target.value === "__all__") {
+    // reveal, not a switch: reload the list unscoped and put the selection back
+    showAllProjects = true;
+    await refreshSessionList();
+    $("session-select").focus();
+    return;
+  }
+  showAllProjects = false;   // the new project scopes the list again
   try {
     const state = await api("/api/session", {id: parseInt(e.target.value, 10)});
     currentSessionId = state.session_id;
@@ -1508,7 +1564,8 @@ async function init() {
   renderUsage(state.usage);
   renderLock(state);
   await loadProviders(state.spec);
-  renderSessions(state.sessions, state.session_id);
+  otherProjects = state.other_projects || [];
+  renderSessions(state.sessions, state.session_id, state.project);
   refreshGithubStatus().catch(() => {});
   const transcript = await api("/api/transcript?session=" + state.session_id);
   $("messages").innerHTML = ""; $("timeline").innerHTML = "";
