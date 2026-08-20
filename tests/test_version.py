@@ -5,14 +5,18 @@ release number alone identifies nothing: everyone tracking `main` reports
 "0.1.0" while running different code. These tests pin the two properties that
 makes usable — the build id changes when the code does, and asking for it never
 takes the process down, because a machine with no git is an ordinary machine.
+
+Note for anyone extending this file: the floor is Python 3.10, so `tomllib` is
+not available. An import of it here does not fail one test, it aborts
+collection of the whole suite on the 3.10 job.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
@@ -107,21 +111,58 @@ def test_info_is_json_serialisable_for_bug_reports():
 
 # ---- one number, in one place ----------------------------------------------
 
+def _pyproject_tables() -> dict[str, list[str]]:
+    """`{table name: its lines}` for pyproject.toml.
+
+    Deliberately not tomllib: this project supports Python 3.10, where that
+    module does not exist. Reaching for it aborted collection of the entire
+    suite on 3.10 rather than failing one test — and the assertions below are
+    about a handful of literal lines, which needs no TOML parser.
+    """
+    tables: dict[str, list[str]] = {}
+    current = ""
+    for line in (ROOT / "pyproject.toml").read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            current = stripped[1:-1]
+            tables.setdefault(current, [])
+        elif stripped and not stripped.startswith("#"):
+            tables.setdefault(current, []).append(stripped)
+    return tables
+
+
 def test_the_version_is_declared_exactly_once():
     """It used to be written in both pyproject.toml and __init__.py, which is a
     drift waiting to happen: the wheel is named from one and the program
     reports the other."""
-    cfg = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    project = cfg["project"]
-    assert "version" not in project, \
+    tables = _pyproject_tables()
+    project = tables["project"]
+    assert not any(re.match(r'version\s*=\s*["\']', line) for line in project), \
         "pyproject.toml hard-codes a version again; it should read __version__"
-    assert "version" in project.get("dynamic", [])
-    assert cfg["tool"]["setuptools"]["dynamic"]["version"] == \
-        {"attr": "silkcode.__version__"}
+    assert any(re.match(r"dynamic\s*=.*\bversion\b", line) for line in project), \
+        "[project] no longer declares a dynamic version"
+    dynamic = tables.get("tool.setuptools.dynamic", [])
+    assert any("silkcode.__version__" in line for line in dynamic), \
+        "the dynamic version no longer reads silkcode.__version__"
+
+
+def test_the_build_backend_agrees_with_us_about_the_version():
+    """The check above reads the file; this one asks setuptools what it will
+    actually stamp on the wheel, which is the number that ends up in the
+    filename the release notes link to."""
+    setuptools = pytest.importorskip("setuptools")   # a build dep, not a runtime one
+    del setuptools
+    out = subprocess.run(
+        [sys.executable, "-c",
+         "from setuptools.config.pyprojecttoml import read_configuration as r;"
+         "print(r('pyproject.toml')['project']['version'])"],
+        cwd=ROOT, capture_output=True, text=True, timeout=120)
+    if out.returncode != 0:
+        pytest.skip(f"setuptools cannot read the config here: {out.stderr[-200:]}")
+    assert out.stdout.strip() == V.RELEASE
 
 
 def test_the_declared_version_looks_like_a_version():
-    import re
     assert re.fullmatch(r"\d+\.\d+\.\d+([ab]\d+|rc\d+)?", V.RELEASE), V.RELEASE
 
 
