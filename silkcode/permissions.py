@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import weakref
 from enum import IntEnum
 from typing import Callable
@@ -50,18 +51,92 @@ LOW_RISK_COMMANDS = {
 GIT_READ_SUBCOMMANDS = {"status", "log", "diff", "show", "blame", "shortlog", "describe", "branch", "remote"}
 
 
+# Where one command ends and the next begins.
+SHELL_OPERATORS = {"&&", "||", ";", "|", "&", "\n"}
+
+
+def split_commands(command: str) -> list[list[str]] | None:
+    """The individual commands in a shell line, each as its argv.
+
+    None when the line cannot be read as shell at all (an unterminated
+    quote). The caller must treat that as dangerous rather than guessing:
+    something is going to run, and we do not know what.
+
+    This exists because a permission decision made on the raw text is a
+    decision about the wrong object. The shell sees `"git" push`, `g\\it push`
+    and `gi""t push` as `git push`; a regex over the string sees three
+    different things and matches none of them. Resolving quotes and escapes
+    first means the gate classifies the command that will actually run.
+    """
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in SHELL_OPERATORS:
+            if current:
+                segments.append(current)
+            current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _runs_something_we_cannot_see(argv: list[str]) -> bool:
+    """Whether the command word itself is produced at run time.
+
+    `$CMD push`, `$(which git) push` and `` `echo git` push `` all decide what
+    to execute after this gate has had its say. There is no reading of that
+    which is safe to assume, so it is treated as outward-facing. Expansions in
+    *arguments* are left alone — `git commit -m "$MSG"` is how everyone writes
+    a commit, and gating it would make the prompt meaningless.
+    """
+    return bool(argv) and any(ch in argv[0] for ch in ("$", "`"))
+
+
 def classify_command(command: str) -> Risk:
+    # The raw text first: deliberately over-approximate, so a dangerous string
+    # is caught wherever it appears, including inside quotes.
     for pattern in HIGH_RISK_PATTERNS:
         if re.search(pattern, command):
             return Risk.HIGH
-    segments = [s.strip() for s in re.split(r"&&|\|\||;|\|", command) if s.strip()]
+
+    segments = split_commands(command)
+    if segments is None:
+        return Risk.HIGH  # unreadable: fail closed, ask the human
+
+    # Then the commands as the shell will actually see them. Matching a
+    # normalized form can only find more than the raw pass did, never less,
+    # so this closes the quoting bypass without loosening anything.
+    for argv in segments:
+        if _runs_something_we_cannot_see(argv):
+            return Risk.HIGH
+        normalized = " ".join(argv)
+        for pattern in HIGH_RISK_PATTERNS:
+            if re.search(pattern, normalized):
+                return Risk.HIGH
+
     if not segments:
         return Risk.MEDIUM
-    return max(_classify_segment(s) for s in segments)
+    return max(_classify_argv(a) for a in segments)
 
 
 def _classify_segment(segment: str) -> Risk:
-    tokens = segment.split()
+    """Risk of one command written as text. Kept for callers that have a
+    string; the argv form below is what the gate uses."""
+    argv = (split_commands(segment) or [[]])
+    return _classify_argv(argv[0]) if argv and argv[0] else Risk.MEDIUM
+
+
+def _classify_argv(tokens: list[str]) -> Risk:
+    if not tokens:
+        return Risk.MEDIUM
     head = tokens[0]
     if head == "git":
         if len(tokens) > 1 and tokens[1] in GIT_READ_SUBCOMMANDS:
@@ -92,12 +167,21 @@ _GIT_OP_BY_SUBCOMMAND = {
 
 
 def git_operation(command: str) -> str | None:
-    """Map a command to a grantable git operation, or None."""
-    if re.match(r"\s*github merge-pr\b", command):
+    """Map a command to a grantable git operation, or None.
+
+    Parsed rather than matched, for the same reason classification is: a grant
+    is about what will run, and `"git" push` is a push. Only a line that is a
+    single command can carry a grant — `ls && git push` is not a push the user
+    pre-authorized, it is a push with something else attached.
+    """
+    segments = split_commands(command)
+    if not segments or len(segments) != 1:
+        return None
+    argv = segments[0]
+    if argv[:2] == ["github", "merge-pr"]:
         return "merge"
-    match = re.match(r"\s*git\s+(\w+)", command)
-    if match:
-        return _GIT_OP_BY_SUBCOMMAND.get(match.group(1))
+    if argv[0] == "git" and len(argv) > 1:
+        return _GIT_OP_BY_SUBCOMMAND.get(argv[1])
     return None
 
 

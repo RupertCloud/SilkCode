@@ -9,7 +9,7 @@ from ..version import build_id
 from ..agent import Agent
 from ..config import Config, ConfigError
 from ..providers import ProviderError, build_provider
-from ..context import build_context
+from ..context import assemble, build_context
 from ..sessions import SessionStore, new_session
 from ..permissions import PermissionManager
 from ..tools.git import git_diff
@@ -151,8 +151,14 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
                                     grants=grants)
     autopush_state = {"on": auto_push}
     from ..agent.loop import DEFAULT_CONTEXT_TOKENS
+    project = assemble(workspace)
+    # stderr, and before anything else: `silkcode -p` output gets piped into
+    # scripts, and a security notice must not land in the middle of it - nor
+    # be skipped just because this run is non-interactive.
+    for warning in project.warnings:
+        print(f"{YELLOW}{warning}{RESET}\n", file=sys.stderr)
     agent = Agent(provider, model, workspace, permissions, on_event=_on_event,
-                  context=build_context(workspace), mcp=mcp,
+                  context=project.text, mcp=mcp,
                   max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS,
                   session_id=(resume or {}).get("id"),
                   attribution=config.data.get("attribution", True))
