@@ -97,7 +97,9 @@ def assemble(ws: Workspace) -> ProjectContext:
     withheld: list[str] = []
 
     for label, text in project_sources(ws):
-        sightings = scan(text, label)
+        # These files exist to address the agent, so the fact that they do
+        # is not evidence of anything. See scan()'s docstring.
+        sightings = scan(text, label, addressed_to_agent=True)
         if sightings:
             # Not loaded. A file in the repository does not get to give the
             # agent orders through the system prompt just because it is named

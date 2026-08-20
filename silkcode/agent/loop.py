@@ -279,7 +279,8 @@ class Agent:
         try:
             from ..context import project_sources
             for label, text in project_sources(self.workspace):
-                self.provenance.record(label, text, kind="file")
+                self.provenance.record(label, text, kind="file",
+                                       addressed_to_agent=True)
         except Exception:
             pass  # provenance is context for a human, never a failure path
 
