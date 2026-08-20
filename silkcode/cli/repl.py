@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 
-from .. import __version__
+from ..version import build_id
 from ..agent import Agent
 from ..config import Config, ConfigError
 from ..providers import ProviderError, build_provider
@@ -193,7 +193,7 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         store.save(session)
         return 0
 
-    print(f"{BOLD}Silk Code{RESET} v{__version__}  {DIM}|{RESET}  model: {CYAN}{provider_name}/{model}{RESET}  "
+    print(f"{BOLD}Silk Code{RESET} v{build_id()}  {DIM}|{RESET}  model: {CYAN}{provider_name}/{model}{RESET}  "
           f"{DIM}|{RESET}  mode: {permissions.mode}  {DIM}|{RESET}  {workspace.root}")
     print(f"{DIM}Type a request, or /help for commands.{RESET}")
 

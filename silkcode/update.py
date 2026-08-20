@@ -118,19 +118,31 @@ def update_installation(
         return {"status": "up-to-date",
                 "detail": f"already up to date at {before[:12] if before else '?'}",
                 "before": before, "after": after}
-    # sanity: the new code must import before we hot-apply it
+    # sanity: the new code must import before we hot-apply it. It reports its
+    # build rather than __version__ — the release number is the same string
+    # before and after any update, so printing it proved only that *something*
+    # imported, not that the something was the code we just pulled.
     check = subprocess.run(
         [sys.executable, "-c",
-         "import silkcode, silkcode.gui.server, silkcode.swarm; print(silkcode.__version__)"],
+         "import silkcode, silkcode.gui.server, silkcode.swarm; "
+         "from silkcode.version import commit; print(commit() or '')"],
         cwd=repo, capture_output=True, text=True, timeout=60,
     )
     if check.returncode != 0:
         return {"status": "error",
                 "detail": f"new code does not import: {check.stderr.strip()[:300]}",
                 "before": before, "after": after}
-    on_progress(f"updated {before[:12]} -> {after[:12]}")
-    return {"status": "updated",
-            "detail": f"{before[:12]} -> {after[:12]}",
+    detail = f"{before[:12]} -> {after[:12]}"
+    imported = check.stdout.strip()
+    if imported and after and not after.startswith(imported):
+        # The pull landed, but `import silkcode` resolves somewhere else — a
+        # site-packages copy shadowing this checkout. Restarting would come
+        # back up on the old code while reporting success, so say so plainly.
+        detail += (f" — warning: `import silkcode` resolves to {imported}, not "
+                   f"{after[:12]}. Another install is shadowing this checkout; "
+                   "run `silkcode version` to see which one is in use.")
+    on_progress(f"updated {detail}")
+    return {"status": "updated", "detail": detail,
             "before": before, "after": after}
 
 

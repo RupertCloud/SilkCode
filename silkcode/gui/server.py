@@ -22,6 +22,7 @@ import ipaddress
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -466,10 +467,12 @@ class GuiState:
     # ---- queries / mutations ----------------------------------------------
 
     def state(self, session_id: int | None = None) -> dict:
-        from .. import __version__
+        from ..version import build_id
         session = self.get_session(session_id)
         return {
-            "version": __version__,
+            # the build, not the release: on a checkout the release never
+            # changes, and the page uses this to notice it has gone stale
+            "version": build_id(),
             "model": f"{session.provider_name}/{session.model}",
             "spec": session.spec,
             "mode": session.permissions.mode,
@@ -1283,6 +1286,31 @@ class GuiHandler(BaseHTTPRequestHandler):
             pass
 
 
+_UI_VERSION_LITERAL = re.compile(rb'(const UI_VERSION = ")[^"]*(")')
+
+
+def _stamped_app_html() -> bytes:
+    """The GUI page, stamped with the build of the daemon serving it.
+
+    The page compares its own UI_VERSION against the version the daemon
+    reports and shows "reload me" when they differ. Both used to be the
+    literal "0.1.0", so the check could never fire — and the install where it
+    matters most is the one where `silkcode update` swaps the server's code
+    underneath a browser tab that is still holding the old page.
+
+    Stamping at startup gives the comparison its intended meaning: the page's
+    version is whichever daemon handed it over, so a mismatch says precisely
+    "this tab came from a different build than the one answering it now".
+    """
+    raw = (Path(__file__).parent / "app.html").read_bytes()
+    from ..version import build_id
+    stamped, count = _UI_VERSION_LITERAL.subn(
+        lambda m: m.group(1) + build_id().encode() + m.group(2), raw, count=1)
+    # If the literal ever moves or is renamed, serve the page as it is: a
+    # staleness hint is not worth a blank GUI.
+    return stamped if count else raw
+
+
 def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1",
             port: int = 8377, grants: list[str] | None = None,
             use_sandbox: bool = False, auto_push: bool = False,
@@ -1309,7 +1337,7 @@ def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1
         server.server_close()
         return 1
     GuiHandler.state = state
-    GuiHandler.html = (Path(__file__).parent / "app.html").read_bytes()
+    GuiHandler.html = _stamped_app_html()
     # The daemon drives an agent that reads and writes files, runs commands and
     # holds API keys. On loopback that is the usual local-dev trust model; the
     # moment it is reachable from elsewhere it needs a credential, so one is
