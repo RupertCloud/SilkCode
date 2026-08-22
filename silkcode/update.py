@@ -111,7 +111,8 @@ def update_pip_install(spec: str, on_progress: ProgressFn = lambda s: None) -> d
     after = _installed_commit()
     if before and after and before == after:
         return {"status": "up-to-date",
-                "detail": f"already up to date at {before[:12]}",
+                "detail": f"Already up to date: still at {before[:12]}, "
+                          "which is what the source has.",
                 "before": before, "after": after}
     if not (before and after):
         # pip succeeded, but nothing on disk can name the commit, so there is
@@ -121,9 +122,9 @@ def update_pip_install(spec: str, on_progress: ProgressFn = lambda s: None) -> d
                 "detail": f"reinstalled from {spec} (this install records no "
                           "commit, so there is nothing to compare)",
                 "before": before, "after": after}
-    detail = f"{before[:12]} -> {after[:12]}"
-    on_progress(f"updated {detail}")
-    return {"status": "updated", "detail": detail, "before": before, "after": after}
+    return {"status": "updated",
+            "detail": f"Updated: {before[:12]} -> {after[:12]}",
+            "before": before, "after": after}
 
 
 # Asked in a fresh interpreter, because after pip has replaced the package this
@@ -213,7 +214,10 @@ def update_installation(
                           "reinstall from. Reinstall with: pip install --upgrade "
                           "--force-reinstall git+https://github.com/RupertCloud/SilkCode"}
     branch = branch or current_branch(repo)
-    on_progress(f"updating {repo} on branch {branch} ...")
+    # "checking", not "updating": at this point we do not yet know whether
+    # there is anything to pull, and leading with "updating" makes a run that
+    # changed nothing read as though it did.
+    on_progress(f"checking {repo} on branch {branch} ...")
     before = head_commit(repo)
     dirty = working_tree_dirty(repo)
     if dirty and not force:
@@ -232,7 +236,8 @@ def update_installation(
     after = head_commit(repo)
     if after == before:
         return {"status": "up-to-date",
-                "detail": f"already up to date at {before[:12] if before else '?'}",
+                "detail": f"Already up to date: {branch} is at "
+                          f"{before[:12] if before else '?'}, same as origin.",
                 "before": before, "after": after}
     # sanity: the new code must import before we hot-apply it. It reports its
     # build rather than __version__ — the release number is the same string
@@ -248,7 +253,7 @@ def update_installation(
         return {"status": "error",
                 "detail": f"new code does not import: {check.stderr.strip()[:300]}",
                 "before": before, "after": after}
-    detail = f"{before[:12]} -> {after[:12]}"
+    detail = f"Updated {branch}: {before[:12]} -> {after[:12]}"
     imported = check.stdout.strip()
     if imported and after and not after.startswith(imported):
         # The pull landed, but `import silkcode` resolves somewhere else — a
@@ -257,7 +262,6 @@ def update_installation(
         detail += (f" — warning: `import silkcode` resolves to {imported}, not "
                    f"{after[:12]}. Another install is shadowing this checkout; "
                    "run `silkcode version` to see which one is in use.")
-    on_progress(f"updated {detail}")
     return {"status": "updated", "detail": detail,
             "before": before, "after": after}
 

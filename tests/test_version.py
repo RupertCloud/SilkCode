@@ -94,10 +94,16 @@ def test_a_directory_that_is_not_a_repository_is_not_an_error(monkeypatch, tmp_p
 
 
 def test_the_report_tells_you_how_to_update_this_particular_install(monkeypatch):
-    """Two installs, two different upgrade paths; guessing wrong wastes the
-    user's afternoon."""
+    """Both installs are updated the same way now - `silkcode update`
+    fast-forwards a checkout and reinstalls a pip install from the source pip
+    recorded. This used to send a non-checkout to `pip install -U silkcode`,
+    which is not a package on PyPI, so the one person actively diagnosing an
+    update problem got a 404."""
     monkeypatch.setattr(V, "_git", lambda *a: None)
-    assert "pip install -U silkcode" in V.report()
+    no_git = V.report()
+    assert "silkcode update" in no_git
+    assert "pip install -U silkcode" not in no_git
+    assert "no git metadata" in no_git      # still says which install it is
 
     for fn in (V.commit, V.is_dirty, V.build_id):
         fn.cache_clear()

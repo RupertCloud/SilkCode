@@ -797,9 +797,11 @@ class GuiState:
         with the new code (see start_auto_reload). Refuses while a swarm is
         running so an in-flight run is never interrupted."""
         from ..update import git_repo_root, update_installation
+        # repo is None for a `pip install git+https://...`, which is not a
+        # checkout. update_installation reinstalls from the source pip
+        # recorded; this used to raise and recommend `pip install -U
+        # silkcode`, a package that does not exist on PyPI.
         repo = git_repo_root()
-        if repo is None:
-            raise ToolError("not a git checkout; update with: pip install -U silkcode")
         with self.lock:
             if any(sw.get("running") for sw in self.swarms.values()):
                 raise ToolError("a swarm is running in this session; stop it before updating")
@@ -809,6 +811,13 @@ class GuiState:
             self.broadcast({"type": "update_progress", "line": line})
 
         result = update_installation(repo=repo, branch=branch, on_progress=on_progress)
+        if repo is None and result.get("status") == "error":
+            # Not a checkout *and* pip recorded no source to reinstall from -
+            # there is nothing this endpoint can do, which is the 400 the UI
+            # already knows how to show. Errors from a real checkout (a dirty
+            # tree, a non-fast-forward) keep coming back in the body, as
+            # before, because those the user can act on and retry.
+            raise ToolError(result["detail"])
         return result
 
     # ---- GitHub authorization (SRS sections 30-31, 60) ---------------------

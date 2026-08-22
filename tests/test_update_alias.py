@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+from pathlib import Path
 
 import pytest
 
@@ -264,3 +265,48 @@ def test_the_cli_reaches_the_reinstall_path_when_there_is_no_checkout(monkeypatc
     assert seen["repo"] is None
     assert "reinstalled from" in out
     assert "pip install -U silkcode" not in out
+
+
+# ---- saying whether anything actually changed --------------------------------
+
+def test_the_outcome_is_printed_once_not_twice(monkeypatch):
+    """update_installation emitted the change through on_progress *and*
+    returned it as `detail`, which cmd_update also printed - so a real update
+    reported itself twice, one line after the other."""
+    import silkcode.update as up
+    monkeypatch.setattr(up, "git_repo_root", lambda start=None: Path("/repo"))
+    monkeypatch.setattr(up, "update_installation",
+                        lambda repo=None, branch=None, force=False,
+                        on_progress=lambda s: None: {
+                            "status": "updated",
+                            "detail": "Updated main: aaaaaaaaaaaa -> bbbbbbbbbbbb"})
+    code, out = run(["-update"])
+    assert code == 0
+    assert out.count("aaaaaaaaaaaa -> bbbbbbbbbbbb") == 1, out
+
+
+def test_an_up_to_date_run_says_so_in_words(monkeypatch):
+    import silkcode.update as up
+    monkeypatch.setattr(up, "git_repo_root", lambda start=None: Path("/repo"))
+    monkeypatch.setattr(up, "update_installation",
+                        lambda repo=None, branch=None, force=False,
+                        on_progress=lambda s: None: {
+                            "status": "up-to-date",
+                            "detail": "Already up to date: main is at abc123, same as origin."})
+    code, out = run(["-update"])
+    assert code == 0
+    assert "Already up to date" in out
+
+
+def test_a_reinstall_that_moved_nothing_says_already_up_to_date(monkeypatch):
+    import silkcode.update as up
+    monkeypatch.setattr(up, "_installed_commit", lambda: "abc123def456")
+
+    class Proc:
+        returncode = 0
+        stdout = "Successfully installed silkcode-0.1.0\n"
+        stderr = ""
+    monkeypatch.setattr(up.subprocess, "run", lambda *a, **k: Proc())
+    result = update_pip_install("git+https://example/x")
+    assert result["status"] == "up-to-date"
+    assert result["detail"].startswith("Already up to date")

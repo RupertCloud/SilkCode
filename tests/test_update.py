@@ -69,6 +69,24 @@ def test_update_installation_up_to_date(tmp_path):
     install = _clone(origin, tmp_path / "install")
     result = update_installation(repo=install)
     assert result["status"] == "up-to-date"
+    # The whole point of running update is to learn whether anything changed,
+    # so the answer has to be in the sentence a user actually reads - not left
+    # to be inferred from a status field they never see.
+    assert result["detail"].startswith("Already up to date")
+    assert "main" in result["detail"]
+
+
+def test_a_run_that_changes_nothing_does_not_announce_an_update(tmp_path):
+    """The progress line used to open with `updating <repo> ...` before the
+    fetch had happened, so a run that pulled nothing still read as though it
+    had done something."""
+    origin = _make_origin(tmp_path)
+    install = _clone(origin, tmp_path / "install")
+    lines = []
+    result = update_installation(repo=install, on_progress=lines.append)
+    assert result["status"] == "up-to-date"
+    assert not any(line.lower().startswith("updating") for line in lines), lines
+    assert any(line.lower().startswith("checking") for line in lines), lines
 
 
 def test_update_installation_dirty_tree_refuses(tmp_path):

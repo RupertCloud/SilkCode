@@ -120,7 +120,11 @@ def report() -> str:
         lines.append("  update    silkcode update")
     else:
         lines.append("  source    installed package (no git metadata)")
-        lines.append("  update    pip install -U silkcode")
+        # `silkcode update` handles this install too: it reinstalls from the
+        # source pip recorded. This line used to read `pip install -U
+        # silkcode`, sending the one person actively diagnosing an update
+        # problem to a package that does not exist on PyPI.
+        lines.append("  update    silkcode update")
     lines.append(f"  install   {d['install']}")
     lines.append(f"  python    {d['python']}  ({d['executable']})")
     lines.append(f"  platform  {d['platform']}")
