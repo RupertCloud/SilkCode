@@ -266,6 +266,7 @@ silkcode models [add|pull|default]                    # provider/model managemen
 silkcode inference [discover|link|ping|host]          # run the models on another machine
 silkcode swarm [path] [--model M] [...]               # multi-agent improvement loop
 silkcode update [--branch B]                          # pull updates, hot-apply them
+silkcode -update                                     # any verb also works as a flag
 silkcode sessions                                     # list saved sessions
 silkcode resume <id>                                  # continue a session (GUI or CLI)
 silkcode test [path] [--command CMD]                  # run the project's tests (auto-detected)
@@ -400,6 +401,43 @@ worker asks you before modifying files or running commands — pick **Yes to all
 on a permission prompt to let it run unattended for the rest of the session.
 
 ## Self-update
+
+```bash
+silkcode update              # pull the latest code into this install
+silkcode -update             # same thing; the verb also works as a flag
+silkcode update --branch main
+silkcode update --install    # also run `pip install -e .`, for new dependencies
+silkcode update --force      # update even with a dirty working tree
+```
+
+Every subcommand also answers to its flag form — `-update`, `--update`, `-models`,
+`--gui` — because plenty of tools take their verbs that way and typing
+`silkcode -update` used to produce `unrecognized arguments: -update` with no hint
+that `silkcode update` was the same command. The handful of flags the REPL itself
+defines keep their own meaning: `--sandbox` still runs the REPL against the
+configured sandbox rather than opening the `sandbox` command, and `--version`
+stays the one-line build id rather than the full `silkcode version` report.
+
+How the update happens depends on how Silk Code was installed, and it works out
+which on its own:
+
+| Install | What `silkcode update` does |
+| --- | --- |
+| a clone, or `pip install -e .` | fast-forwards the checkout to `origin/<branch>` |
+| `pip install git+https://…` | reinstalls from the same URL and revision pip recorded |
+
+The second case matters because it is the install the top of this README leads
+with, and it carries no git metadata. Silk Code reads pip's own
+[PEP 610](https://peps.python.org/pep-0610/) `direct_url.json` record to recover
+the URL and branch you installed from, then reinstalls from exactly that. (There
+is no `silkcode` package on PyPI, so `pip install -U silkcode` is not a fallback —
+it is a 404.)
+
+A git checkout only ever fast-forwards: a dirty tree or local-only commits are
+reported rather than overwritten, so nothing is lost and nothing is force-reset.
+A running GUI daemon watches the checkout's HEAD and re-execs itself once new
+code lands, so the update goes live without a manual restart — sessions are
+persisted on disk and survive it.
 
 ### Resyncing a branch that moved
 

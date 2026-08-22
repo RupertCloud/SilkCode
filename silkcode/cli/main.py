@@ -21,6 +21,10 @@ Commands:
     silkcode sync [path] [--apply]                         check/reconcile a branch that moved
     silkcode version [--json]                              what this install is, and how to update it
 
+Every subcommand also answers to its flag form - `silkcode -update` and
+`silkcode --update` both run `silkcode update` - except the flags the REPL
+itself defines (--sandbox, --version, --model, ...), which keep their meaning.
+
 Run several GUI instances on one machine - each on its own --host/--port and
 project. Session ids are unique across instances and every session is tagged
 with the instance that created it (see `silkcode sessions`).
@@ -39,6 +43,31 @@ from pathlib import Path
 from ..config import Config, ConfigError
 from ..providers import build_provider
 from ..sessions import SessionStore
+
+
+# Flags the REPL itself defines. A token in here is never read as a subcommand
+# alias, which is what keeps `--sandbox <path>` meaning "run the REPL against
+# the configured sandbox" rather than the `sandbox` management command, and
+# `--version` printing the one-line build id rather than the full report.
+REPL_FLAGS = frozenset({
+    "-h", "--help", "-V", "--version", "-m", "--model", "--mode", "--allow",
+    "--sandbox", "--remote", "--auto-push", "-p", "--prompt",
+})
+
+
+def subcommand_alias(token: str, commands: dict) -> str | None:
+    """`-update` or `--update` -> the `update` subcommand.
+
+    Plenty of tools take their verbs as flags, so people type `silkcode
+    -update` and used to get `unrecognized arguments: -update` and no hint
+    that `silkcode update` was the same thing. These tokens were all errors
+    before, so reading them as the verb they name costs nothing - except for
+    the handful the REPL already defines, which keep their meaning.
+    """
+    if not token.startswith("-") or token in REPL_FLAGS:
+        return None
+    name = token[2:] if token.startswith("--") else token[1:]
+    return name if name in commands else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -63,12 +92,14 @@ def main(argv: list[str] | None = None) -> int:
         "sync": cmd_sync,
         "version": cmd_version,
     }
-    if argv and argv[0] in commands:
-        try:
-            return commands[argv[0]](argv[1:])
-        except ConfigError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
+    if argv:
+        name = argv[0] if argv[0] in commands else subcommand_alias(argv[0], commands)
+        if name:
+            try:
+                return commands[name](argv[1:])
+            except ConfigError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
     return cmd_repl(argv)
 
 
@@ -491,12 +522,14 @@ def cmd_update(argv: list[str]) -> int:
     from ..update import git_repo_root, update_installation
     repo = git_repo_root()
     if repo is None:
-        print("error: silkcode is not installed from a git checkout.", file=sys.stderr)
-        print("Update it with: pip install -U silkcode", file=sys.stderr)
-        return 1
+        # Not a checkout. update_installation reinstalls from whatever pip
+        # recorded at install time, which is the case for the `pip install
+        # git+https://...` the README leads with. It used to stop here and
+        # recommend `pip install -U silkcode` - a package that is not on PyPI.
+        print("not a git checkout; updating from the source pip installed from ...")
     result = update_installation(repo=repo, branch=args.branch, force=args.force,
                                  on_progress=print)
-    if args.install and result["status"] == "updated":
+    if args.install and repo is not None and result["status"] == "updated":
         print("installing editable package ...")
         proc = _subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."],
                                cwd=repo, capture_output=True, text=True, timeout=600)
@@ -505,7 +538,13 @@ def cmd_update(argv: list[str]) -> int:
             return 1
     print(result["detail"])
     if result["status"] == "updated":
-        print("The GUI daemon (if running) will restart itself with the new code automatically.")
+        if repo is not None:
+            print("The GUI daemon (if running) will restart itself with the new "
+                  "code automatically.")
+        else:
+            # A reinstall swaps the files under any process already running,
+            # and nothing watches HEAD outside a checkout.
+            print("Restart any running silkcode process to pick up the new code.")
         return 0
     return 0 if result["status"] == "up-to-date" else 1
 
