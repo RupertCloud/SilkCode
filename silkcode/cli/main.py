@@ -8,6 +8,11 @@ Commands:
     silkcode models add <name> --base-url URL [...]        onboard a provider/endpoint
     silkcode models pull <model>                           pull a model into Ollama
     silkcode models default <spec>                         set the default model
+    silkcode inference                                     status of a linked inference server
+    silkcode inference discover                            find model servers on this network
+    silkcode inference link <host|url>                     run the models on another machine
+    silkcode inference ping [--chat]                       is it up, and can it generate?
+    silkcode inference host                                (on that machine) how to let it in
     silkcode sessions                                      list saved sessions
     silkcode resume <id>                                   resume a session in the REPL
     silkcode config                                        show configuration
@@ -26,6 +31,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -49,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         "review": cmd_review,
         "mcp": cmd_mcp,
         "connect": cmd_connect,
+        "inference": cmd_inference,
         "benchmark": cmd_benchmark,
         "swarm": cmd_swarm,
         "update": cmd_update,
@@ -908,6 +915,440 @@ def cmd_resume(argv: list[str]) -> int:
         return 1
     from .repl import run_repl
     return run_repl(data.get("cwd", "."), data.get("model"), data.get("mode", "ask"), resume=data)
+
+
+
+# ---- inference: drive from the phone, run the model on the laptop -----------
+
+def cmd_inference(argv: list[str]) -> int:
+    """`silkcode inference ...` - point this install at a model server on
+    another machine (SRS section 20: local models, not necessarily this CPU).
+
+    The shape of the problem: the phone is where you want to type and the
+    laptop is where the weights are. Everything here is either finding that
+    laptop, proving it answers, or telling the laptop to let the phone in.
+    """
+    subcommands = {
+        "discover": _inference_discover,
+        "link": _inference_link,
+        "unlink": _inference_unlink,
+        "ping": _inference_ping,
+        "host": _inference_host,
+    }
+    if argv and argv[0] in subcommands:
+        return subcommands[argv[0]](argv[1:])
+    if argv and argv[0].startswith("-"):
+        argparse.ArgumentParser(prog="silkcode inference").parse_args(argv)
+    if argv:
+        print(f"error: unknown subcommand '{argv[0]}' "
+              f"(try: {', '.join(sorted(subcommands))})", file=sys.stderr)
+        return 1
+    return _inference_status()
+
+
+def _inference_status() -> int:
+    from ..inference import linked_providers, probe
+
+    config = Config.load()
+    linked = linked_providers(config)
+    if not linked:
+        print("No inference server linked - this install runs models locally or in the cloud.\n")
+        print("To run the models on your laptop and drive them from here:")
+        print("  1. on the laptop:  silkcode inference host")
+        print("  2. here:           silkcode inference discover")
+        print("  3. here:           silkcode inference link <address-it-found>")
+        print()
+        _print_cloud_chain(config)
+        return 0
+    print(f"default model: {config.default_model}\n")
+    down = 0
+    for name, cfg in sorted(linked.items()):
+        url = cfg.get("base_url", "")
+        result = probe(url, token=config.api_key_for(cfg), timeout=4.0)
+        if result.ok:
+            print(f"{name:<12} {url:<40} up "
+                  f"({result.latency_ms:.0f} ms, {len(result.models)} models)")
+        else:
+            down += 1
+            print(f"{name:<12} {url:<40} unreachable")
+            print(f"{'':<12} {result.error}")
+    print()
+    _print_cloud_chain(config, skip=frozenset(linked))
+    print("\nCheck a round trip through the model with: silkcode inference ping --chat")
+    # Same convention as `silkcode sandbox`: a status command that found the
+    # thing it describes to be down exits non-zero, so a script can act on it.
+    return 1 if down else 0
+
+
+def _cloud_chain(config, skip: frozenset = frozenset()) -> list[tuple[str, bool, str]]:
+    """The direct-to-provider endpoints `auto` falls through to.
+
+    Linking a laptop must never look like it took DeepSeek or Kimi away - those
+    are still one `--model deepseek` away, and they are what answers when the
+    laptop is asleep or on a network it cannot be reached from. Returned as
+    (name, ready-right-now, what-it-is-missing).
+    """
+    from ..config import DEFAULT_AUTO_ORDER
+
+    # The auto chain first, because that is the order they would be tried in,
+    # then anything else that holds a key. Cloudflare is the reason for the
+    # second half: it is a built-in provider that is not in the auto order, and
+    # leaving it off this list would tell a user who has one configured that
+    # they have no cloud provider at all.
+    order = list(config.data.get("auto_order") or DEFAULT_AUTO_ORDER)
+    order += sorted(n for n in config.providers if n not in order)
+
+    chain: list[tuple[str, bool, str]] = []
+    for name in order:
+        cfg = config.providers.get(name)
+        if not cfg or name in skip:
+            continue
+        if not (cfg.get("api_key_env") or cfg.get("api_key")):
+            continue  # a local server: whether it can serve depends on it running
+        if "{account_id}" in cfg.get("base_url", "") and not cfg.get("account_id"):
+            chain.append((name, False, "needs --account-id"))
+        elif not config.api_key_for(cfg):
+            chain.append((name, False, f"needs ${cfg.get('api_key_env', 'an API key')}"))
+        elif not cfg.get("default_model"):
+            chain.append((name, False, "needs a model"))
+        else:
+            chain.append((name, True, ""))
+    return chain
+
+
+def _print_cloud_chain(config, skip: frozenset = frozenset()) -> None:
+    chain = _cloud_chain(config, skip=skip)
+    if not chain:
+        return
+    ready = [name for name, ok, _ in chain if ok]
+    missing = [name for name, ok, _ in chain if not ok]
+    if ready:
+        print("Direct to a cloud provider: " + ", ".join(ready))
+        print(f"  available at any time:  silkcode --model {ready[0]}")
+    else:
+        print("No cloud provider is set up yet - Silk Code also talks straight to "
+              "DeepSeek, Kimi and the rest.")
+    if missing:
+        # Names only: `silkcode models` already prints the env var each one wants,
+        # and six "needs $SOMETHING_API_KEY" clauses on one line reads as noise.
+        print(f"  not set up: {', '.join(missing)}"
+              "   (silkcode models shows what each needs)")
+
+
+def _inference_discover(argv: list[str]) -> int:
+    from ..inference import KNOWN_PORTS, InferenceError, discover, local_ipv4, preferred_model
+
+    parser = argparse.ArgumentParser(
+        prog="silkcode inference discover",
+        description="sweep this network for Ollama / LM Studio / vLLM / llama.cpp servers")
+    parser.add_argument("--host", action="append", dest="hosts", metavar="HOST",
+                        help="check this host only (repeatable); skips the sweep")
+    parser.add_argument("--port", action="append", type=int, dest="ports", metavar="PORT",
+                        help="extra port to try (repeatable)")
+    parser.add_argument("--prefix", type=int, default=24,
+                        help="how much of the subnet to sweep (default 24 = 254 addresses)")
+    parser.add_argument("--timeout", type=float, default=0.35,
+                        help="per-address connect timeout in seconds (default 0.35)")
+    parser.add_argument("--token", help="bearer token, if the servers require one")
+    args = parser.parse_args(argv)
+
+    ports = [p for p, _ in KNOWN_PORTS]
+    ports += [p for p in (args.ports or []) if p not in ports]
+    own = local_ipv4()
+    if args.hosts:
+        print(f"Checking {len(args.hosts)} host(s) on {len(ports)} ports ...")
+    else:
+        print(f"Sweeping {own or '?'}/{args.prefix} on ports "
+              f"{', '.join(str(p) for p in ports)} ...")
+    try:
+        found = discover(hosts=args.hosts, ports=ports, prefix=args.prefix,
+                         connect_timeout=args.timeout, token=args.token)
+    except InferenceError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not found:
+        print("\nNothing found.")
+        print("On the machine that should run the model, run: silkcode inference host")
+        print("It prints the address to use and how to open the server to this network.")
+        return 1
+    print()
+    for result in found:
+        model = preferred_model(result.models)
+        print(f"{result.url:<34} {result.server:<10} {result.latency_ms:>6.0f} ms  "
+              f"{len(result.models)} models" + (f" (e.g. {model})" if model else ""))
+    print(f"\nLink one with: silkcode inference link {found[0].url}")
+    return 0
+
+
+def _inference_link(argv: list[str]) -> int:
+    from ..inference import (DEFAULT_LINK_NAME, InferenceError, link, normalize_url,
+                             preferred_model, probe)
+
+    parser = argparse.ArgumentParser(
+        prog="silkcode inference link",
+        description="point this install at a model server on another machine")
+    parser.add_argument("address", help="host, host:port or URL, e.g. 192.168.1.20:11434")
+    parser.add_argument("--name", default=DEFAULT_LINK_NAME,
+                        help=f"provider name to save it as (default {DEFAULT_LINK_NAME})")
+    parser.add_argument("--model", help="default model on that server "
+                                        "(default: the best-looking one it reports)")
+    parser.add_argument("--token", help="bearer token stored in the config file")
+    parser.add_argument("--token-env", help="environment variable holding the bearer token "
+                                            "(preferred over --token)")
+    parser.add_argument("--timeout", type=float, default=None,
+                        help="request timeout in seconds; a laptop loading a big model "
+                             "cold can take a while to answer the first turn")
+    parser.add_argument("--no-default", action="store_true",
+                        help="save the provider but leave the default model alone")
+    parser.add_argument("--force", action="store_true",
+                        help="save it even if it does not answer right now")
+    args = parser.parse_args(argv)
+
+    config = Config.load()
+    token = args.token or (os.environ.get(args.token_env) if args.token_env else None)
+    if args.token:
+        # Same trade-off `models add` flags: the config file is chmod 0600, but an
+        # environment variable keeps the secret out of a file that gets synced,
+        # backed up and pasted into bug reports.
+        print("warning: storing the token in the config file; prefer --token-env",
+              file=sys.stderr)
+    try:
+        url = normalize_url(args.address, default_port=11434)
+    except InferenceError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Probing {url} ...")
+    result = probe(url, token=token)
+    if not result.ok:
+        print(f"error: {result.error}", file=sys.stderr)
+        if not args.force:
+            print("\nOn the machine running the model: silkcode inference host", file=sys.stderr)
+            print("Save it anyway (e.g. the laptop is asleep) with --force.", file=sys.stderr)
+            return 1
+        print("warning: saving an endpoint that did not answer (--force)", file=sys.stderr)
+        result.kind = "ollama" if (result.port == 11434) else "openai_compat"
+        result.base_url = url if result.kind == "ollama" else f"{url}/v1"
+
+    model = args.model or preferred_model(result.models)
+    if args.model and result.models and args.model not in result.models:
+        print(f"warning: {url} does not list '{args.model}' "
+              f"(it has: {', '.join(result.models[:6])})", file=sys.stderr)
+    saved = link(config, args.name, result, model=model, token=args.token,
+                 token_env=args.token_env, timeout=args.timeout,
+                 make_default=not args.no_default)
+    print(f"Linked '{args.name}' -> {saved['base_url']} ({result.server or 'model server'})")
+    if result.models:
+        print(f"Models: {', '.join(result.models[:8])}"
+              + (f" (+{len(result.models) - 8} more)" if len(result.models) > 8 else ""))
+    if model:
+        spec = f"{args.name}/{model}"
+        print(f"Default model: {config.default_model}" if not args.no_default
+              else f"Use it with: silkcode --model {spec}")
+    else:
+        print(f"Use it with: silkcode --model {args.name}/<model-name>")
+    print(f"Saved in {config.path}")
+    print("\n'auto' now tries this server first and falls back to the cloud when it is away.")
+    _print_cloud_chain(config, skip=frozenset([args.name]))
+    return 0
+
+
+def _inference_unlink(argv: list[str]) -> int:
+    from ..inference import DEFAULT_LINK_NAME, linked_providers, unlink
+
+    parser = argparse.ArgumentParser(prog="silkcode inference unlink")
+    parser.add_argument("name", nargs="?", default=None,
+                        help="provider to remove (default: the only linked one)")
+    args = parser.parse_args(argv)
+
+    config = Config.load()
+    linked = linked_providers(config)
+    name = args.name
+    if name is None:
+        if len(linked) == 1:
+            name = next(iter(linked))
+        elif not linked:
+            print("Nothing linked.")
+            return 0
+        else:
+            print(f"error: several servers are linked ({', '.join(sorted(linked))}); "
+                  "name the one to remove", file=sys.stderr)
+            return 1
+    if not unlink(config, name):
+        print(f"error: no provider named '{name}' in {config.path}", file=sys.stderr)
+        return 1
+    print(f"Unlinked '{name}'. Default model is now: {config.default_model}")
+    return 0
+
+
+def _inference_ping(argv: list[str]) -> int:
+    """Is it up, and can it actually generate?
+
+    Two different questions, and the gap between them is where the bad
+    surprises live: a laptop answers /api/tags in a millisecond and can still
+    take half a minute to produce a first token while it pages a 30B model in
+    from disk.
+    """
+    from ..inference import (DEFAULT_LINK_NAME, InferenceError, linked_providers,
+                             measure_chat, normalize_url, probe)
+
+    parser = argparse.ArgumentParser(prog="silkcode inference ping")
+    parser.add_argument("target", nargs="?",
+                        help="a linked provider name or an address "
+                             f"(default: '{DEFAULT_LINK_NAME}', or the only linked server)")
+    parser.add_argument("--chat", action="store_true",
+                        help="also send a one-word prompt and time the full round trip")
+    parser.add_argument("--model", help="model to use for --chat")
+    parser.add_argument("--count", type=int, default=3, help="how many probes (default 3)")
+    parser.add_argument("--token", help="bearer token, if the server requires one")
+    args = parser.parse_args(argv)
+
+    config = Config.load()
+    linked = linked_providers(config)
+    name, cfg = None, None
+    if args.target and args.target in config.providers:
+        name, cfg = args.target, config.providers[args.target]
+    elif args.target:
+        try:
+            url = normalize_url(args.target, default_port=11434)
+        except InferenceError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        cfg = {"base_url": url}
+    elif len(linked) == 1:
+        name, cfg = next(iter(linked.items()))
+    elif DEFAULT_LINK_NAME in linked:
+        name, cfg = DEFAULT_LINK_NAME, linked[DEFAULT_LINK_NAME]
+    else:
+        print("error: nothing linked to ping. Run: silkcode inference link <address>",
+              file=sys.stderr)
+        return 1
+
+    url = cfg["base_url"]
+    token = args.token or config.api_key_for(cfg)
+    label = f"{name} ({url})" if name else url
+    print(f"Pinging {label}")
+    latencies: list[float] = []
+    last = None
+    for _ in range(max(1, args.count)):
+        last = probe(url, token=token)
+        if last.ok and last.latency_ms is not None:
+            latencies.append(last.latency_ms)
+            print(f"  reply in {last.latency_ms:.0f} ms")
+        else:
+            print(f"  no reply: {last.error}")
+    if not latencies:
+        print("\nUnreachable.", file=sys.stderr)
+        print("If the laptop is awake and the server is running, it is probably bound to "
+              "loopback there - run `silkcode inference host` on it.", file=sys.stderr)
+        return 1
+    best, worst = min(latencies), max(latencies)
+    print(f"\n{len(latencies)}/{args.count} answered - "
+          f"min {best:.0f} ms, avg {sum(latencies) / len(latencies):.0f} ms, max {worst:.0f} ms")
+    if last and last.models:
+        print(f"Models: {', '.join(last.models[:8])}")
+    if not args.chat:
+        print("\nThat is the server answering, not the model generating. "
+              "Add --chat to time a real turn.")
+        return 0
+
+    model = args.model or cfg.get("default_model")
+    if not model:
+        from ..inference import preferred_model
+        model = preferred_model(last.models if last else [])
+    if not model:
+        print("error: no model to test with; pass --model", file=sys.stderr)
+        return 1
+    chat_cfg = dict(cfg)
+    chat_cfg.setdefault("type", "ollama" if (last and last.kind == "ollama") else "openai_compat")
+    chat_cfg.setdefault("base_url", url)
+    print(f"\nGenerating with {model} ...")
+    try:
+        reply, elapsed = measure_chat(chat_cfg, model, api_key=token)
+    except InferenceError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Reply in {elapsed:.0f} ms: {reply[:120] or '(empty)'}")
+    if elapsed > 30_000:
+        print("\nThat first turn was slow - usually the model being loaded into memory. "
+              "The next one should be much faster; if it is not, try a smaller model.")
+    return 0
+
+
+def _inference_host(argv: list[str]) -> int:
+    """Run this on the machine with the GPU. It answers one question: what do
+    I type on the phone, and why can't the phone see me yet?
+
+    Local model servers ship bound to 127.0.0.1, which is the right default and
+    the exact reason a phone on the same Wi-Fi gets 'connection refused'. So
+    the check that matters is not 'is it running' but 'is it listening on an
+    address something else can reach'.
+    """
+    from ..inference import KNOWN_PORTS, local_ipv4_addresses, port_open, probe
+
+    parser = argparse.ArgumentParser(
+        prog="silkcode inference host",
+        description="show what a phone or tablet needs to reach the model servers here")
+    parser.add_argument("--port", action="append", type=int, dest="ports", metavar="PORT",
+                        help="extra port to check (repeatable)")
+    args = parser.parse_args(argv)
+
+    ports = [p for p, _ in KNOWN_PORTS]
+    ports += [p for p in (args.ports or []) if p not in ports]
+    addresses = local_ipv4_addresses()
+    if addresses:
+        print("This machine is reachable at: " + ", ".join(addresses))
+    else:
+        print("This machine has no network address - it is offline or on a network that "
+              "gives it none. Connect it to the same Wi-Fi as the phone.")
+    print()
+
+    reachable: list[tuple[str, str]] = []   # (url, server kind)
+    loopback_only: list[int] = []
+    for port in ports:
+        if not port_open("127.0.0.1", port, timeout=0.3):
+            continue
+        exposed = [a for a in addresses if port_open(a, port, timeout=0.5)]
+        if not exposed:
+            loopback_only.append(port)
+            continue
+        for address in exposed:
+            result = probe(f"http://{address}:{port}", timeout=3.0)
+            if result.ok:
+                reachable.append((result.url, result.server or "model server"))
+                print(f"  {result.url:<28} {result.server:<12} "
+                      f"{len(result.models)} models - reachable from the network")
+
+    for port in loopback_only:
+        kind = next((name for p, name in KNOWN_PORTS if p == port), "server")
+        print(f"  port {port} ({kind}) is running, but only on 127.0.0.1 - "
+              "nothing else can reach it")
+        print("    " + _open_up_hint(kind, port))
+    if not reachable and not loopback_only:
+        print("  no model server is running here.")
+        print("  Start one first, e.g.:  ollama serve   (https://ollama.com)")
+
+    if reachable:
+        url = reachable[0][0]
+        print(f"\nOn the phone, run:\n  silkcode inference link {url}")
+        print("\nIf that fails while this machine is awake, the firewall here is dropping "
+              "the connection - allow inbound TCP on the port above for private networks.")
+    return 0
+
+
+def _open_up_hint(kind: str, port: int) -> str:
+    """The one command that makes a loopback-bound server answer the LAN."""
+    if kind == "ollama":
+        return (f"restart it listening on every interface:  "
+                f"OLLAMA_HOST=0.0.0.0:{port} ollama serve"
+                "\n      (macOS app: launchctl setenv OLLAMA_HOST \"0.0.0.0:11434\" and restart Ollama;"
+                "\n       Windows: set OLLAMA_HOST=0.0.0.0:11434 in your user environment variables)")
+    if kind == "lmstudio":
+        return "in LM Studio: Developer -> Server -> enable 'Serve on Local Network', then restart the server"
+    if kind == "vllm":
+        return f"restart it with:  vllm serve <model> --host 0.0.0.0 --port {port}"
+    if kind == "llamacpp":
+        return f"restart it with:  llama-server --host 0.0.0.0 --port {port} -m <model>"
+    return f"restart it bound to 0.0.0.0 instead of 127.0.0.1 on port {port}"
 
 
 if __name__ == "__main__":

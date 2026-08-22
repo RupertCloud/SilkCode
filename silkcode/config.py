@@ -84,6 +84,17 @@ BUILTIN_PROVIDERS: dict[str, dict] = {
 }
 
 
+# Order the `auto` router walks when the config does not override it:
+# local servers that cost nothing to try, then cloud providers. A server
+# linked with `silkcode inference link` is prepended to this (see
+# inference.link), so a laptop on the LAN wins and the cloud is the fallback
+# for when it is asleep.
+DEFAULT_AUTO_ORDER = [
+    "ollama", "deepseek", "qwen", "kimi", "glm", "minimax", "openrouter",
+    "vllm", "lmstudio",
+]
+
+
 class ConfigError(ValueError):
     pass
 
@@ -180,28 +191,35 @@ class Config:
         from .providers.ollama import OllamaProvider
         from .providers.openai_compat import OpenAICompatProvider
 
-        order = self.data.get("auto_order") or [
-            "ollama", "deepseek", "qwen", "kimi", "glm", "minimax", "openrouter",
-            "vllm", "lmstudio",
-        ]
+        order = self.data.get("auto_order") or DEFAULT_AUTO_ORDER
         for name in order:
             cfg = self.providers.get(name)
             if not cfg:
                 continue
             if "{account_id}" in cfg.get("base_url", "") and not cfg.get("account_id"):
                 continue  # placeholder provider not onboarded yet (e.g. cloudflare)
+            # A server on another machine gets a little longer to answer than
+            # one on this one: a Wi-Fi hop to a laptop is slower than loopback.
+            remote = bool(cfg.get("remote_inference"))
+            probe_timeout = float(cfg.get("probe_timeout", 3.0 if remote else 2.0))
             if cfg.get("type") == "ollama":
-                probe = OllamaProvider(name, base_url=cfg["base_url"], timeout=2.0)
+                probe = OllamaProvider(name, base_url=cfg["base_url"],
+                                       api_key=self.api_key_for(cfg), timeout=probe_timeout)
                 models = probe.list_models()
                 if models:
                     model = next((m for m in models if "coder" in m), models[0])
                     return name, cfg, model
-            elif cfg.get("api_key_env") or cfg.get("api_key"):
+            elif (cfg.get("api_key_env") or cfg.get("api_key")) and not remote:
                 model = cfg.get("default_model")
                 if model and self.api_key_for(cfg):
                     return name, cfg, model
             else:
-                probe = OpenAICompatProvider(name, cfg["base_url"], timeout=2.0)
+                # A linked machine is probed even when it has a token: holding a
+                # credential says nothing about whether the laptop is awake, and
+                # `auto` handing back a sleeping laptop is worse than skipping it.
+                probe = OpenAICompatProvider(name, cfg["base_url"],
+                                             api_key=self.api_key_for(cfg),
+                                             timeout=probe_timeout)
                 models = probe.list_models()
                 if models:
                     return name, cfg, cfg.get("default_model") or models[0]
