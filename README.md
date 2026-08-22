@@ -103,7 +103,13 @@ Providers can also be onboarded from the GUI (**+ Add model**).
 
 `--model auto` picks the first available model: a running local server first
 (Ollama, preferring coder models), then cloud providers with an API key configured.
-The order is configurable via `auto_order` in the config file.
+A server linked with `silkcode inference link` goes to the front of that order, so
+`auto` reaches for your laptop when you are on its network and falls through to the
+cloud when you are not. The order is configurable via `auto_order` in the config file.
+
+To run the models on a *different* machine than the one you are typing on — a phone
+driving a laptop's GPU — see
+[Run the model on your laptop, drive it from your phone](#run-the-model-on-your-laptop-drive-it-from-your-phone).
 
 Configuration lives at `~/.silkcode/config.json` (override the directory with
 `$SILKCODE_HOME`).
@@ -133,6 +139,121 @@ tokens, e.g. DeepSeek):
   response has arrived yet — once tokens are streaming out, a mid-stream drop is
   surfaced as an error rather than replaying duplicate output.
 
+## Run the model on your laptop, drive it from your phone
+
+The phone is a good place to *drive* a coding agent and a poor place to *run* the
+model: the laptop already has the RAM, the GPU and the weights on disk. Silk Code
+links the two, so the agent runs where you are typing and the tokens are generated
+where the hardware is.
+
+Both machines need to be on the same network — the same Wi-Fi, or a private mesh
+like Tailscale (that address works here too).
+
+**On the laptop** (the one with the model), start your server and ask Silk Code
+what the phone needs:
+
+```bash
+ollama serve                    # or LM Studio / vLLM / llama.cpp
+silkcode inference host
+```
+
+Local model servers ship bound to `127.0.0.1` — the right default, and the exact
+reason a phone on the same Wi-Fi gets *connection refused*. `inference host`
+checks whether each running server is actually reachable from the network, and
+prints the one command that opens it if not:
+
+```
+This machine is reachable at: 192.168.1.20
+
+  port 11434 (ollama) is running, but only on 127.0.0.1 - nothing else can reach it
+    restart it listening on every interface:  OLLAMA_HOST=0.0.0.0:11434 ollama serve
+```
+
+Run that, run `silkcode inference host` again, and it hands you the address:
+
+```
+  http://192.168.1.20:11434    ollama    4 models - reachable from the network
+
+On the phone, run:
+  silkcode inference link http://192.168.1.20:11434
+```
+
+**On the phone** (Termux, or any second machine), find it and link it:
+
+```bash
+silkcode inference discover                          # sweep this network
+silkcode inference link http://192.168.1.20:11434    # or just: 192.168.1.20
+silkcode                                             # that laptop now serves the session
+```
+
+`link` probes the address before saving it, picks a sensible default model (a coder
+model if there is one, never an embedding model), and stores it as an ordinary
+provider named `laptop` — so `--model laptop`, `/model laptop/<model>`, the GUI's
+model selector and `silkcode models` all pick it up with no further setup.
+
+It also puts the laptop at the front of the `auto` router, which means **you can
+leave the house without reconfiguring anything**: `--model auto` tries the laptop
+first and falls through to your cloud providers when it does not answer.
+
+**The direct-to-provider path is untouched.** Linking a laptop adds a provider, it
+does not replace any — Silk Code still talks straight to DeepSeek, Kimi, GLM,
+MiniMax, Qwen, OpenRouter and Cloudflare exactly as before, and every
+`inference` command prints which of them are ready to take over:
+
+```
+Direct to a cloud provider: deepseek
+  available at any time:  silkcode --model deepseek
+  not set up: qwen, kimi, glm, minimax, openrouter, cloudflare   (silkcode models shows what each needs)
+```
+
+So you can mix freely — a local model on the laptop for the fast, private,
+free-to-run turns, and a frontier cloud model for the hard ones:
+
+```bash
+silkcode --model laptop/qwen2.5-coder:7b    # the laptop's GPU
+silkcode --model deepseek                   # straight to DeepSeek, as always
+silkcode --model kimi                        # straight to Kimi
+silkcode --model auto                        # laptop if it answers, cloud if it does not
+```
+
+Or switch mid-session with `/model <spec>`, without restarting.
+
+```bash
+silkcode inference                 # what is linked, and is it up right now?
+silkcode inference ping            # round-trip latency to the server
+silkcode inference ping --chat     # ... and time a real turn through the model
+silkcode inference unlink          # go back to local/cloud models
+```
+
+`ping` and `ping --chat` answer two different questions, and the gap between them
+is where the surprises live: a laptop answers a model listing in a millisecond and
+can still take half a minute to produce a first token while it pages a 30B model in
+from disk. `--chat` sends a real prompt and times the whole round trip.
+
+Useful flags:
+
+| Flag | What it does |
+| --- | --- |
+| `link --name <n>` | save it as something other than `laptop` (link several machines) |
+| `link --model <m>` | choose the default model instead of letting Silk Code pick |
+| `link --token-env VAR` | send a bearer token, for a server behind an authenticating proxy |
+| `link --timeout 600` | raise the request timeout for a big model that loads cold |
+| `link --force` | save an address that is not answering yet (the laptop is asleep) |
+| `discover --host H` | check one host instead of sweeping the subnet |
+| `discover --port P` | try an extra port beyond the ones Silk Code knows |
+
+Discovery sweeps the current `/24` for the ports these servers use — 11434
+(Ollama), 1234 (LM Studio), 8000 (vLLM), 8080 (llama.cpp), 5001 (KoboldCpp) — and
+probes whatever answers.
+
+> Anything you expose this way is unauthenticated unless you put a proxy in front
+> of it. Keep it to networks you trust, or use a private mesh (Tailscale/WireGuard)
+> rather than forwarding a port on your router.
+
+If you would rather keep Silk Code itself on the laptop and just *view* it from the
+phone, that also works — run the GUI on the laptop with `silkcode gui --host 0.0.0.0`
+and open it in the phone's browser. See [GUI](#gui).
+
 ## CLI
 
 ```bash
@@ -142,8 +263,10 @@ silkcode new [name] [--template T] [--dir D]          # create a new project
 silkcode gui [path] [--port N]                        # local GUI
 silkcode review [path]                                # AI review of uncommitted changes
 silkcode models [add|pull|default]                    # provider/model management
+silkcode inference [discover|link|ping|host]          # run the models on another machine
 silkcode swarm [path] [--model M] [...]               # multi-agent improvement loop
 silkcode update [--branch B]                          # pull updates, hot-apply them
+silkcode -update                                     # any verb also works as a flag
 silkcode sessions                                     # list saved sessions
 silkcode resume <id>                                  # continue a session (GUI or CLI)
 silkcode test [path] [--command CMD]                  # run the project's tests (auto-detected)
@@ -278,6 +401,43 @@ worker asks you before modifying files or running commands — pick **Yes to all
 on a permission prompt to let it run unattended for the rest of the session.
 
 ## Self-update
+
+```bash
+silkcode update              # pull the latest code into this install
+silkcode -update             # same thing; the verb also works as a flag
+silkcode update --branch main
+silkcode update --install    # also run `pip install -e .`, for new dependencies
+silkcode update --force      # update even with a dirty working tree
+```
+
+Every subcommand also answers to its flag form — `-update`, `--update`, `-models`,
+`--gui` — because plenty of tools take their verbs that way and typing
+`silkcode -update` used to produce `unrecognized arguments: -update` with no hint
+that `silkcode update` was the same command. The handful of flags the REPL itself
+defines keep their own meaning: `--sandbox` still runs the REPL against the
+configured sandbox rather than opening the `sandbox` command, and `--version`
+stays the one-line build id rather than the full `silkcode version` report.
+
+How the update happens depends on how Silk Code was installed, and it works out
+which on its own:
+
+| Install | What `silkcode update` does |
+| --- | --- |
+| a clone, or `pip install -e .` | fast-forwards the checkout to `origin/<branch>` |
+| `pip install git+https://…` | reinstalls from the same URL and revision pip recorded |
+
+The second case matters because it is the install the top of this README leads
+with, and it carries no git metadata. Silk Code reads pip's own
+[PEP 610](https://peps.python.org/pep-0610/) `direct_url.json` record to recover
+the URL and branch you installed from, then reinstalls from exactly that. (There
+is no `silkcode` package on PyPI, so `pip install -U silkcode` is not a fallback —
+it is a 404.)
+
+A git checkout only ever fast-forwards: a dirty tree or local-only commits are
+reported rather than overwritten, so nothing is lost and nothing is force-reset.
+A running GUI daemon watches the checkout's HEAD and re-execs itself once new
+code lands, so the update goes live without a manual restart — sessions are
+persisted on disk and survive it.
 
 ### Resyncing a branch that moved
 

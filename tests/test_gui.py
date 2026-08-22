@@ -1088,3 +1088,20 @@ def test_a_session_with_no_recorded_project_is_not_lost(gui):
 
     listed = {s["id"] for s in httpx.get(f"{base}/api/sessions").json()}
     assert legacy in listed
+
+
+def test_gui_update_reinstalls_a_pip_install_instead_of_refusing(gui, monkeypatch):
+    """A `pip install git+https://...` is not a checkout, but it can still be
+    updated from the source pip recorded. The endpoint used to refuse outright
+    and recommend a PyPI package that does not exist."""
+    base, state, ws = gui
+    import silkcode.update as upd
+    monkeypatch.setattr(upd, "git_repo_root", lambda *a, **k: None)
+    monkeypatch.setattr(upd, "install_origin", lambda: {
+        "kind": "vcs", "spec": "git+https://github.com/RupertCloud/SilkCode",
+        "url": "https://github.com/RupertCloud/SilkCode", "commit_id": "a" * 40})
+    monkeypatch.setattr(upd, "update_pip_install", lambda spec, on_progress=None: {
+        "status": "updated", "detail": f"Updated: aaaaaaaaaaaa -> bbbbbbbbbbbb ({spec})"})
+    resp = httpx.post(f"{base}/api/update", json={})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "updated"

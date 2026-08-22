@@ -283,3 +283,21 @@ def test_an_unknown_provider_type_is_still_rejected():
 
     with _pytest.raises(ProviderError, match="Unknown provider type"):
         build_provider("x", {"type": "not-a-thing", "base_url": "http://x"})
+
+
+def test_ollama_sends_its_credential_when_listing_models():
+    """An Ollama on a laptop is often behind an authenticating proxy. Listing
+    without the token reports 'no models', which reads as 'server is empty'."""
+    import httpx
+
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers.get("Authorization")
+        return httpx.Response(200, json={"models": [{"name": "qwen2.5-coder:7b"}]})
+
+    from silkcode.providers.ollama import OllamaProvider
+    provider = OllamaProvider("laptop", base_url="http://laptop:11434", api_key="s3cret",
+                              client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert provider.list_models() == ["qwen2.5-coder:7b"]
+    assert seen["auth"] == "Bearer s3cret"

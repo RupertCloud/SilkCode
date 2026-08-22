@@ -623,11 +623,36 @@ def test_connect_github_reports_a_rejected_token(home, capsys, monkeypatch):
 # update
 # --------------------------------------------------------------------------
 
-def test_update_outside_a_git_checkout_points_at_pip(home, capsys, monkeypatch):
-    monkeypatch.setattr("silkcode.update.git_repo_root", lambda: None)
-    code, _, err = run(["update"], capsys)
+def test_update_outside_a_git_checkout_gives_advice_that_works(home, capsys, monkeypatch):
+    """This used to say `pip install -U silkcode`. There is no such package on
+    PyPI and no workflow publishes one, so the single instruction offered to a
+    user without a checkout returned a 404. `install_origin` is patched too, so
+    the test does not depend on how silkcode happens to be installed here."""
+    monkeypatch.setattr("silkcode.update.git_repo_root", lambda start=None: None)
+    monkeypatch.setattr("silkcode.update.install_origin", lambda: None)
+    code, out, err = run(["update"], capsys)
     assert code == 1
-    assert "pip install -U silkcode" in err
+    assert "pip install -U silkcode" not in (out + err)
+    assert "git+https://github.com/RupertCloud/SilkCode" in (out + err)
+
+
+def test_update_outside_a_checkout_reinstalls_what_pip_recorded(home, capsys, monkeypatch):
+    """The README's primary install is `pip install git+https://...`, which is
+    not a checkout. It has to update rather than refuse."""
+    monkeypatch.setattr("silkcode.update.git_repo_root", lambda start=None: None)
+    monkeypatch.setattr("silkcode.update.install_origin", lambda: {
+        "kind": "vcs", "spec": "git+https://github.com/RupertCloud/SilkCode@main",
+        "url": "https://github.com/RupertCloud/SilkCode", "commit_id": "a" * 40})
+    monkeypatch.setattr("silkcode.update.update_pip_install",
+                        lambda spec, on_progress=None: {
+                            "status": "updated", "detail": f"reinstalled from {spec}"})
+    code, out, _err = run(["update"], capsys)
+    assert code == 0
+    assert "git+https://github.com/RupertCloud/SilkCode@main" in out
+    # nothing watches HEAD outside a checkout, so the GUI hot-apply line would
+    # be a promise this path cannot keep
+    assert "restart" in out.lower()
+    assert "GUI daemon" not in out
 
 
 # --------------------------------------------------------------------------
