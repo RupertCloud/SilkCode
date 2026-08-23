@@ -58,6 +58,7 @@
   .project-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
   .project-card.current .project-dot { background: var(--accent); }
   .project-card.running .project-dot { background: var(--warn); animation: pulse 1s infinite alternate; }
+  #project-cards.switching { pointer-events: none; opacity: .62; }
   .project-copy { min-width: 0; }
   .project-name { display: block; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .project-meta { display: block; color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1448,17 +1449,51 @@ function renderProjects(projects, currentPath) {
   }
 }
 
-async function switchProject(target) {
+let projectSwitchQueue = Promise.resolve();
+
+function transientFetchError(error) {
+  return /failed to fetch|networkerror|network request failed|load failed/i.test(error && error.message || "");
+}
+
+async function openProjectWithRetry(target) {
+  let lastError;
+  for (const delay of [0, 300, 900]) {
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+    try {
+      return await api("/api/project/open", {project: target, session_id: currentSessionId});
+    } catch (error) {
+      lastError = error;
+      if (!transientFetchError(error)) throw error;
+    }
+  }
+  throw lastError;
+}
+
+async function performProjectSwitch(target) {
   if (!target || target === $("project-select").title) return;
   const previous = $("project-select").title;
+  $("project-cards").classList.add("switching");
+  $("project-select").disabled = true;
   try {
-    const state = await api("/api/project/open", {project: target, session_id: currentSessionId});
+    const state = await openProjectWithRetry(target);
     currentSessionId = state.session_id;
-    init();
+    await init();
   } catch (err) {
-    alert(err.message);
+    alert(transientFetchError(err)
+      ? "Silk Code briefly lost contact with the daemon while switching projects. Please try again."
+      : err.message);
     $("project-select").value = previous;   // the switch did not happen; do not pretend
+  } finally {
+    $("project-cards").classList.remove("switching");
+    $("project-select").disabled = false;
   }
+}
+
+function switchProject(target) {
+  // Project initialization loads transcript, tree, diff and providers. Keep
+  // rapid phone taps in order instead of overlapping those request groups.
+  projectSwitchQueue = projectSwitchQueue.catch(() => {}).then(() => performProjectSwitch(target));
+  return projectSwitchQueue;
 }
 
 async function closeProject(project) {

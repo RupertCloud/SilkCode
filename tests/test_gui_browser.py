@@ -710,6 +710,29 @@ def test_project_card_switches_repository_in_one_click(browser, two_project_gui)
     assert page.locator("#project-cards .project-card.current").get_attribute("data-path") == str(beta)
 
 
+def test_project_switch_retries_one_transient_fetch_failure(browser, two_project_gui):
+    url, _alpha, beta = two_project_gui
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    attempts = []
+
+    def briefly_disconnect(route):
+        attempts.append(route.request.post_data_json()["project"])
+        if len(attempts) == 1:
+            route.abort("connectionfailed")
+        else:
+            route.continue_()
+
+    page.route("**/api/project/open", briefly_disconnect)
+    page.goto(url)
+    page.wait_for_function("document.querySelectorAll('#project-cards .project-card').length >= 2")
+    page.locator(f".project-card[data-path='{beta}']").click()
+    page.wait_for_function(
+        "t => document.querySelector('#project-select').title === t", arg=str(beta))
+
+    assert attempts == [str(beta), str(beta)]
+    assert not page.locator("#project-select").is_disabled()
+
+
 def test_project_card_close_frees_non_current_project(browser, two_project_gui):
     url, _alpha, beta = two_project_gui
     page = browser.new_page(viewport={"width": 1400, "height": 900})
