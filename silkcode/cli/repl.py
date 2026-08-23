@@ -151,6 +151,8 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
                                     grants=grants)
     autopush_state = {"on": auto_push}
     from ..agent.loop import DEFAULT_CONTEXT_TOKENS
+    from ..project import remember_workspace
+    remember_workspace(workspace.root)   # the project you launched on counts
     project = assemble(workspace)
     # stderr, and before anything else: `silkcode -p` output gets piped into
     # scripts, and a security notice must not land in the middle of it - nor

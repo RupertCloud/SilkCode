@@ -459,9 +459,14 @@ see below), and a **↻ Update** button (self-update, see below).
 switch between them with the session picker — each has its own agent, model choice,
 workspace (project), transcript, and checkpoints, and turns can run concurrently
 (⏳ marks a busy session; permission prompts from any session reach you wherever you
-are). The ＋ button first asks which **project** to run the new session on: pick a
-GitHub repository (cloned for you into `~/.silkcode/projects/`) or type a local
-directory, so different sessions can work on different codebases side by side.
+are). **Project** is a control in the header, beside Session, Model and Mode: it lists the
+project you are on, every project you have sessions in, and the ones you opened
+before. Choosing one **moves this session** — the conversation, checkpoints and usage
+come with you, and the workspace lock moves too. That is what `/project` has always
+done in the REPL. The ＋ button opens the same picker for a *new* session instead, so
+different sessions can work on different codebases side by side. Either way you can
+pick a GitHub repository (cloned for you into `~/.silkcode/projects/`) or type a local
+directory.
 Sessions are saved to the same store as the CLI — resume any of them from the picker
 or with `silkcode resume <id>` (SRS section 47).
 

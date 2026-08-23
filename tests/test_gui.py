@@ -1110,3 +1110,118 @@ def test_gui_update_reinstalls_a_pip_install_instead_of_refusing(gui, monkeypatc
     resp = httpx.post(f"{base}/api/update", json={})
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "updated"
+
+
+# ---- switching project ------------------------------------------------------
+
+def test_a_session_can_move_to_another_project_keeping_its_conversation(gui, tmp_path):
+    """The REPL has done this since `/project` shipped. The GUI could only ever
+    open a *new* session on another project, which is why its picker was titled
+    "Open a project for this session" while being wired to the new-session
+    button — it described something the app could not do."""
+    base, state, workspace = gui
+    other = tmp_path / "other-project"
+    other.mkdir()
+    (other / "README.md").write_text("# other\n")
+
+    session = state.get_session()
+    session.transcript.append({"kind": "user", "text": "remember me"})
+    before = len(session.agent.messages)
+
+    resp = httpx.post(f"{base}/api/session/project", json={"project": str(other)})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["project"] == str(other.resolve())
+
+    assert session.workspace.root == other.resolve()
+    assert session.data["cwd"] == str(other.resolve())
+    assert any(t.get("text") == "remember me" for t in session.transcript), \
+        "the conversation was lost in the move"
+    assert len(session.agent.messages) == before, "history was rebuilt, not kept"
+    assert str(other.resolve()) in session.agent.messages[0]["content"], \
+        "the system prompt still describes the old project"
+
+
+def test_moving_project_takes_the_workspace_lock_with_it(gui, tmp_path):
+    base, state, workspace = gui
+    other = tmp_path / "other-project"
+    other.mkdir()
+    session = state.get_session()
+
+    assert owner_of(workspace) == session.lock_owner
+    httpx.post(f"{base}/api/session/project", json={"project": str(other)})
+    assert owner_of(other) == session.lock_owner, "the new project was not locked"
+    assert owner_of(workspace) is None, "the old project is still held"
+
+
+def test_a_session_mid_turn_does_not_move(gui, tmp_path):
+    """Switching the tree under a running turn would leave its file tools and
+    its checkpoints pointing at different projects."""
+    base, state, workspace = gui
+    other = tmp_path / "other-project"
+    other.mkdir()
+    state.get_session().running = True
+    try:
+        resp = httpx.post(f"{base}/api/session/project", json={"project": str(other)})
+        assert resp.status_code == 400
+        assert "mid-turn" in resp.text
+    finally:
+        state.get_session().running = False
+    assert state.get_session().workspace.root == workspace.resolve()
+
+
+def test_moving_to_the_project_already_open_is_a_no_op(gui):
+    base, state, workspace = gui
+    resp = httpx.post(f"{base}/api/session/project", json={"project": str(workspace)})
+    assert resp.status_code == 200
+    assert state.get_session().workspace.root == workspace.resolve()
+
+
+def test_switching_project_rescopes_the_session_list(gui, tmp_path):
+    """What #27's scoping was waiting for: move the session, and the switcher
+    follows it to the new project."""
+    base, state, workspace = gui
+    other = tmp_path / "other-project"
+    other.mkdir()
+    from silkcode.sessions import SessionStore
+    theirs = _seed(SessionStore(), other, "work over there")
+
+    assert theirs not in {s["id"] for s in httpx.get(f"{base}/api/sessions").json()}
+    httpx.post(f"{base}/api/session/project", json={"project": str(other)})
+    assert theirs in {s["id"] for s in httpx.get(f"{base}/api/sessions").json()}
+
+
+def test_an_empty_project_is_rejected_rather_than_guessed_at(gui):
+    base, _state, _ws = gui
+    assert httpx.post(f"{base}/api/session/project", json={}).status_code == 400
+
+
+# ---- the project you launched on is a project you can go back to ------------
+
+def test_the_daemons_own_project_is_remembered(gui, tmp_path):
+    """record_recent_project used to fire only when a project was chosen from
+    the picker, so `silkcode gui ~/payments-api` left payments-api as the one
+    project never in the list — you had to type its path to get back to where
+    you started."""
+    base, state, workspace = gui
+    from silkcode.project import recent_projects
+    assert str(workspace.resolve()) in {r["spec"] for r in recent_projects()}
+
+
+def test_a_projects_recent_entry_is_named_not_pathed(gui, tmp_path):
+    base, state, workspace = gui
+    from silkcode.project import recent_projects
+    entry = next(r for r in recent_projects() if r["spec"] == str(workspace.resolve()))
+    assert entry["label"] == workspace.name
+
+
+def test_the_switcher_offers_current_open_and_recent_projects(gui, tmp_path):
+    base, state, workspace = gui
+    other = tmp_path / "other-project"
+    other.mkdir()
+    httpx.post(f"{base}/api/session/project", json={"project": str(other)})
+
+    projects = httpx.get(f"{base}/api/state").json()["projects"]
+    by_label = {p["label"]: p for p in projects}
+    assert by_label[other.name]["current"] is True
+    assert workspace.name in by_label, "the project we came from vanished from the switcher"
+    assert len({p["path"] for p in projects}) == len(projects), "duplicate entries"
