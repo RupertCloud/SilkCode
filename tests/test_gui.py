@@ -157,6 +157,13 @@ def test_gui_can_publish_new_project_as_public_or_private(gui, tmp_path, monkeyp
             return {"full_name": f"amon/{name}", "html_url": f"https://github.com/amon/{name}",
                     "clone_url": f"https://github.com/amon/{name}.git", "private": private}
 
+    # Publishing needs a real initial commit, so this test needs a committer
+    # identity - and it must be its own, not the machine's. A CI runner has no
+    # `git config user.email`, which is what made this pass locally and fail
+    # there with "configure your Git name/email before publishing".
+    for name, value in (("GIT_AUTHOR_NAME", "Test"), ("GIT_AUTHOR_EMAIL", "test@example.com"),
+                        ("GIT_COMMITTER_NAME", "Test"), ("GIT_COMMITTER_EMAIL", "test@example.com")):
+        monkeypatch.setenv(name, value)
     monkeypatch.setattr("silkcode.github.cli_client_for_repos", lambda: GitHub())
     monkeypatch.setattr("silkcode.tools.git.git_add_remote", lambda ws, name, url: "Added remote origin.")
     monkeypatch.setattr("silkcode.tools.git.git_push", lambda ws: "Pushed main to origin.")
