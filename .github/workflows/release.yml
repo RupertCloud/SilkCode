@@ -28,6 +28,26 @@ jobs:
           TAG="${{ github.event.inputs.version || github.ref_name }}"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+      # A version that never moves is not cosmetic here: `pip install -U` reads
+      # it to decide whether there is anything to do, so shipping two different
+      # releases under one number makes every upgrade a silent no-op. Each
+      # release must be numbered above the last.
+      - name: Refuse a release that does not move the version
+        run: |
+          set -euo pipefail
+          git fetch --tags --quiet
+          PREVIOUS="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          if [ -z "$PREVIOUS" ]; then
+            echo "No previous release; $TAG is the first."
+            exit 0
+          fi
+          echo "Previous release: $PREVIOUS   this one: $TAG"
+          HIGHEST="$(printf '%s\n%s\n' "${PREVIOUS#v}" "$VERSION" | sort -V | tail -n1)"
+          if [ "$PREVIOUS" = "$TAG" ] || [ "$HIGHEST" != "$VERSION" ]; then
+            echo "::error::$TAG does not come after $PREVIOUS."
+            echo "::error::Bump __version__ in silkcode/__init__.py and tag that."
+            exit 1
+          fi
       # pytest above runs against the source tree, which is not what anyone
       # installs. A wheel that is missing gui/app.html passes every test in
       # this repository and then fails on the user's first `silkcode gui`.

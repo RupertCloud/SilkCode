@@ -71,6 +71,53 @@ def test_the_build_id_changes_when_the_commit_does(monkeypatch):
     assert len(seen) == 2, f"two commits produced one build id: {seen}"
 
 
+def test_a_git_url_install_is_identified_by_the_commit_pip_resolved(monkeypatch):
+    """`pip install git+https://...` leaves no git metadata on disk, so this
+    reported a bare "0.1.0" — the one thing a bug report from the most common
+    install must not say. pip knew the commit all along: it writes what it
+    resolved into its PEP 610 record at install time."""
+    import silkcode.update as U
+    monkeypatch.setattr(V, "_git", lambda *a: None)
+    monkeypatch.setattr(U, "install_origin", lambda: {
+        "kind": "vcs", "spec": "git+https://example.invalid/x",
+        "url": "https://example.invalid/x",
+        "commit_id": "712928ed2420f5f0a1b2c3d4e5f6a7b8c9d0e1f2"})
+    assert V.commit() == "712928e"
+    assert V.build_id() == f"{V.RELEASE}+g712928e"
+    assert V.is_dirty() is False, "a pip install has no working tree to be dirty"
+
+
+def test_a_release_wheel_still_reports_the_bare_release(monkeypatch):
+    """An archive install records no commit, and inventing one would be worse
+    than saying nothing."""
+    import silkcode.update as U
+    monkeypatch.setattr(V, "_git", lambda *a: None)
+    monkeypatch.setattr(U, "install_origin", lambda: {
+        "kind": "archive", "spec": "https://example.invalid/silkcode.whl",
+        "url": "https://example.invalid/silkcode.whl"})
+    assert V.build_id() == V.RELEASE
+
+
+def test_a_checkout_still_prefers_its_own_git(monkeypatch):
+    """git is the live answer; the PEP 610 record is what pip resolved at
+    install time and goes stale the moment the checkout moves."""
+    import silkcode.update as U
+    monkeypatch.setattr(V, "_git", lambda *a: "aaaaaaa" if a[0] == "rev-parse" else "")
+    monkeypatch.setattr(U, "install_origin", lambda: {"kind": "vcs", "spec": "x",
+                                                      "url": "x", "commit_id": "bbbbbbb"})
+    assert V.commit() == "aaaaaaa"
+
+
+def test_unreadable_install_metadata_cannot_break_identifying_yourself(monkeypatch):
+    import silkcode.update as U
+    def explode():
+        raise RuntimeError("metadata is unreadable")
+    monkeypatch.setattr(V, "_git", lambda *a: None)
+    monkeypatch.setattr(U, "install_origin", explode)
+    assert V.build_id() == V.RELEASE
+    assert V.commit() is None
+
+
 # ---- and how it behaves when the world is unhelpful -------------------------
 
 @pytest.mark.parametrize("boom", [
