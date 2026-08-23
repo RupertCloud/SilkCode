@@ -446,6 +446,7 @@
       <button id="new-session" aria-label="New conversation" title="Start a new conversation in this project">＋</button>
       <button id="close-session" aria-label="Close conversation" title="Close this conversation and release its workspace lock">×</button>
       <span class="conversation-spacer"></span>
+      <span class="usage" id="project-load-status" role="status" aria-live="polite"></span>
       <span class="usage" id="session"></span>
       <button id="details-toggle" aria-label="Show details" aria-expanded="false">Details ›</button>
     </div>
@@ -1455,8 +1456,9 @@ async function openFile(path) {
 
 // ---- header controls -------------------------------------------------------
 
-async function loadProviders(currentSpec) {
+async function loadProviders(currentSpec, isCurrent = () => true) {
   const providers = await api("/api/providers");
+  if (!isCurrent()) return false;
   const sel = $("model-select");
   sel.innerHTML = "";
   const specs = [];
@@ -1480,6 +1482,7 @@ async function loadProviders(currentSpec) {
     }
     sel.value = currentSpec;
   }
+  return true;
 }
 
 $("model-select").onchange = async (e) => {
@@ -1620,10 +1623,21 @@ async function performProjectSwitch(target) {
   $("project-cards").classList.add("switching");
   $("project-select").disabled = true;
   try {
+    $("project-load-status").textContent = "Switching…";
     const state = await openProjectWithRetry(target);
+    // The server has switched projects at this point. Reflect that immediately;
+    // providers and a large transcript can continue loading without making the
+    // project controls look frozen.
+    $("messages").innerHTML = ""; $("timeline").innerHTML = "";
+    streamEl = null;
     currentSessionId = state.session_id;
-    await init();
+    $("project-load-status").textContent = "Loading conversation…";
+    void init(state).catch(err => {
+      $("project-load-status").textContent = "Could not load conversation";
+      addMsg("error", err.message);
+    });
   } catch (err) {
+    $("project-load-status").textContent = "";
     alert(transientFetchError(err)
       ? "Silk Code briefly lost contact with the daemon while switching projects. Please try again."
       : err.message);
@@ -1635,8 +1649,8 @@ async function performProjectSwitch(target) {
 }
 
 function switchProject(target) {
-  // Project initialization loads transcript, tree, diff and providers. Keep
-  // rapid phone taps in order instead of overlapping those request groups.
+  // Keep the short project-open operations ordered. The heavier project data
+  // loads progressively and is protected from stale responses by init().
   projectSwitchQueue = projectSwitchQueue.catch(() => {}).then(() => performProjectSwitch(target));
   return projectSwitchQueue;
 }
@@ -2558,9 +2572,13 @@ $("input").addEventListener("keydown", (e) => {
 
 const UI_VERSION = "0.1.0";
 let projectChooserOpened = false;
+let initGeneration = 0;
 
-async function init() {
-  const state = await api("/api/state" + (currentSessionId ? "?session=" + currentSessionId : ""));
+async function init(initialState = null) {
+  const generation = ++initGeneration;
+  const isCurrent = () => generation === initGeneration;
+  const state = initialState || await api("/api/state" + (currentSessionId ? "?session=" + currentSessionId : ""));
+  if (!isCurrent()) return;
   if (!state.version || state.version !== UI_VERSION || !Array.isArray(state.sessions)) {
     $("version-banner").style.display = "block";
     if (!Array.isArray(state.sessions)) return;  // old server: stop before we crash
@@ -2588,14 +2606,17 @@ async function init() {
   }
   renderUsage(state.usage);
   renderLock(state);
-  await loadProviders(state.spec);
+  await loadProviders(state.spec, isCurrent);
+  if (!isCurrent()) return;
   renderSessions(state.sessions, state.session_id, state.project);
   refreshGithubStatus().catch(() => {});
   const transcript = await api("/api/transcript?session=" + state.session_id);
+  if (!isCurrent()) return;
   $("messages").innerHTML = ""; $("timeline").innerHTML = "";
   transcript.forEach(renderEntry);
   formatAllMessages();  // render fenced code/terminal blocks in loaded messages
   loadTree(); loadDiff();
+  $("project-load-status").textContent = "";
   if (state.projectless && !projectChooserOpened) {
     projectChooserOpened = true;
     openProjectModal({start: true, chooseBest: true});
