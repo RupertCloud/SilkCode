@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import files, git, search, shell, symbols, testing
+from ..browser import browser_check, permission_command as _browser_permission
 from ..liveserver import live_server
 from ..github import (
     github_agent_task_get,
@@ -382,3 +383,29 @@ def openai_schemas() -> list[dict]:
         }
         for t in TOOLS.values()
     ]
+
+
+_register(Tool(
+    name="browser_check",
+    description=(
+        "Open a URL in a headless browser and report what a browser actually "
+        "sees: HTTP status, page title, uncaught JavaScript exceptions, console "
+        "errors, requests that failed, and whether the page overflows the "
+        "viewport horizontally. Use it after changing a page - a mistyped id, a "
+        "stylesheet that 404s and a layout that scrolls sideways on a phone are "
+        "all invisible in the source. Pair it with live_server: start the "
+        "preview, then check its URL. Set width/height to test a viewport "
+        "(a phone is about 390x844)."
+    ),
+    parameters=_params({
+        "url": {"type": "string",
+                "description": "Page to open, e.g. http://127.0.0.1:8000/"},
+        "width": {"type": "integer", "description": "Viewport width (default 1280)"},
+        "height": {"type": "integer", "description": "Viewport height (default 800)"},
+        "screenshot": {"type": "boolean",
+                       "description": "Also save a PNG for the user (default true)"},
+    }, ["url"]),
+    func=browser_check,
+    kind="command",
+    command_of=_browser_permission,
+))

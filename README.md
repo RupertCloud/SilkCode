@@ -863,6 +863,44 @@ silkcode env --set deepseek      # store a key (read from $SILKCODE_KEY or promp
 silkcode env --clear deepseek    # remove a stored key
 ```
 
+## Seeing the page, not just the source
+
+An agent that writes a web page cannot tell whether it works. Reading the source shows
+what was written, not what happens — a mistyped id, a stylesheet that 404s, a table that
+pushes the layout sideways on a phone are all invisible in the file and obvious the
+moment something renders it.
+
+`live_server` serves the workspace so *you* can watch it reload. `browser_check` is the
+other half: it opens a URL in headless Chromium and reports what a browser sees.
+
+```text
+GET http://127.0.0.1:8000/ -> 200
+title: 'Pricing'
+viewport: 390x844
+
+problems (3):
+  ! page scrolls sideways by 1210px at 390px wide
+  ! 404: http://127.0.0.1:8000/styles/main.css
+  ! uncaught Cannot read properties of null (reading 'addEventListener')
+```
+
+Three real faults, none of them visible in the source, found in about a second. Set
+`width`/`height` to test a viewport — a phone is roughly 390×844.
+
+The report is **text on purpose.** A screenshot cannot reach the model: the provider
+layer carries strings, and most coding models have no vision. One is still saved for you
+(into `.silkcode/screenshots/`, which is self-ignoring) and the report names the file and
+says plainly that it is for the reader, rather than implying the model looked at it.
+
+**Playwright is optional and stays optional** — Silk Code's only runtime dependency is
+still `httpx`. When it is missing, `browser_check` says so and names the install command
+(`pip install playwright && playwright install chromium`) rather than failing.
+
+A page on this machine is checked without ceremony; a URL that leaves the machine goes
+through the permission gate, classified like `curl`, and only `http`/`https` are opened —
+a browser will read the filesystem given `file://`, and reading files is what the
+workspace-confined file tools are for.
+
 ## Context management
 
 The full conversation is sent to the model each turn. When the estimated size
@@ -938,13 +976,15 @@ silkcode/
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox
 ├── sandbox_server.py  reference Silk Sandbox Protocol server (self-hosted)
-├── tools/           read/write/edit, glob/grep, run_command, run_tests, live_server, git status/diff/log/commit
+├── tools/           read/write/edit, glob/grep, run_command, run_tests, live_server, browser_check, git status/diff/log/commit
 ├── liveserver.py    built-in live preview server: serve the workspace + auto-reload pages on change
+├── browser.py       render a page and report what a browser sees (optional: Playwright)
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
 ├── swarm.py         multi-agent improvement loop (tester/critic/worker, 0-10 scoring)
 ├── update.py        self-update: pull from git, hot-apply via GUI daemon restart
 ├── permissions.py   risk classification + ask/edit/agent modes + "yes to all"
 ├── provenance.py    what a turn read, so a file cannot authorize a push
+├── browser.py       render a page and report what a browser sees (optional Playwright)
 ├── version.py       build identity: release + commit, for installs that track a branch
 ├── checkpoints.py   snapshot-before-modify, revert per turn
 ├── sessions.py      persistence shared by CLI and GUI
