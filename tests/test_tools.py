@@ -3,6 +3,7 @@ import pytest
 from silkcode.tools.files import edit_file, read_file, write_file
 from silkcode.tools.search import glob_files, grep
 from silkcode.tools.shell import run_command
+from silkcode.tools.images import IMAGE_MARKER, show_image
 from silkcode.workspace import ToolError, Workspace
 
 
@@ -163,6 +164,17 @@ def test_run_command_failure(ws):
     assert "exit code: 1" in out
 
 
+def test_show_image_validates_workspace_image(ws):
+    image = ws.root / "shot.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n")
+    assert show_image(ws, "shot.png") == IMAGE_MARKER + "shot.png"
+    with pytest.raises(ToolError):
+        show_image(ws, "../shot.png")
+    (ws.root / "notes.txt").write_text("not an image")
+    with pytest.raises(ToolError, match="Only PNG"):
+        show_image(ws, "notes.txt")
+
+
 # ---- live preview server (the Python-native live-server) ---------------------
 
 def test_live_server_start_serves_and_injects_reload(ws):
@@ -229,4 +241,3 @@ def test_live_server_blocks_path_escape(ws):
         assert exc.value.code == 403
     finally:
         L.live_server(ws, "stop")
-

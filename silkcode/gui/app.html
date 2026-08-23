@@ -48,6 +48,7 @@
 
   #chat { display: flex; flex-direction: column; min-height: 0; }
   #messages { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 6px; }
+  .chat-image { max-width: min(100%, 900px); max-height: 70vh; object-fit: contain; border-radius: 10px; border: 1px solid var(--border); align-self: flex-start; }
   .msg-wrap { display: flex; align-items: center; gap: 6px; max-width: 92%; flex-shrink: 0; }
   .msg-wrap.user { align-self: flex-end; }
   .msg-wrap.assistant, .msg-wrap.tool, .msg-wrap.error, .msg-wrap.notice { align-self: flex-start; }
@@ -853,8 +854,19 @@ function renderEntry(e) {
   if (e.kind === "user") addMsg("user", e.text);
   else if (e.kind === "assistant") addMsg("assistant", e.text);
   else if (e.kind === "tool") { addToolMsg(e.name, e.args); addActivity(e.name, e.args); }
+  else if (e.kind === "image") addImage(e.path);
   else if (e.kind === "notice") addMsg("notice", e.text);
   else if (e.kind === "error") addMsg("error", e.text);
+}
+
+function addImage(path) {
+  const img = document.createElement("img");
+  img.className = "chat-image";
+  img.alt = "Screenshot: " + path;
+  img.src = "/api/image?session=" + encodeURIComponent(currentSessionId) +
+            "&path=" + encodeURIComponent(path);
+  $("messages").appendChild(img);
+  $("messages").scrollTop = $("messages").scrollHeight;
 }
 
 function handleEvent(ev) {
@@ -891,6 +903,7 @@ function handleEvent(ev) {
       handleEvent._lastAct.appendChild(out);
     }
   }
+  else if (ev.type === "image") addImage(ev.path);
   else if (ev.type === "error") { streamEl = null; addMsg("error", ev.message); }
   else if (ev.type === "notice") { addMsg("notice", ev.text); refreshSessionList(); }
   else if (ev.type === "turn_done") {

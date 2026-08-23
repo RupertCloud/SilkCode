@@ -104,6 +104,18 @@ def test_gui_tree_file_and_diff(gui):
     assert escape.status_code == 400
 
 
+def test_gui_serves_workspace_images_but_not_other_files(gui):
+    base, _state, ws = gui
+    payload = b"\x89PNG\r\n\x1a\nimage"
+    (ws / "shot.png").write_bytes(payload)
+    image = httpx.get(f"{base}/api/image", params={"path": "shot.png"})
+    assert image.status_code == 200
+    assert image.headers["content-type"] == "image/png"
+    assert image.content == payload
+    assert httpx.get(f"{base}/api/image", params={"path": "README.md"}).status_code == 404
+    assert httpx.get(f"{base}/api/image", params={"path": "../shot.png"}).status_code == 400
+
+
 def test_gui_runs_a_turn_and_persists_session(gui):
     base, state, ws = gui
     resp = httpx.post(f"{base}/api/message", json={"text": "create hello.txt"})

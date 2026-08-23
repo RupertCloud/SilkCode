@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from . import files, git, search, shell, symbols, testing
+from . import files, git, images, search, shell, symbols, testing
 from ..liveserver import live_server
 from ..github import (
     github_agent_task_get,
@@ -121,6 +121,29 @@ _register(Tool(
     }, ["command"]),
     func=shell.run_command,
     kind="command",
+))
+
+_register(Tool(
+    name="capture_screenshot",
+    description=("Capture the machine's visible desktop and show the PNG inline. Launch or focus "
+                 "the app first, then use delay to give it time to appear. Local workspaces only."),
+    parameters=_params({
+        "path": {"type": "string", "description": "Optional .png path inside the workspace"},
+        "delay": {"type": "integer", "description": "Seconds to wait before capture (default 1, max 10)"},
+    }, []),
+    func=images.capture_screenshot,
+    kind="command",
+    command_of=lambda args, ws: "screencapture",
+))
+
+_register(Tool(
+    name="show_image",
+    description="Show an existing PNG, JPEG, GIF or WebP file from the workspace inline in the GUI.",
+    parameters=_params({
+        "path": {"type": "string", "description": "Image path relative to the workspace root"},
+    }, ["path"]),
+    func=images.show_image,
+    kind="read",
 ))
 
 _register(Tool(

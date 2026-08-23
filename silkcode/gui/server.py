@@ -32,6 +32,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from ..tools.images import IMAGE_MARKER, IMAGE_SUFFIXES
+
 from ..agent import Agent
 from ..agent.loop import DEFAULT_CONTEXT_TOKENS
 from ..config import Config, ConfigError
@@ -103,6 +105,8 @@ def _transcript_from_messages(messages: list[dict]) -> list[dict]:
                     "name": tc.get("function", {}).get("name", "?"),
                     "args": args if len(args) <= 200 else args[:200] + "...",
                 })
+        elif m.get("role") == "tool" and str(m.get("content", "")).startswith(IMAGE_MARKER):
+            out.append({"kind": "image", "path": str(m["content"])[len(IMAGE_MARKER):]})
     return out
 
 
@@ -510,6 +514,11 @@ class GuiState:
             session.transcript.append(entry)
             self.broadcast({"type": "tool_start", "session": session.id, **entry})
         elif kind == "tool_result":
+            output = str(data["output"])
+            if output.startswith(IMAGE_MARKER):
+                entry = {"kind": "image", "path": output[len(IMAGE_MARKER):]}
+                session.transcript.append(entry)
+                self.broadcast({"type": "image", "session": session.id, **entry})
             first = str(data["output"]).splitlines()[0] if str(data["output"]) else ""
             self.broadcast({"type": "tool_result", "name": data["name"],
                             "output": first[:200], "session": session.id})
@@ -1524,6 +1533,24 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/file":
                 path = (params.get("path") or [""])[0]
                 self._json(st.read_file(path, sid))
+            elif route == "/api/image":
+                path = (params.get("path") or [""])[0]
+                image = st.get_session(sid).workspace.resolve(path)
+                if not image.is_file() or image.suffix.lower() not in IMAGE_SUFFIXES:
+                    return self._error("image not found", 404)
+                body = image.read_bytes()
+                if len(body) > 20 * 1024 * 1024:
+                    return self._error("image is too large", 413)
+                content_types = {".png": "image/png", ".jpg": "image/jpeg",
+                                 ".jpeg": "image/jpeg", ".gif": "image/gif",
+                                 ".webp": "image/webp"}
+                self.send_response(200)
+                self._security_headers()
+                self.send_header("Content-Type", content_types[image.suffix.lower()])
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif route == "/api/diff":
                 self._json(st.diff(sid))
             elif route == "/api/projects":
