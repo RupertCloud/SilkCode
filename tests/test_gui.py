@@ -6,6 +6,7 @@ import os
 import re
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -110,6 +111,23 @@ def test_project_picker_endpoint_returns_a_list(gui):
     response = httpx.get(f"{base}/api/projects")
     assert response.status_code == 200
     assert isinstance(response.json(), list)
+
+
+def test_share_update_endpoint_reads_the_current_branch(gui):
+    base, _state, workspace = gui
+    subprocess.run(["git", "-C", str(workspace), "init"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "config", "user.name", "Test"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "add", "README.md"], check=True)
+    subprocess.run(["git", "-C", str(workspace), "commit", "-m", "Ship useful dashboard"],
+                   check=True, capture_output=True)
+
+    response = httpx.get(f"{base}/api/share-update")
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert "Ship useful dashboard" in data["drafts"]["x"]
+    assert set(data["drafts"]) == {"x", "linkedin", "changelog"}
 
 
 def test_gui_creates_git_project_and_opens_it(gui, tmp_path):

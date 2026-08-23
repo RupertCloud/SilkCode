@@ -160,6 +160,11 @@
   .modal label { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 2px; }
   .modal input, .modal select, .modal textarea { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font: inherit; }
   .modal textarea { resize: vertical; }
+  #share-tabs { display: flex; gap: 7px; margin: 8px 0; }
+  #share-tabs button.active { color: var(--accent); border-color: var(--accent); background: #202b36; }
+  #share-draft { min-height: 230px; line-height: 1.5; }
+  #share-scan.ok { color: var(--ok); }
+  #share-scan.warn { color: var(--warn); }
   .team-options { display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
 
   /* projects how-to */
@@ -367,6 +372,7 @@
     <button id="revert" title="Undo the last turn's file changes">↩ Revert</button>
     <button id="push-btn" class="outward"
             title="Push the current branch to the remote — this leaves your machine">⇧ Push</button>
+    <button id="share-update-btn" title="Draft a public update from this branch; nothing is posted automatically">Share update</button>
   </span>
 
   <span class="hgroup" role="group" aria-label="Settings and tools">
@@ -449,6 +455,34 @@
       <button data-decision="all" title="Approve every permission request for the rest of this session - no more prompts">Yes to all</button>
       <button class="primary" data-decision="yes">Allow</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="share-modal">
+  <div class="modal" style="width:680px;max-width:95vw;max-height:90dvh;overflow:auto">
+    <h3>Share development update</h3>
+    <div class="prompt" id="share-source">Reading this branch…</div>
+    <div id="share-tabs" role="tablist" aria-label="Update format">
+      <button class="active" data-share-format="x" role="tab">X</button>
+      <button data-share-format="linkedin" role="tab">LinkedIn</button>
+      <button data-share-format="changelog" role="tab">Changelog</button>
+    </div>
+    <label for="share-draft">Review and edit before sharing</label>
+    <textarea id="share-draft" rows="12"></textarea>
+    <div style="display:flex;gap:10px;justify-content:space-between;font-size:12px;margin-top:5px">
+      <span id="share-scan" class="ok">Privacy scan pending…</span>
+      <span id="share-count" style="color:var(--dim)"></span>
+    </div>
+    <div style="color:var(--dim);font-size:12px;margin-top:8px">
+      Silk Code never publishes automatically. X receives the draft in its composer.
+      LinkedIn opens after the draft is copied, ready for you to paste and review.
+    </div>
+    <div class="row">
+      <button id="share-close">Close</button>
+      <button id="share-copy">Copy draft</button>
+      <button class="primary" id="share-open">Open in X</button>
+    </div>
+    <div id="share-error" style="color:var(--err);font-size:12px;margin-top:6px"></div>
   </div>
 </div>
 
@@ -1759,6 +1793,89 @@ $("push-btn").onclick = async () => {
     const data = await api("/api/push", {});
     addMsg("tool", "⇧ " + data.result.split("\n")[0]);
   } catch (err) { alert(err.message); }
+};
+
+// ---- release / social update drafts --------------------------------------
+
+let shareDrafts = {};
+let shareFormat = "x";
+
+function scanShareDraft() {
+  const text = $("share-draft").value;
+  const warnings = [];
+  if (/(?:gh[opusr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16})/i.test(text)) warnings.push("possible secret");
+  if (/(?:\/Users\/|\/home\/|[A-Z]:\\Users\\)/i.test(text)) warnings.push("local path");
+  if (/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/.test(text)) warnings.push("email address");
+  if (/\b(?:confidential|internal only|do not share)\b/i.test(text)) warnings.push("private-language marker");
+  const scan = $("share-scan");
+  scan.textContent = warnings.length
+    ? "⚠ Review before sharing: " + warnings.join(", ")
+    : "✓ No obvious secrets, paths, or email addresses found";
+  scan.className = warnings.length ? "warn" : "ok";
+  $("share-count").textContent = shareFormat === "x"
+    ? `${text.length}/280 characters`
+    : `${text.length} characters`;
+}
+
+function showShareFormat(format) {
+  if (shareDrafts[shareFormat] !== undefined) shareDrafts[shareFormat] = $("share-draft").value;
+  shareFormat = format;
+  $("share-draft").value = shareDrafts[format] || "";
+  document.querySelectorAll("#share-tabs [data-share-format]").forEach(button => {
+    button.classList.toggle("active", button.dataset.shareFormat === format);
+    button.setAttribute("aria-selected", button.dataset.shareFormat === format ? "true" : "false");
+  });
+  $("share-open").textContent = format === "x"
+    ? "Open in X"
+    : (format === "linkedin" ? "Copy & open LinkedIn" : "Copy changelog");
+  scanShareDraft();
+}
+
+document.querySelectorAll("#share-tabs [data-share-format]").forEach(button => {
+  button.onclick = () => showShareFormat(button.dataset.shareFormat);
+});
+$("share-draft").oninput = () => {
+  shareDrafts[shareFormat] = $("share-draft").value;
+  scanShareDraft();
+};
+$("share-close").onclick = () => $("share-modal").classList.remove("open");
+$("share-copy").onclick = async () => {
+  await copyToClipboard($("share-draft").value);
+  const button = $("share-copy");
+  button.textContent = "Copied";
+  setTimeout(() => { button.textContent = "Copy draft"; }, 1200);
+};
+$("share-update-btn").onclick = async () => {
+  $("share-modal").classList.add("open");
+  $("share-source").textContent = "Reading this branch…";
+  $("share-error").textContent = "";
+  $("share-draft").value = "";
+  try {
+    const data = await api("/api/share-update?session=" + encodeURIComponent(currentSessionId));
+    shareDrafts = data.drafts;
+    $("share-source").textContent =
+      `${data.project} · ${data.branch} · ${data.commit_count} development commit${data.commit_count === 1 ? "" : "s"}` +
+      (data.uncommitted_count ? ` · ${data.uncommitted_count} uncommitted` : "");
+    shareFormat = "";
+    showShareFormat("x");
+  } catch (err) {
+    $("share-source").textContent = "Could not prepare an update";
+    $("share-error").textContent = err.message;
+  }
+};
+$("share-open").onclick = async () => {
+  const draft = $("share-draft").value.trim();
+  if (!draft) return;
+  if (shareFormat === "x") {
+    window.open("https://twitter.com/intent/tweet?text=" + encodeURIComponent(draft), "_blank", "noopener,noreferrer");
+  } else if (shareFormat === "linkedin") {
+    await copyToClipboard(draft);
+    window.open("https://www.linkedin.com/feed/?shareActive=true", "_blank", "noopener,noreferrer");
+  } else {
+    await copyToClipboard(draft);
+    $("share-open").textContent = "Copied";
+    setTimeout(() => { $("share-open").textContent = "Copy changelog"; }, 1200);
+  }
 };
 
 // ---- improvement swarm ----------------------------------------------------

@@ -1406,6 +1406,10 @@ class GuiState:
         workspace = self.get_session(session_id).workspace
         return {"diff": git_diff(workspace), "status": git_status(workspace)}
 
+    def share_update(self, session_id: int | None = None) -> dict:
+        from ..share_update import build_share_update
+        return build_share_update(self.get_session(session_id).workspace)
+
     def projects_info(self) -> list[dict]:
         from ..project import available_projects
         return available_projects()
@@ -1701,6 +1705,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
             elif route == "/api/diff":
                 self._json(st.diff(sid))
+            elif route == "/api/share-update":
+                self._json(st.share_update(sid))
             elif route == "/api/projects":
                 self._json(st.projects_info())
             elif route == "/api/providers":

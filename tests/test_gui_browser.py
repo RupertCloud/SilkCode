@@ -833,6 +833,29 @@ def test_remote_permission_answer_dismisses_the_local_dialog(browser, gui_url):
     assert page.evaluate("permQueue.length") == 0
 
 
+def test_share_update_is_editable_and_platform_specific(browser, gui_url):
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    page.route("**/api/share-update*", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=json.dumps({
+            "project": "demo", "branch": "development", "commit_count": 2,
+            "uncommitted_count": 0, "warnings": [],
+            "drafts": {"x": "Short X update", "linkedin": "Long LinkedIn update",
+                       "changelog": "- Shipped update"},
+        })))
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+    page.click("#share-update-btn")
+    page.wait_for_function("() => document.getElementById('share-draft').value === 'Short X update'")
+
+    assert "development" in page.text_content("#share-source")
+    assert page.text_content("#share-count") == "14/280 characters"
+    page.click("[data-share-format='linkedin']")
+    assert page.input_value("#share-draft") == "Long LinkedIn update"
+    assert page.text_content("#share-open") == "Copy & open LinkedIn"
+    page.fill("#share-draft", "Internal only: ops@example.com")
+    assert "Review before sharing" in page.text_content("#share-scan")
+
+
 def test_new_conversation_and_open_project_are_separate_actions(browser, two_project_gui):
     url, _alpha, _beta = two_project_gui
     page = browser.new_page(viewport={"width": 1400, "height": 900})
