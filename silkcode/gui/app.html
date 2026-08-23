@@ -210,6 +210,13 @@
   #swarm-chart .swbar .bar { height: 13px; background: var(--accent); border-radius: 3px; min-width: 2px; }
   #swarm-chart .swbar .bar.warn { background: var(--warn); }
   #swarm-chart .swbar .bar.err { background: var(--err); }
+  #team-board { display: none; gap: 7px; margin: 8px 0 12px; }
+  #team-board.visible { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .team-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+               background: var(--panel2); min-width: 0; }
+  .team-card .role { color: var(--accent); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+  .team-card .task { font-size: 12px; overflow-wrap: anywhere; }
+  .team-card.done { border-color: color-mix(in srgb, var(--ok) 55%, var(--border)); }
 
   /* ---- phones -------------------------------------------------------
      The desktop layout is a fixed three-column grid (230px + 1fr + 270px),
@@ -668,12 +675,13 @@
 
     <div id="swarm-chart" style="display:none"></div>
     <div id="swarm-stats" style="font-size:12px;color:var(--dim);margin-bottom:10px"></div>
+    <div id="team-board" aria-label="Team mission control"></div>
 
     <div class="team-options">
       <div>
         <label>Workflow</label><select id="sw-workflow"><option value="team">Software team</option><option value="classic">Classic 3-agent swarm</option></select>
         <label>Product objective</label><textarea id="sw-objective" rows="4" placeholder="What should the team build or improve?"></textarea>
-        <label>Developers</label><select id="sw-dev-count"><option value="1">1 developer</option><option value="2">2 developers</option><option value="3" selected>3 developers</option></select>
+        <label>Developers</label><select id="sw-dev-count"><option value="0" selected>Auto — Head decides</option><option value="1">1 developer</option><option value="2">2 developers</option><option value="3">3 developers</option><option value="5">Up to 5 developers</option><option value="8">Up to 8 developers</option><option value="12">Up to 12 developers</option></select>
         <label>Worker model</label><input id="sw-model" placeholder="default">
         <label>Critic model (optional)</label><input id="sw-critic-model" placeholder="default">
         <label>Tester model (optional)</label><input id="sw-tester-model" placeholder="default">
@@ -1081,6 +1089,9 @@ function handleEvent(ev) {
   else if (ev.type === "swarm_phase") {
     setSwarmPhase(ev.role);
   }
+  else if (ev.type === "swarm_artifact") {
+    renderTeamBoard(ev.artifacts || {});
+  }
   else if (ev.type === "swarm_done") {
     setSwarmRunning(false);
     setSwarmPhase(null);
@@ -1091,6 +1102,7 @@ function handleEvent(ev) {
       renderSwarmChart();
     }
     renderSwarmStats(r);
+    renderTeamBoard(r.artifacts || {});
     swarmLog(`== swarm finished: ${r.status || "?"} ==`);
     swarmLog(`final score: ${r.final_score}/10 (target ${r.target})`);
     swarmLog(`iterations: ${r.iterations}   tokens: ${r.tokens}   time: ${r.seconds}s`);
@@ -1639,9 +1651,31 @@ function setSwarmRunning(running) {
 
 function setSwarmPhase(phase) {
   document.querySelectorAll(".sw-phase").forEach(el => {
-    const devGroup = el.dataset.phase === "dev1" && /^dev[123]$/.test(phase || "");
+    const devGroup = el.dataset.phase === "dev1" && /^dev[1-9][0-9]*$/.test(phase || "");
     el.classList.toggle("active", el.dataset.phase === phase || devGroup);
   });
+}
+
+function renderTeamBoard(artifacts) {
+  const board = $("team-board");
+  const plan = artifacts.plan || {};
+  const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
+  const reports = Array.isArray(artifacts.developer_reports) ? artifacts.developer_reports : [];
+  board.innerHTML = "";
+  board.classList.toggle("visible", tasks.length > 0);
+  for (const task of tasks) {
+    const report = reports.find(r => r.role === task.owner && r.task === task.title);
+    const card = document.createElement("div");
+    card.className = "team-card" + (report ? " done" : "");
+    const role = document.createElement("div");
+    role.className = "role";
+    role.textContent = `${task.owner} · ${report ? "done" : "planned"}`;
+    const title = document.createElement("div");
+    title.className = "task";
+    title.textContent = task.title || "Assigned work";
+    card.append(role, title);
+    board.appendChild(card);
+  }
 }
 
 function setTeamWorkflow() {
@@ -1696,10 +1730,12 @@ function renderSwarmStatus(s) {
     swarmScores = (s.result.scores || []).map((sc, i) => ({iteration: i + 1, score: sc}));
     renderSwarmChart();
     renderSwarmStats(s.result);
+    renderTeamBoard(s.result.artifacts || s.artifacts || {});
   } else {
     swarmScores = [];
     renderSwarmChart();
     renderSwarmStats(null);
+    renderTeamBoard(s.artifacts || {});
   }
   if (s.error) swarmLog("error: " + s.error);
 }
@@ -1722,7 +1758,7 @@ $("sw-start").onclick = async () => {
       model: $("sw-model").value.trim() || undefined,
       team_mode: $("sw-workflow").value === "team",
       objective: $("sw-objective").value.trim() || undefined,
-      developer_count: parseInt($("sw-dev-count").value, 10) || 3,
+      developer_count: parseInt($("sw-dev-count").value, 10) || 0,
       critic_model: $("sw-critic-model").value.trim() || undefined,
       tester_model: $("sw-tester-model").value.trim() || undefined,
       target: parseFloat($("sw-target").value) || 10,
@@ -1736,6 +1772,7 @@ $("sw-start").onclick = async () => {
     setSwarmRunning(true);
     swarmScores = [];
     renderSwarmChart();
+    renderTeamBoard({});
     setSwarmPhase(null);
     swarmLog("swarm started…");
   } catch (err) { alert(err.message); }

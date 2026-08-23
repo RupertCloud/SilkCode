@@ -138,6 +138,15 @@ def test_parse_team_plan_handles_non_json():
     assert parsed["tasks"] == []
 
 
+def test_parse_team_plan_supports_elastic_dev_n_staffing():
+    parsed = _parse_team_plan(json.dumps({"tasks": [
+        {"owner": "dev4", "title": "Search", "acceptance": []},
+        {"owner": "Dev12", "title": "Release", "acceptance": []},
+        {"owner": "dev13", "title": "Too many", "acceptance": []},
+    ]}))
+    assert [task["owner"] for task in parsed["tasks"]] == ["dev4", "dev12"]
+
+
 # --------------------------------------------------------------------------- #
 # The swarm loop
 # --------------------------------------------------------------------------- #

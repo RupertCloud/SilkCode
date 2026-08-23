@@ -830,6 +830,7 @@ class GuiState:
             "log": list(status["log"]),
             "result": status["result"],
             "error": status["error"],
+            "artifacts": status.get("artifacts", {}),
         }
 
     def start_swarm(self, params: dict, session_id: int | None = None) -> dict:
@@ -861,7 +862,7 @@ class GuiState:
         team_mode = bool(params.get("team_mode"))
         objective = str(params.get("objective") or "").strip() or None
         try:
-            developer_count = int(params.get("developer_count") or 3)
+            developer_count = int(params.get("developer_count") or 0)
         except (TypeError, ValueError) as exc:
             raise ConfigError(f"bad developer count: {exc}") from exc
 
@@ -872,6 +873,7 @@ class GuiState:
             "log": [],
             "result": None,
             "error": None,
+            "artifacts": {},
             "_stop": threading.Event(),
         }
         self.swarms[session.id] = status
@@ -889,6 +891,10 @@ class GuiState:
                 elif kind == "phase":
                     self.broadcast({"type": "swarm_phase", "session": session.id,
                                     "role": data.get("role")})
+                elif kind == "artifact":
+                    status["artifacts"] = data.get("artifacts") or {}
+                    self.broadcast({"type": "swarm_artifact", "session": session.id,
+                                    "artifacts": status["artifacts"]})
 
             try:
                 result = run_swarm(
