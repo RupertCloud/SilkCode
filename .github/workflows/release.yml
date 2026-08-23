@@ -17,26 +17,61 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # setuptools_scm derives the version from tags, and the release gate
+          # compares against the previous one; neither works on the default
+          # shallow, tagless checkout
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev]" build
       - run: pytest -q
-      - run: python -m build
       - name: Resolve tag and version
         run: |
           TAG="${{ github.event.inputs.version || github.ref_name }}"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+      # A version that never moves is not cosmetic here: `pip install -U` reads
+      # it to decide whether there is anything to do, so shipping two different
+      # releases under one number makes every upgrade a silent no-op. Each
+      # release must be numbered above the last.
+      - name: Refuse a release that does not move the version
+        run: |
+          set -euo pipefail
+          git fetch --tags --quiet
+          PREVIOUS="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+          if [ -z "$PREVIOUS" ]; then
+            echo "No previous release; $TAG is the first."
+            exit 0
+          fi
+          echo "Previous release: $PREVIOUS   this one: $TAG"
+          HIGHEST="$(printf '%s\n%s\n' "${PREVIOUS#v}" "$VERSION" | sort -V | tail -n1)"
+          if [ "$PREVIOUS" = "$TAG" ] || [ "$HIGHEST" != "$VERSION" ]; then
+            echo "::error::$TAG does not come after $PREVIOUS."
+            echo "::error::Bump the version by tagging above $PREVIOUS."
+            exit 1
+          fi
+      # The version comes from git tags now, and on a workflow_dispatch the tag
+      # does not exist yet - the release step creates it after this. Without
+      # this the build would derive a dev version and produce a wheel whose name
+      # does not match the release notes' download link.
+      - name: Build at the version being released
+        run: |
+          set -euo pipefail
+          git tag --force "$TAG"
+          python -m build
+          git tag --delete "$TAG"   # the release step creates the real one
       # pytest above runs against the source tree, which is not what anyone
       # installs. A wheel that is missing gui/app.html passes every test in
       # this repository and then fails on the user's first `silkcode gui`.
       #
       # The filename check is the same class of bug one step earlier: the
       # release notes below link .../$TAG/silkcode-$VERSION-py3-none-any.whl,
-      # but the wheel is named from silkcode.__version__. Tag v0.2.0 while the
-      # code still says 0.1.0 and the release publishes with a download link
-      # that 404s on its own page.
+      # so the built wheel has to actually be named that. It is derived from
+      # the tag, so a mismatch means the build did not see the tag - a shallow
+      # checkout, most likely - and the release would publish with a download
+      # link that 404s on its own page.
       - name: Smoke-test the wheel we are about to publish
         run: |
           set -euo pipefail
@@ -44,7 +79,7 @@ jobs:
           test -f "$WHEEL" || {
             echo "::error::Tag $TAG expects $WHEEL, but the build produced:"
             ls -1 dist/
-            echo "::error::Bump __version__ in silkcode/__init__.py to $VERSION, or tag v$(python -c 'import silkcode; print(silkcode.__version__)')."
+            echo "::error::The version comes from git tags; check the tag and the checkout depth."
             exit 1
           }
           python -m venv /tmp/relcheck

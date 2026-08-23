@@ -606,9 +606,23 @@ A running GUI daemon watches the checkout's HEAD and, once new code lands (and
 it is idle — no session or swarm running), re-execs itself with the same
 arguments so the update goes live without a manual restart. Sessions are
 persisted on disk and survive the restart; the browser reloads automatically.
-This works for git-checkout installs (a clone or `pip install -e .`); wheel
-installs carry no git metadata, so update those with `pip install -U silkcode`.
 The GUI's **↻ Update** header button does the same thing.
+
+For an install that is not a git checkout — `pip install git+…`, or a release wheel —
+one line updates it from anywhere:
+
+```bash
+pip install --upgrade --force-reinstall git+https://github.com/RupertCloud/SilkCode
+```
+
+`silkcode update` does this for you, reinstalling from wherever pip originally got it.
+Run it by hand if your copy predates that support: an install whose updater refuses to
+run cannot fetch the fix for its own updater.
+
+`--force-reinstall` is the belt-and-braces form and always works. Plain `--upgrade` is
+enough once you are on a build whose version moves with each commit (see below) —
+before that, pip sees the same version number and does nothing at all, reporting
+success.
 
 ### Which version am I running?
 
@@ -618,16 +632,21 @@ alone identifies nothing — everyone tracking `main` runs different code while
 checkout, the commit it sits on:
 
 ```bash
-silkcode --version          # Silk Code 0.1.0+gd4e5f6a
+silkcode --version          # Silk Code 0.2.1.dev7+g9ccde8e
 silkcode version            # + commit, branch, install path, Python, platform
 silkcode version --json     # the same, for a bug report or a script
 ```
 
 | Build id | Means |
 | --- | --- |
-| `0.1.0` | a released wheel — exactly what was tagged |
-| `0.1.0+gd4e5f6a` | a checkout sitting on commit `d4e5f6a` |
-| `0.1.0+gd4e5f6a.dirty` | …with uncommitted changes on top |
+| `0.2.0` | a released wheel — exactly what was tagged |
+| `0.2.1.dev7+g9ccde8e` | seven commits past `v0.2.0`, on that commit |
+| `0.2.0+gd4e5f6a` | a checkout sitting on commit `d4e5f6a` |
+| `0.2.0+gd4e5f6a.dirty` | …with uncommitted changes on top |
+
+The number is derived from git tags, so it **moves on its own between releases**. That
+is not cosmetic: `pip install -U` reads the version to decide whether there is anything
+to fetch, so a version that never changes makes every upgrade a silent no-op.
 
 `silkcode version` also names the right way to upgrade *this* install, which
 differs between the two. The GUI page carries the build of the daemon that

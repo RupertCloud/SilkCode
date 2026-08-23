@@ -56,13 +56,28 @@ def _git(*args: str) -> str | None:
 
 @lru_cache(maxsize=1)
 def commit() -> str | None:
-    """The short commit this install sits on, or None for a wheel.
+    """The short commit this install sits on, or None if nothing can say.
+
+    Two places know. A checkout answers from git. A `pip install
+    git+https://...` has no git metadata at all, but pip wrote the commit it
+    resolved into its PEP 610 record at install time — so that install was
+    identifiable all along and simply reported a bare "0.1.0", which is the
+    one thing a bug report from it must not say.
 
     Cached for the life of the process. That is not a staleness bug: after
     `silkcode update` the GUI daemon re-execs, and the CLI is a fresh process
     every time, so nothing survives a change in the underlying code.
     """
-    return _git("rev-parse", "--short", "HEAD") or None
+    from_git = _git("rev-parse", "--short", "HEAD")
+    if from_git:
+        return from_git
+    try:
+        from .update import install_origin
+        origin = install_origin() or {}
+    except Exception:
+        return None      # never let identifying yourself be a failure path
+    resolved = origin.get("commit_id")
+    return resolved[:7] if resolved else None
 
 
 @lru_cache(maxsize=1)
@@ -75,7 +90,15 @@ def is_dirty() -> bool:
 
 @lru_cache(maxsize=1)
 def build_id() -> str:
-    """The string that identifies this build. Safe in a bug report."""
+    """The string that identifies this build. Safe in a bug report.
+
+    When the version was derived from git tags it already carries the commit
+    in its local segment — `0.2.1.dev82+g9ccde8e` — and there is nothing to
+    add. Appending a second one produced `0.2.1.dev82+g9ccde8e+g1fa8d34`,
+    which has two local segments and is not a version at all.
+    """
+    if "+" in RELEASE:
+        return RELEASE
     sha = commit()
     if sha is None:
         return RELEASE
