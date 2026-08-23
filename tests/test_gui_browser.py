@@ -654,6 +654,27 @@ def test_mobile_layout_has_compact_header_and_switchable_panes(browser, gui_url)
     assert not page.locator("#chat").is_visible()
 
 
+def test_secondary_panels_live_in_a_collapsed_details_drawer(browser, gui_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    wait_for_switcher(page)
+
+    assert not page.locator("#details").is_visible()
+    assert page.locator("#chat").is_visible()
+    page.click("#details-toggle")
+    assert page.locator("#details").is_visible()
+    assert page.locator("#bottom").is_visible()
+
+    page.click("#details-head button[data-detail='files']")
+    assert page.locator("#file-details").is_visible()
+    assert not page.locator("#activity").is_visible()
+    page.click("#details-head button[data-detail='activity']")
+    assert page.locator("#activity").is_visible()
+    assert not page.locator("#bottom").is_visible()
+    page.click("#details-close")
+    assert not page.locator("#details").is_visible()
+
+
 # ---- project is a control, not a caption ------------------------------------
 
 def test_the_project_is_a_switcher_beside_session_model_and_mode(browser, two_project_gui):

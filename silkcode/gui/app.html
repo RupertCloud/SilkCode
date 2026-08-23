@@ -302,6 +302,33 @@
     #tabs { overflow-x: auto; }
   }
 
+  /* Secondary workspace information lives in one collapsed right drawer. */
+  main { grid-template-columns: 260px minmax(0, 1fr) 0; grid-template-rows: 1fr auto; transition: grid-template-columns .18s ease; }
+  main.details-open { grid-template-columns: 260px minmax(0, 1fr) min(380px, 34vw); }
+  #files { grid-column: 1; grid-row: 1 / 3; }
+  #chat { grid-column: 2; grid-row: 1; }
+  #composer { grid-column: 2; grid-row: 2; }
+  #details { grid-column: 3; grid-row: 1 / 3; min-width: 0; overflow: hidden; background: var(--bg); border-left: 1px solid var(--border); display: flex; flex-direction: column; }
+  main:not(.details-open) #details { border-left: 0; visibility: hidden; }
+  #details-head { display: flex; gap: 3px; padding: 7px; background: var(--panel); border-bottom: 1px solid var(--border); }
+  #details-head button { border: 0; border-radius: 6px; padding: 6px 9px; background: transparent; color: var(--dim); cursor: pointer; }
+  #details-head button.active { background: var(--panel2); color: var(--accent); }
+  #details-close { margin-left: auto; font-size: 17px; }
+  .details-panel { display: none; flex: 1; min-height: 0; overflow: auto; }
+  #details[data-detail="files"] #file-details,
+  #details[data-detail="activity"] #activity,
+  #details[data-detail="changes"] #bottom { display: flex; flex-direction: column; }
+  #activity, #bottom { grid-column: auto; grid-row: auto; border: 0; }
+  #details-toggle { width: auto !important; padding: 0 10px; }
+
+  @media (max-width: 768px), (max-height: 480px) {
+    main, main.details-open { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    #files, #chat { grid-column: 1; grid-row: 1; }
+    #composer { grid-column: 1; grid-row: 2; }
+    #details { position: fixed; z-index: 15; top: 0; right: 0; bottom: 0; width: min(92vw, 390px); visibility: hidden; transform: translateX(100%); transition: transform .18s ease; box-shadow: -12px 0 35px rgba(0,0,0,.5); }
+    main.details-open #details { visibility: visible; transform: translateX(0); }
+  }
+
 </style>
 </head>
 <body>
@@ -344,8 +371,6 @@
 <nav id="mobile-tabs" aria-label="Switch pane">
   <button data-pane="chat" class="active">Chat</button>
   <button data-pane="files">Project</button>
-  <button data-pane="activity">Activity</button>
-  <button data-pane="bottom">Diff</button>
 </nav>
 <main data-pane="chat">
   <section class="pane" id="files">
@@ -353,11 +378,7 @@
       <div class="project-drawer-head"><strong>PROJECTS</strong><button id="project-add" class="project-add">＋ Add</button></div>
       <div id="project-cards" aria-label="Known projects"></div>
     </div>
-    <h2>PROJECT
-      <button id="projects-help-btn" class="h2-btn"
-              title="How projects work: create, open, switch, ship">? How-to</button>
-    </h2>
-    <div id="tree"></div>
+    <button id="projects-help-btn" class="h2-btn" style="margin:8px" title="How projects work: create, open, switch, ship">? Project how-to</button>
   </section>
   <section id="chat">
     <div id="conversation-bar">
@@ -367,16 +388,28 @@
       <button id="close-session" aria-label="Close conversation" title="Close this conversation and release its workspace lock">×</button>
       <span class="conversation-spacer"></span>
       <span class="usage" id="session"></span>
+      <button id="details-toggle" aria-label="Show details" aria-expanded="false">Details ›</button>
     </div>
     <div id="messages" role="log" aria-live="polite" aria-relevant="additions text"
        aria-label="Conversation"></div>
   </section>
-  <section class="pane" id="activity" aria-label="Agent activity">
-    <h2>AGENT ACTIVITY</h2>
-    <div id="timeline"></div>
-    <p id="timeline-empty" class="empty">Tool calls appear here as the agent works —
-      files it reads and writes, commands it runs.</p>
-  </section>
+  <aside id="details" data-detail="changes" aria-label="Project details">
+    <div id="details-head">
+      <button data-detail="changes" class="active">Changes</button>
+      <button data-detail="files">Files</button>
+      <button data-detail="activity">Activity</button>
+      <button id="details-close" aria-label="Close details">×</button>
+    </div>
+    <section class="details-panel pane" id="file-details"><h2>FILES</h2><div id="tree"></div></section>
+    <section class="details-panel pane" id="activity" aria-label="Agent activity">
+      <h2>AGENT ACTIVITY</h2><div id="timeline"></div>
+      <p id="timeline-empty" class="empty">Tool calls appear here as the agent works.</p>
+    </section>
+    <section class="details-panel" id="bottom">
+      <div id="tabs"><button data-tab="diff" class="active">GIT DIFF</button><button data-tab="file">FILE</button></div>
+      <div id="viewer"><pre id="viewer-pre">(no changes yet)</pre></div>
+    </section>
+  </aside>
   <div id="composer">
     <textarea id="input" aria-label="Message Silk Code"
       aria-describedby="composer-hint"
@@ -385,13 +418,6 @@
     <button id="send" aria-label="Send message">Send</button>
     <button id="stop" style="display:none;background:#4a2529;color:var(--err)">Stop</button>
   </div>
-  <section id="bottom">
-    <div id="tabs">
-      <button data-tab="diff" class="active">GIT DIFF</button>
-      <button data-tab="file">FILE</button>
-    </div>
-    <div id="viewer"><pre id="viewer-pre">(no changes yet)</pre></div>
-  </section>
 </main>
 
 <div class="modal-bg" id="perm-modal">
@@ -675,6 +701,29 @@
     });
   });
 })();
+
+let activeDetail = "changes";
+function openDetails(detail = activeDetail) {
+  activeDetail = detail;
+  const main = document.querySelector("main");
+  const drawer = document.getElementById("details");
+  drawer.dataset.detail = detail;
+  main.classList.add("details-open");
+  document.getElementById("details-toggle").setAttribute("aria-expanded", "true");
+  document.querySelectorAll("#details-head [data-detail]").forEach(b =>
+    b.classList.toggle("active", b.dataset.detail === detail));
+  if (detail === "changes") loadDiff();
+  if (detail === "files") loadTree();
+}
+function closeDetails() {
+  document.querySelector("main").classList.remove("details-open");
+  document.getElementById("details-toggle").setAttribute("aria-expanded", "false");
+}
+document.getElementById("details-toggle").onclick = () =>
+  document.querySelector("main").classList.contains("details-open") ? closeDetails() : openDetails();
+document.getElementById("details-close").onclick = closeDetails;
+document.querySelectorAll("#details-head [data-detail]").forEach(b =>
+  b.onclick = () => openDetails(b.dataset.detail));
 
 // The desktop header has many useful controls; on a phone they live in one
 // thumb-friendly sheet instead of wrapping into several cramped rows.
@@ -1165,6 +1214,7 @@ async function loadDiff() {
 
 async function openFile(path) {
   const data = await api("/api/file?path=" + encodeURIComponent(path));
+  openDetails("changes");
   setTab("file");
   $("viewer-pre").textContent = data.path + "\n" + "─".repeat(40) + "\n" + data.content;
 }
