@@ -93,22 +93,53 @@ def test_a_directory_that_is_not_a_repository_is_not_an_error(monkeypatch, tmp_p
     assert V.build_id() == V.RELEASE
 
 
-def test_the_report_tells_you_how_to_update_this_particular_install(monkeypatch):
-    """Both installs are updated the same way now - `silkcode update`
-    fast-forwards a checkout and reinstalls a pip install from the source pip
-    recorded. This used to send a non-checkout to `pip install -U silkcode`,
-    which is not a package on PyPI, so the one person actively diagnosing an
-    update problem got a 404."""
-    monkeypatch.setattr(V, "_git", lambda *a: None)
-    no_git = V.report()
-    assert "silkcode update" in no_git
-    assert "pip install -U silkcode" not in no_git
-    assert "no git metadata" in no_git      # still says which install it is
+def test_a_checkout_is_told_to_run_silkcode_update(monkeypatch):
+    """A git checkout is fast-forwarded by `silkcode update`, so say that.
 
-    for fn in (V.commit, V.is_dirty, V.build_id):
-        fn.cache_clear()
+    The anti-assertion is the one that matters: this line used to read
+    `pip install -U silkcode`, which is not a package on PyPI, so the one
+    person actively diagnosing an update problem got a 404.
+    """
     monkeypatch.setattr(V, "_git", lambda *a: "d4e5f6a" if a[0] == "rev-parse" else "")
-    assert "silkcode update" in V.report()
+    out = V.report()
+    assert "silkcode update" in out
+    assert "pip install -U silkcode" not in out
+
+
+@pytest.mark.parametrize("origin, expected", [
+    # pip recorded a git URL: `silkcode update` can reinstall from it.
+    ({"kind": "vcs", "spec": "git+https://example.invalid/x",
+      "url": "https://example.invalid/x"}, "silkcode update"),
+    # ...an archive, which the updater refuses. Recommending `silkcode update`
+    # here sends that same person to a command that always errors, so the
+    # report has to name the pip line that actually reinstalls it.
+    ({"kind": "archive", "spec": "https://example.invalid/silkcode.whl",
+      "url": "https://example.invalid/silkcode.whl"},
+     "pip install --upgrade --force-reinstall https://example.invalid/silkcode.whl"),
+    # ...nothing at all: fall back to the same instruction `silkcode update`
+    # itself prints when it gives up, rather than inventing a second one.
+    (None, "pip install --upgrade --force-reinstall "
+           "git+https://github.com/RupertCloud/SilkCode"),
+])
+def test_an_install_with_no_git_is_told_what_actually_updates_it(
+        monkeypatch, origin, expected):
+    import silkcode.update as U
+    monkeypatch.setattr(V, "_git", lambda *a: None)
+    monkeypatch.setattr(U, "install_origin", lambda: origin)
+    out = V.report()
+    assert expected in out
+    assert "pip install -U silkcode" not in out
+    assert "no git metadata" in out         # still says which install it is
+
+
+def test_a_broken_origin_lookup_still_prints_a_usable_line(monkeypatch):
+    """Reading pip's metadata is not allowed to break `silkcode version`."""
+    import silkcode.update as U
+    def explode():
+        raise RuntimeError("metadata is unreadable")
+    monkeypatch.setattr(V, "_git", lambda *a: None)
+    monkeypatch.setattr(U, "install_origin", explode)
+    assert "pip install --upgrade --force-reinstall" in V.report()
 
 
 def test_info_is_json_serialisable_for_bug_reports():
