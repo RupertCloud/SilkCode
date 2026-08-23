@@ -1166,7 +1166,13 @@ def _inference_link(argv: list[str]) -> int:
             return 1
         print("warning: saving an endpoint that did not answer (--force)", file=sys.stderr)
         result.kind = "ollama" if (result.port == 11434) else "openai_compat"
-        result.base_url = url if result.kind == "ollama" else f"{url}/v1"
+        # A probe would have told us which shape the server serves. Forced, we
+        # guess from the port - and must not re-append a /v1 the user already
+        # typed, or every later request goes to /v1/v1/chat/completions.
+        if result.kind == "ollama" or url.rstrip("/").endswith("/v1"):
+            result.base_url = url
+        else:
+            result.base_url = f"{url}/v1"
 
     model = args.model or preferred_model(result.models)
     if args.model and result.models and args.model not in result.models:

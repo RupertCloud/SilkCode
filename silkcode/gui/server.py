@@ -769,6 +769,10 @@ class GuiState:
         provided (i.e. the real `silkcode gui` daemon, not tests)."""
         if not restart_args:
             return False
+        # Remember them: the re-exec below reads this, and without it the
+        # daemon came back as `python -m silkcode` with no arguments - the
+        # REPL, in the wrong directory, on no port.
+        self._restart_args = restart_args
         from ..update import git_repo_root, head_changed, head_commit, restart_argv
         repo = git_repo_root()
         if repo is None:
@@ -802,6 +806,35 @@ class GuiState:
         threading.Thread(target=loop, daemon=True).start()
         return True
 
+    def _restart_after_reinstall(self) -> str:
+        """Re-exec so a pip-installed daemon actually runs the new code.
+
+        Returns what the caller should tell the user: "restarting" when this
+        process is on its way out, or "manual" when it cannot re-exec itself
+        and someone has to stop and start it.
+        """
+        from ..update import restart_argv
+        if not self._restart_args:
+            # No launch arguments recorded (a daemon embedded in something
+            # else, or a test). Coming back as a bare `python -m silkcode`
+            # would be worse than saying so.
+            return "manual"
+        with self.lock:
+            busy = (any(s.running for s in self.sessions.values())
+                    or any(sw.get("running") for sw in self.swarms.values()))
+        if busy:
+            return "manual"          # never cut a turn off mid-flight
+
+        def go() -> None:
+            self._restarting = True
+            self.save_all_sessions()
+            self.broadcast({"type": "restarting"})
+            time.sleep(0.5)          # let the browser see the event
+            os.execv(sys.executable, restart_argv(self._restart_args or []))
+
+        threading.Thread(target=go, daemon=True).start()
+        return "restarting"
+
     def update_service(self, params: dict | None = None) -> dict:
         """Pull the latest Silk Code from git (fast-forward only).
 
@@ -823,6 +856,15 @@ class GuiState:
             self.broadcast({"type": "update_progress", "line": line})
 
         result = update_installation(repo=repo, branch=branch, on_progress=on_progress)
+        if repo is None and result.get("status") == "updated":
+            # A checkout gets picked up by start_auto_reload, which watches
+            # HEAD and re-execs. There is no HEAD to watch here, so nothing
+            # would ever swap the running code: pip replaced the files on
+            # disk while this process keeps serving the modules it imported
+            # at boot. Saying "updated" and letting the browser announce a
+            # restart would be a lie that survives until someone notices the
+            # version never changed.
+            result["restart"] = self._restart_after_reinstall()
         if repo is None and result.get("status") == "error":
             # Not a checkout *and* pip recorded no source to reinstall from -
             # there is nothing this endpoint can do, which is the 400 the UI
@@ -1030,12 +1072,21 @@ class GuiState:
         walk(workspace.root, 0)
         return entries
 
-    def pairing_info(self, port: int, token: str | None) -> dict:
+    def pairing_info(self, port: int, token: str | None,
+                     bound_host: str = "") -> dict:
         """Everything needed to put another device on this daemon.
 
         The same facts the terminal prints at startup, available on demand -
         because a terminal scrolls, a second device shows up later, and
         restarting the daemon to see a QR again is not an answer.
+
+        `bound_host` is what the listener is actually bound to, and it is the
+        difference between a useful answer and a confident wrong one. Having
+        a LAN interface does not mean anything is listening on it: the
+        default `silkcode gui` binds 127.0.0.1, and a machine with a LAN
+        address would otherwise be handed a QR for a URL nothing can connect
+        to. Interfaces say where packets *could* arrive; the binding says
+        whether anyone is there to answer.
 
         This returns the token, inside the URL. That is not a leak: the
         endpoint is behind the same token, so a caller can only learn a
@@ -1044,15 +1095,17 @@ class GuiState:
         from ..inference import reachable_addresses
         from ..qr import QRError, encode
 
+        listening_everywhere = not bound_host or not is_loopback(bound_host)
         suffix = f"/?token={token}" if token else "/"
         addresses = [
             {"address": address, "label": label,
              "url": f"http://{address}:{port}{suffix}"}
-            for address, label in reachable_addresses()
+            for address, label in (reachable_addresses() if listening_everywhere else [])
         ]
         info: dict = {
             "addresses": addresses,
             "reachable": bool(addresses),
+            "loopback_only": not listening_everywhere,
             "tokenless": token is None,
             "qr": None,
             "qr_for": None,
@@ -1366,8 +1419,8 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/connections":
                 self._json(st.connections.snapshot())
             elif route == "/api/pairing":
-                port = self.server.server_address[1]
-                self._json(st.pairing_info(port, self.token))
+                bound_host, port = self.server.server_address[:2]
+                self._json(st.pairing_info(port, self.token, str(bound_host)))
             elif route == "/api/github/status":
                 self._json(st.github_status(sid))
             elif route == "/api/events":

@@ -181,11 +181,14 @@ def test_the_endpoint_reports_what_the_monitor_saw(daemon):
 
 def test_pairing_details_are_available_without_restarting(daemon, monkeypatch):
     """Startup prints the QR once. A terminal scrolls, a second device turns
-    up later, and killing the daemon to see a code again is not an answer."""
-    base, _ = daemon
+    up later, and killing the daemon to see a code again is not an answer.
+
+    Driven with an explicit binding: the test daemon listens on loopback, and
+    pairing (correctly) reports nothing to pair with there."""
+    _, state = daemon
     monkeypatch.setattr("silkcode.inference.local_ipv4_addresses",
                         lambda: ["100.101.102.103", "192.168.1.20"])
-    body = get(base, "/api/pairing", token=TOKEN).json()
+    body = state.pairing_info(8377, TOKEN, bound_host="0.0.0.0")
     assert body["reachable"] is True
     assert [a["label"] for a in body["addresses"]] == ["Tailscale", "LAN"]
     assert body["addresses"][0]["url"].startswith("http://100.101.102.103:")
@@ -193,10 +196,10 @@ def test_pairing_details_are_available_without_restarting(daemon, monkeypatch):
 
 
 def test_the_pairing_qr_is_a_matrix_the_page_can_draw(daemon, monkeypatch):
-    base, _ = daemon
+    _, state = daemon
     monkeypatch.setattr("silkcode.inference.local_ipv4_addresses",
                         lambda: ["192.168.1.20"])
-    body = get(base, "/api/pairing", token=TOKEN).json()
+    body = state.pairing_info(8377, TOKEN, bound_host="0.0.0.0")
     qr = body["qr"]
     assert qr and len(qr) == len(qr[0]), "not square"
     assert all(isinstance(cell, bool) for row in qr for cell in row)
@@ -208,10 +211,10 @@ def test_the_qr_encodes_the_url_that_is_displayed(daemon, monkeypatch):
     """The URL under the code and the code itself have to agree, or a scan
     silently lands somewhere other than what the operator read."""
     from silkcode.qr import encode
-    base, _ = daemon
+    _, state = daemon
     monkeypatch.setattr("silkcode.inference.local_ipv4_addresses",
                         lambda: ["192.168.1.20"])
-    body = get(base, "/api/pairing", token=TOKEN).json()
+    body = state.pairing_info(8377, TOKEN, bound_host="0.0.0.0")
     expected = [[bool(v) for v in row] for row in encode(body["qr_for"]["url"])]
     assert body["qr"] == expected
 
@@ -224,11 +227,49 @@ def test_pairing_needs_the_token_like_everything_else(daemon):
     assert get(base, "/api/pairing").status_code == 401
 
 
-def test_a_loopback_daemon_says_pairing_is_not_possible_yet(daemon, monkeypatch):
-    """No address means nothing to pair with. Saying so beats rendering an
-    empty box the operator has to interpret."""
-    base, _ = daemon
+def test_a_machine_with_no_address_at_all_says_pairing_is_not_possible(daemon, monkeypatch):
+    """Bound everywhere, but the machine is offline: still nothing to pair
+    with. Saying so beats rendering an empty box to interpret."""
+    _, state = daemon
     monkeypatch.setattr("silkcode.inference.local_ipv4_addresses", lambda: [])
-    body = get(base, "/api/pairing", token=TOKEN).json()
+    body = state.pairing_info(8377, TOKEN, bound_host="0.0.0.0")
     assert body["reachable"] is False
     assert body["qr"] is None
+
+
+# ---- pairing must reflect the binding, not the interfaces -------------------
+
+def test_a_loopback_daemon_does_not_advertise_a_lan_address(daemon, monkeypatch):
+    """Having a LAN interface is not the same as listening on it. The default
+    `silkcode gui` binds 127.0.0.1, and on a machine with a LAN address this
+    used to hand out a QR for a URL nothing could connect to — a confident
+    wrong answer, which is worse than no answer."""
+    base, state = daemon
+    monkeypatch.setattr("silkcode.inference.local_ipv4_addresses",
+                        lambda: ["192.168.1.20", "100.101.102.103"])
+    info = state.pairing_info(8377, "tok", bound_host="127.0.0.1")
+    assert info["reachable"] is False
+    assert info["loopback_only"] is True
+    assert info["addresses"] == []
+    assert info["qr"] is None
+
+
+def test_a_daemon_bound_to_every_interface_does_advertise(daemon, monkeypatch):
+    base, state = daemon
+    monkeypatch.setattr("silkcode.inference.local_ipv4_addresses",
+                        lambda: ["192.168.1.20"])
+    info = state.pairing_info(8377, "tok", bound_host="0.0.0.0")
+    assert info["reachable"] is True
+    assert info["loopback_only"] is False
+    assert info["addresses"][0]["url"] == "http://192.168.1.20:8377/?token=tok"
+
+
+def test_the_live_endpoint_uses_the_real_binding(daemon, monkeypatch):
+    """The fixture binds 127.0.0.1, so the endpoint must say so even on a
+    machine that has other interfaces."""
+    base, _ = daemon
+    monkeypatch.setattr("silkcode.inference.local_ipv4_addresses",
+                        lambda: ["192.168.1.20"])
+    body = get(base, "/api/pairing", token=TOKEN).json()
+    assert body["loopback_only"] is True
+    assert body["reachable"] is False

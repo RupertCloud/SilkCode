@@ -18,10 +18,26 @@ from pathlib import Path
 import pytest
 
 from silkcode.cli.main import REPL_FLAGS, _repl_parser, main, subcommand_alias
+from silkcode.config import Config
 from silkcode.update import install_origin, update_installation, update_pip_install
 
 COMMANDS = {"update": 1, "sandbox": 1, "version": 1, "models": 1, "inference": 1,
             "gui": 1, "sync": 1}
+
+
+def dead_url() -> str:
+    """A port nothing is listening on: bind one, then let it go."""
+    import socket
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    return f"http://127.0.0.1:{port}"
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    monkeypatch.setenv("SILKCODE_HOME", str(tmp_path))
+    return tmp_path
 
 
 def run(argv) -> tuple[int, str]:
@@ -310,3 +326,55 @@ def test_a_reinstall_that_moved_nothing_says_already_up_to_date(monkeypatch):
     result = update_pip_install("git+https://example/x")
     assert result["status"] == "up-to-date"
     assert result["detail"].startswith("Already up to date")
+
+
+# ---- advice that matches what the updater can do ----------------------------
+
+def test_a_wheel_install_is_not_told_to_run_silkcode_update(monkeypatch):
+    """`silkcode update` can only reinstall a VCS install — an archive has no
+    source it knows how to fetch again. Recommending it for a release wheel
+    sends the one person diagnosing an update problem to a command that
+    always errors."""
+    import silkcode.update as up
+    import silkcode.version as version
+    url = "https://github.com/RupertCloud/SilkCode/releases/download/v0.1.0/x.whl"
+    monkeypatch.setattr(up, "install_origin", lambda: {"kind": "archive", "url": url})
+    advice = version._update_advice()
+    assert advice != "silkcode update"
+    assert url in advice
+    assert advice.startswith("pip install")
+
+
+def test_a_git_install_is_told_to_run_silkcode_update(monkeypatch):
+    import silkcode.update as up
+    import silkcode.version as version
+    monkeypatch.setattr(up, "install_origin",
+                        lambda: {"kind": "vcs", "spec": "git+https://x/y", "url": "https://x/y"})
+    assert version._update_advice() == "silkcode update"
+
+
+def test_with_no_record_the_advice_is_still_one_that_runs(monkeypatch):
+    import silkcode.update as up
+    import silkcode.version as version
+    monkeypatch.setattr(up, "install_origin", lambda: None)
+    advice = version._update_advice()
+    assert "git+https://github.com/RupertCloud/SilkCode" in advice
+    assert "-U silkcode" not in advice          # the package that is not on PyPI
+
+
+def test_force_linking_an_address_that_ends_in_v1_does_not_double_it(home):
+    """`--force` guesses the shape from the port because nothing answered.
+    It must not re-append a /v1 the user already typed, or every later
+    request goes to /v1/v1/chat/completions."""
+    code, out = run(["inference", "link", f"{dead_url()}/v1", "--force",
+                     "--model", "local-model"])
+    assert code == 0, out
+    saved = Config.load(home / "config.json").providers["laptop"]
+    assert saved["base_url"].endswith("/v1")
+    assert "/v1/v1" not in saved["base_url"]
+
+
+def test_force_linking_a_bare_address_still_gains_v1(home):
+    code, out = run(["inference", "link", dead_url(), "--force", "--model", "m"])
+    assert code == 0, out
+    assert Config.load(home / "config.json").providers["laptop"]["base_url"].endswith("/v1")

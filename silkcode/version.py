@@ -106,6 +106,31 @@ def info() -> dict:
     }
 
 
+def _update_advice() -> str:
+    """What to run to update an install that is not a git checkout.
+
+    `silkcode update` can only reinstall a VCS install, because that is the
+    only kind whose PEP 610 record names something to fetch again. A wheel
+    from a release URL records an archive, which the updater does not handle
+    - so recommending `silkcode update` there sends the one person actively
+    diagnosing an update problem to a command that always errors. The person
+    reading this line deserves one that works.
+    """
+    try:
+        from .update import install_origin
+        origin = install_origin()
+    except Exception:                       # pragma: no cover - defensive
+        origin = None
+    if origin and origin.get("kind") == "vcs":
+        return "silkcode update"
+    if origin and origin.get("kind") == "archive":
+        return f"pip install --upgrade --force-reinstall {origin['url']}"
+    if origin and origin.get("kind") == "editable":
+        return "silkcode update   (editable install; git pull in its checkout)"
+    return ("pip install --upgrade --force-reinstall "
+            "git+https://github.com/RupertCloud/SilkCode")
+
+
 def report() -> str:
     """The human-readable version report behind `silkcode version`."""
     d = info()
@@ -120,11 +145,7 @@ def report() -> str:
         lines.append("  update    silkcode update")
     else:
         lines.append("  source    installed package (no git metadata)")
-        # `silkcode update` handles this install too: it reinstalls from the
-        # source pip recorded. This line used to read `pip install -U
-        # silkcode`, sending the one person actively diagnosing an update
-        # problem to a package that does not exist on PyPI.
-        lines.append("  update    silkcode update")
+        lines.append(f"  update    {_update_advice()}")
     lines.append(f"  install   {d['install']}")
     lines.append(f"  python    {d['python']}  ({d['executable']})")
     lines.append(f"  platform  {d['platform']}")
