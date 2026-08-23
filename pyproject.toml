@@ -1,11 +1,12 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=64", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "silkcode"
-# Single-sourced from silkcode/__init__.py, so the number cannot drift between
-# what the package reports and what the wheel is called.
+# Derived from git tags by setuptools_scm, so the number moves on its own
+# between releases: `pip install -U` reads it to decide whether there is
+# anything to do, and a static version makes every such upgrade a silent no-op.
 dynamic = ["version"]
 description = "Silk Code - an open, model-agnostic AI coding harness (agent runtime + CLI + GUI)"
 readme = "README.md"
@@ -19,13 +20,22 @@ Repository = "https://github.com/RupertCloud/SilkCode"
 Issues = "https://github.com/RupertCloud/SilkCode/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+# setuptools_scm is a *build* requirement; it is here as well so the test
+# that asks the backend what version it will stamp can actually run.
+dev = ["pytest>=8", "setuptools_scm>=8"]
 
 [project.scripts]
 silkcode = "silkcode.cli.main:main"
 
-[tool.setuptools.dynamic]
-version = { attr = "silkcode.__version__" }
+[tool.setuptools_scm]
+# At a tag this is exactly the tag; after it, 0.2.1.devN+g<commit>, which sorts
+# above 0.2.0 and below 0.2.1 — so pip can tell two builds of main apart.
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
+# A build with no usable git history (a source tarball, a shallow clone) must
+# still produce a wheel rather than failing. It is wrong in the harmless
+# direction: too low, never claiming to be a release it is not.
+fallback_version = "0.2.0"
 
 [tool.setuptools.packages.find]
 include = ["silkcode*"]

@@ -90,7 +90,15 @@ def is_dirty() -> bool:
 
 @lru_cache(maxsize=1)
 def build_id() -> str:
-    """The string that identifies this build. Safe in a bug report."""
+    """The string that identifies this build. Safe in a bug report.
+
+    When the version was derived from git tags it already carries the commit
+    in its local segment — `0.2.1.dev82+g9ccde8e` — and there is nothing to
+    add. Appending a second one produced `0.2.1.dev82+g9ccde8e+g1fa8d34`,
+    which has two local segments and is not a version at all.
+    """
+    if "+" in RELEASE:
+        return RELEASE
     sha = commit()
     if sha is None:
         return RELEASE

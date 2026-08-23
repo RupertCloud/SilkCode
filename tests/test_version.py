@@ -36,6 +36,20 @@ def _fresh_caches():
         fn.cache_clear()
 
 
+@pytest.fixture
+def plain_release(monkeypatch):
+    """A version with no local segment, as a tagged release has.
+
+    In a working tree the version is scm-derived and already carries a commit,
+    so build_id() returns it untouched — correct, but it means these tests
+    would be asserting nothing. Pin the release shape they are about.
+    """
+    monkeypatch.setattr(V, "RELEASE", "0.2.0")
+    for fn in (V.commit, V.is_dirty, V.build_id):
+        fn.cache_clear()
+    return "0.2.0"
+
+
 # ---- what the build id says -------------------------------------------------
 
 def test_a_package_install_reports_the_plain_release(monkeypatch):
@@ -47,19 +61,19 @@ def test_a_package_install_reports_the_plain_release(monkeypatch):
     assert V.is_dirty() is False
 
 
-def test_a_checkout_reports_the_commit_it_is_sitting_on(monkeypatch):
+def test_a_checkout_reports_the_commit_it_is_sitting_on(monkeypatch, plain_release):
     monkeypatch.setattr(V, "_git", lambda *a: "d4e5f6a" if a[0] == "rev-parse" else "")
-    assert V.build_id() == f"{V.RELEASE}+gd4e5f6a"
+    assert V.build_id() == f"{plain_release}+gd4e5f6a"
 
 
-def test_uncommitted_changes_are_visible_in_the_build_id(monkeypatch):
+def test_uncommitted_changes_are_visible_in_the_build_id(monkeypatch, plain_release):
     def fake(*a):
         return "d4e5f6a" if a[0] == "rev-parse" else " M silkcode/agent/loop.py"
     monkeypatch.setattr(V, "_git", fake)
-    assert V.build_id() == f"{V.RELEASE}+gd4e5f6a.dirty"
+    assert V.build_id() == f"{plain_release}+gd4e5f6a.dirty"
 
 
-def test_the_build_id_changes_when_the_commit_does(monkeypatch):
+def test_the_build_id_changes_when_the_commit_does(monkeypatch, plain_release):
     """The whole point: two installs on different commits must not claim to be
     the same thing."""
     seen = set()
@@ -71,7 +85,7 @@ def test_the_build_id_changes_when_the_commit_does(monkeypatch):
     assert len(seen) == 2, f"two commits produced one build id: {seen}"
 
 
-def test_a_git_url_install_is_identified_by_the_commit_pip_resolved(monkeypatch):
+def test_a_git_url_install_is_identified_by_the_commit_pip_resolved(monkeypatch, plain_release):
     """`pip install git+https://...` leaves no git metadata on disk, so this
     reported a bare "0.1.0" — the one thing a bug report from the most common
     install must not say. pip knew the commit all along: it writes what it
@@ -83,7 +97,7 @@ def test_a_git_url_install_is_identified_by_the_commit_pip_resolved(monkeypatch)
         "url": "https://example.invalid/x",
         "commit_id": "712928ed2420f5f0a1b2c3d4e5f6a7b8c9d0e1f2"})
     assert V.commit() == "712928e"
-    assert V.build_id() == f"{V.RELEASE}+g712928e"
+    assert V.build_id() == f"{plain_release}+g712928e"
     assert V.is_dirty() is False, "a pip install has no working tree to be dirty"
 
 
@@ -215,19 +229,21 @@ def _pyproject_tables() -> dict[str, list[str]]:
     return tables
 
 
-def test_the_version_is_declared_exactly_once():
-    """It used to be written in both pyproject.toml and __init__.py, which is a
-    drift waiting to happen: the wheel is named from one and the program
-    reports the other."""
+def test_the_version_is_derived_from_git_rather_than_written_down():
+    """A hand-written version is a version that stops moving, and `pip install
+    -U` reads it to decide whether there is anything to fetch — so a static one
+    makes every upgrade a silent no-op. Tags are the source of truth now."""
     tables = _pyproject_tables()
     project = tables["project"]
     assert not any(re.match(r'version\s*=\s*["\']', line) for line in project), \
-        "pyproject.toml hard-codes a version again; it should read __version__"
+        "pyproject.toml hard-codes a version again"
     assert any(re.match(r"dynamic\s*=.*\bversion\b", line) for line in project), \
         "[project] no longer declares a dynamic version"
-    dynamic = tables.get("tool.setuptools.dynamic", [])
-    assert any("silkcode.__version__" in line for line in dynamic), \
-        "the dynamic version no longer reads silkcode.__version__"
+    assert "tool.setuptools_scm" in tables, "setuptools_scm is no longer configured"
+    assert any("setuptools_scm" in line for line in tables["build-system"]), \
+        "setuptools_scm is not a build requirement, so the build cannot derive a version"
+    assert any("fallback_version" in line for line in tables["tool.setuptools_scm"]), \
+        "no fallback: a build with no git history would fail rather than ship"
 
 
 def test_the_build_backend_agrees_with_us_about_the_version():
@@ -246,8 +262,36 @@ def test_the_build_backend_agrees_with_us_about_the_version():
     assert out.stdout.strip() == V.RELEASE
 
 
+# release | pre-release | .devN from setuptools_scm | + local segment
+_PEP440 = re.compile(r"\d+(\.\d+)*((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?(\+[A-Za-z0-9.]+)?")
+
+
 def test_the_declared_version_looks_like_a_version():
-    assert re.fullmatch(r"\d+\.\d+\.\d+([ab]\d+|rc\d+)?", V.RELEASE), V.RELEASE
+    assert _PEP440.fullmatch(V.RELEASE), V.RELEASE
+
+
+def test_a_derived_version_is_not_given_a_second_commit(monkeypatch):
+    """setuptools_scm already puts the commit in the local segment. Appending
+    another produced `0.2.1.dev82+g9ccde8e+g1fa8d34` — two local segments,
+    which is not a PEP 440 version at all."""
+    monkeypatch.setattr(V, "RELEASE", "0.2.1.dev82+g9ccde8e17")
+    monkeypatch.setattr(V, "_git", lambda *a: "1fa8d34" if a[0] == "rev-parse" else "")
+    for fn in (V.commit, V.is_dirty, V.build_id):
+        fn.cache_clear()
+    build = V.build_id()
+    assert build.count("+") == 1, build
+    assert build == "0.2.1.dev82+g9ccde8e17"
+    assert _PEP440.fullmatch(build), build
+
+
+def test_a_tagged_release_still_gains_the_checkout_commit(monkeypatch):
+    """At a clean tag the version has no local segment, so a checkout sitting
+    on it is still worth distinguishing from the wheel."""
+    monkeypatch.setattr(V, "RELEASE", "0.2.0")
+    monkeypatch.setattr(V, "_git", lambda *a: "1fa8d34" if a[0] == "rev-parse" else "")
+    for fn in (V.commit, V.is_dirty, V.build_id):
+        fn.cache_clear()
+    assert V.build_id() == "0.2.0+g1fa8d34"
 
 
 # ---- the CLI can answer the question ---------------------------------------

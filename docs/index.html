@@ -215,6 +215,19 @@ silkcode models   <span class="cm"># prints the provider table when the install 
         <p>Prefer an isolated install? <code>pipx install git+https://github.com/RupertCloud/SilkCode</code>
         works too. Tagged wheels land on the
         <a href="https://github.com/RupertCloud/SilkCode/releases/latest">releases page</a>.</p>
+
+        <h4 id="updating">Updating later</h4>
+        <pre class="code"><span class="cm"># one line, from any install:</span>
+pip install --upgrade --force-reinstall git+https://github.com/RupertCloud/SilkCode
+
+<span class="cm"># from a clone, or if you installed with -e:</span>
+silkcode update
+
+silkcode version   <span class="cm"># which build you are on, and how to update this one</span></pre>
+        <p><code>--force-reinstall</code> is the belt-and-braces form: it works from every kind
+        of install, including ones made before Silk Code could update itself. If you are unsure
+        which you have, run <code>silkcode version</code> — it names the right command for
+        your install.</p>
       </div>
     </div>
 
