@@ -864,6 +864,19 @@ Detection is deliberately conservative and will miss things phrased as documenta
 it is context for a decision you were already being asked to make, not the control.
 The control is that high-risk actions stop and ask. See `silkcode/provenance.py`.
 
+The same rule applies to the files a repository puts in front of the agent before any
+tool runs — `SILKCODE.md`, `.silkcode/memory.md`, and skill descriptions. They arrive
+with a clone, so they are read the same way tool output is: an ordinary one is used
+exactly as before, and one carrying text written to steer an agent is kept out of the
+agent's instructions, reported to you, and counted as something the turn consumed —
+so a push in that turn asks even under a standing grant.
+
+Risky commands are classified from the command that will actually run, not the text it
+was written as. `"git" push`, `g\it push` and `r\m -rf` are all the plain thing to a
+shell, so they are all the plain thing to the gate. A line that cannot be parsed, or
+whose command name is decided at run time (`$CMD push`), is treated as high-risk
+rather than guessed at.
+
 ## Architecture
 
 ```

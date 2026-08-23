@@ -1,3 +1,5 @@
+import pytest
+
 from silkcode.permissions import PermissionManager, Risk, classify_command
 
 
@@ -145,3 +147,99 @@ def test_allow_all_also_works_in_agent_mode():
     pm.allow_all()
     assert pm.check_command("rm -rf dist") is True         # HIGH now auto-approved
     assert len(calls) == 1
+
+
+# ---- the gate must classify the command that will actually run --------------
+#
+# A permission decision made on raw text is a decision about the wrong object.
+# The shell reads `"git" push`, `g\it push` and `gi""t push` as `git push`; a
+# regex over the string sees three different things and matched none of them,
+# so every HIGH-risk pattern was one pair of quotes away from running
+# unattended in agent mode.
+
+@pytest.mark.parametrize("command", [
+    'git push origin main',
+    '"git" push origin main',
+    "'git' push origin main",
+    'gi""t push origin main',
+    'g\\it push origin main',
+    'git pu\\sh origin main',
+    'git "push" origin main',
+    'git \'push\' origin main',
+    '"git"     "push"   origin main',
+])
+def test_quoting_cannot_smuggle_a_push_past_the_gate(command):
+    assert classify_command(command) == Risk.HIGH, command
+
+
+@pytest.mark.parametrize("command", [
+    'rm -rf /tmp/x',
+    'r\\m -rf /tmp/x',
+    '"rm" -rf /tmp/x',
+    'sudo reboot',
+    '"sudo" reboot',
+    's\\udo reboot',
+])
+def test_quoting_cannot_smuggle_a_destructive_command_either(command):
+    assert classify_command(command) == Risk.HIGH, command
+
+
+def test_the_bypass_reached_all_the_way_through_agent_mode():
+    """Not a classification detail: MEDIUM runs with no prompt in agent mode,
+    so a quoted push was an unattended push."""
+    asked = []
+    manager = PermissionManager("agent", asker=lambda p: asked.append(p) or "no")
+    assert manager.check_command('"git" push origin main') is False
+    assert asked, "a quoted push ran without asking anyone"
+
+
+@pytest.mark.parametrize("command", [
+    "$CMD push origin main",
+    "$(which git) push origin main",
+    "`echo git` push origin main",
+    "${GIT} push origin main",
+])
+def test_a_command_name_decided_at_run_time_is_not_classifiable(command):
+    """We cannot know what executes, so there is no safe assumption to make."""
+    assert classify_command(command) == Risk.HIGH, command
+
+
+@pytest.mark.parametrize("command", [
+    'git commit -m "$MSG"',
+    'echo "$HOME"',
+    'grep -rn "$PATTERN" .',
+])
+def test_expansions_in_arguments_are_left_alone(command):
+    """Only the command word matters. Gating every `$VAR` would put a prompt
+    in front of the way everyone writes a commit, and a prompt that common is
+    a prompt nobody reads."""
+    assert classify_command(command) < Risk.HIGH, command
+
+
+def test_an_unreadable_command_line_fails_closed():
+    """An unterminated quote cannot be classified. Something is still going to
+    run, so the human is asked rather than the gate guessing low."""
+    assert classify_command('git commit -m "unbalanced') == Risk.HIGH
+
+
+def test_ordinary_commands_are_not_dragged_up_by_any_of_this():
+    """The fix may only ever find more danger, never invent it: a gate that
+    starts prompting for `ls` is a gate that gets switched off."""
+    for command in ("ls -la", '"ls" -la', "pwd", "git status", "git log --oneline",
+                    "cat README.md", "grep -rn foo .", "npm test",
+                    "git log --oneline | head -5"):
+        assert classify_command(command) == Risk.LOW, command
+    for command in ("npm install", "python3 build.py", "git commit -m x"):
+        assert classify_command(command) == Risk.MEDIUM, command
+
+
+def test_a_grant_follows_the_command_that_will_run():
+    """Grants are parsed for the same reason: `"git" push` is a push, and a
+    line that is two commands is not the one thing the user pre-authorized."""
+    from silkcode.permissions import git_operation
+    assert git_operation("git push origin main") == "push"
+    assert git_operation('"git" push origin main') == "push"
+    assert git_operation("git fetch") == "pull"
+    assert git_operation("ls && git push") is None, \
+        "a compound line claimed a grant meant for a single push"
+    assert git_operation("ls -la") is None
