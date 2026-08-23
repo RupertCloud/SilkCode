@@ -307,6 +307,13 @@ GUI shows the same QR and addresses on demand — no restart. If the daemon is o
 loopback it says so, and tells you to restart with `--host 0.0.0.0`, because
 there is nothing to pair with until then.
 
+**The token survives a restart.** It is remembered per address in
+`~/.silkcode/gui-tokens/` (owner-readable only), so a URL already open on a phone
+keeps working after the daemon re-execs itself to apply an update. It used to mint a
+fresh token on every restart and answer that tab with *"Unauthorized … open the URL
+printed when it started"* — a URL printed on the laptop you are not holding. Delete the
+file to rotate, or pass `--token` to pin one you choose.
+
 **Reaching it from anywhere.** A `192.168.x.y` address only resolves while both
 devices are on the same router. Put both machines on a
 [Tailscale](https://tailscale.com) tailnet and the `100.x` address keeps working

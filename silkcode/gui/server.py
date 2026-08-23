@@ -1728,6 +1728,47 @@ def _print_pairing(port: int, token: str | None) -> None:
               "100.x address it gives you.")
 
 
+def _token_path(host: str, port: int) -> "Path":
+    from ..config import config_dir
+    return config_dir() / "gui-tokens" / f"{host.replace(':', '_')}-{port}.token"
+
+
+def remembered_token(host: str, port: int) -> str | None:
+    """The access token this daemon used last time it ran on this address.
+
+    A daemon reachable beyond this machine mints a token and prints it inside
+    the URL. It also re-execs itself to hot-apply an update — and the restart
+    argv deliberately reproduces the launch configuration, except that the
+    token was never part of it. So every self-update minted a *new* token and
+    answered the tab you already had open with "Unauthorized ... open the URL
+    printed when it started". The URL it means is on the terminal, which for
+    the phone-driving-a-laptop setup is not the device in your hand.
+
+    Kept in the config directory rather than argv or the environment: argv is
+    visible to every user on the machine through `ps`, and the environment is
+    inherited by every command the agent runs. The config directory already
+    holds this installation's API keys, so it is the same trust boundary.
+    """
+    try:
+        text = _token_path(host, port).read_text().strip()
+    except OSError:
+        return None
+    return text or None
+
+
+def remember_token(host: str, port: int, token: str) -> None:
+    """Store the token so a restart answers the URL already in someone's
+    browser. Owner-only; failure is not fatal, it only costs a new token."""
+    path = _token_path(host, port)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(path.parent, 0o700)
+        path.write_text(token + "\n")
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1",
             port: int = 8377, grants: list[str] | None = None,
             use_sandbox: bool = False, auto_push: bool = False,
@@ -1760,11 +1801,21 @@ def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1
     # moment it is reachable from elsewhere it needs a credential, so one is
     # required (and generated when not supplied).
     if not is_loopback(host) and not token:
-        import secrets
-        token = secrets.token_urlsafe(24)
-        print("This daemon is reachable beyond this machine, so it requires an "
-              "access token.\nOpen the URL below (it carries the token); share it "
-              "with nobody you would not\ngive a shell on this machine.\n")
+        token = remembered_token(host, port)
+        if token:
+            print("This daemon is reachable beyond this machine, so it requires an "
+                  "access token.\nReusing the one from last time, so a URL you "
+                  "already have still works.\n")
+        else:
+            import secrets
+            token = secrets.token_urlsafe(24)
+            print("This daemon is reachable beyond this machine, so it requires an "
+                  "access token.\nOpen the URL below (it carries the token); share it "
+                  "with nobody you would not\ngive a shell on this machine.\n")
+    if token and not is_loopback(host):
+        # Also for an explicitly passed --token: the restart argv does not carry
+        # it either, so without this a self-update locks that daemon out too.
+        remember_token(host, port, token)
     GuiHandler.token = token
     if restart_args:
         state.start_auto_reload(restart_args)
