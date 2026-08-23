@@ -740,7 +740,7 @@ class GuiState:
         """Scaffold, git-initialize, and activate a brand-new local project."""
         if self.remote_spec:
             raise ToolError("this daemon runs against a remote workspace; projects cannot be created")
-        from ..scaffold import DEFAULT_TEMPLATE, create_project
+        from ..scaffold import DEFAULT_TEMPLATE, create_project, validate_name
 
         name = str(params.get("name") or "").strip()
         parent = str(params.get("parent") or "").strip()
@@ -753,8 +753,32 @@ class GuiState:
         objective = str(params.get("objective") or description).strip()
         if params.get("start_swarm") and not objective:
             raise ToolError("describe what the Swarm should build")
+        publish = bool(params.get("publish_github"))
+        visibility = str(params.get("github_visibility") or "private").lower()
+        if visibility not in {"private", "public"}:
+            raise ToolError("GitHub visibility must be private or public")
+        github_client = None
+        if publish:
+            from ..github import cli_client_for_repos
+            github_client = cli_client_for_repos()
+            github_client.whoami()  # fail before creating local files
+        slug = validate_name(name)
         result = create_project(name, template=template, parent=parent,
                                 description=description, git=True)
+        github = None
+        if publish:
+            if result.git != "initialized" or not result.commit or result.commit.startswith("git error"):
+                raise ToolError("the local project was created, but Git could not make its initial "
+                                "commit; configure your Git name/email before publishing")
+            from ..tools.git import git_add_remote, git_push
+            repository = github_client.create_repository(
+                slug, description=description or objective,
+                private=visibility == "private")
+            remote_url = repository.get("clone_url") or (
+                f"https://github.com/{repository['full_name']}.git")
+            remote = git_add_remote(Workspace(result.path), "origin", remote_url)
+            pushed = remote if remote.startswith("git error") else git_push(Workspace(result.path))
+            github = {**repository, "push": pushed}
         state = self.open_project(str(result.path))
         swarm = None
         if params.get("start_swarm"):
@@ -768,7 +792,8 @@ class GuiState:
             }, state["session_id"])
         return {"state": state, "project": str(result.path), "git": result.git,
                 "commit": result.commit, "files": result.files,
-                "test_command": result.test_command, "swarm": swarm}
+                "test_command": result.test_command, "swarm": swarm,
+                "github": github}
 
     def close_session(self, session_id: int | None = None) -> dict:
         """Stop and close a session: release its workspace lock and drop it from

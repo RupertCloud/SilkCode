@@ -164,6 +164,22 @@ class GitHubClient:
             out.append({"full_name": full, "description": r.get("description") or ""})
         return out
 
+    def create_repository(self, name: str, description: str = "",
+                          private: bool = True) -> dict:
+        """Create a repository owned by the authenticated GitHub user."""
+        data = self._request("POST", "/user/repos", json={
+            "name": name,
+            "description": description,
+            "private": bool(private),
+            "auto_init": False,
+        })
+        return {
+            "full_name": data.get("full_name") or name,
+            "html_url": data.get("html_url") or "",
+            "clone_url": data.get("clone_url") or "",
+            "private": bool(data.get("private", private)),
+        }
+
     def create_pull_request(self, owner: str, repo: str, title: str, head: str,
                             base: str, body: str = "", draft: bool = True) -> str:
         data = self._request("POST", f"/repos/{owner}/{repo}/pulls", json={

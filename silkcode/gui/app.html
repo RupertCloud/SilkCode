@@ -551,8 +551,14 @@
       </select>
       <label>What should the Swarm build?</label>
       <textarea id="project-new-objective" rows="4" placeholder="Describe the product, users, and the first useful release."></textarea>
+      <label>Publish to GitHub</label><select id="project-new-github">
+        <option value="none">Not yet</option>
+        <option value="private">Create a private repository</option>
+        <option value="public">Create a public repository</option>
+      </select>
       <div style="color:var(--dim);font-size:12px;margin-top:4px">
-        Silk Code creates a new folder, initializes Git, opens the project, and starts the Advanced Swarm.
+        Silk Code creates a new folder, initializes Git, optionally publishes it through your
+        connected GitHub account, opens the project, and starts the Advanced Swarm.
       </div>
     </div>
     <div class="row">
@@ -1582,6 +1588,7 @@ $("project-confirm").onclick = async () => {
   try {
     if (activeProjectTab === "new") {
       const objective = $("project-new-objective").value.trim();
+      const githubVisibility = $("project-new-github").value;
       const created = await api("/api/project/create", {
         name: $("project-new-name").value.trim(),
         parent: $("project-new-parent").value.trim(),
@@ -1589,6 +1596,8 @@ $("project-confirm").onclick = async () => {
         objective,
         start_swarm: true,
         developer_count: 0,
+        publish_github: githubVisibility !== "none",
+        github_visibility: githubVisibility === "none" ? undefined : githubVisibility,
       });
       $("project-modal").classList.remove("open");
       currentSessionId = created.state.session_id;
@@ -1598,6 +1607,10 @@ $("project-confirm").onclick = async () => {
       setTeamWorkflow();
       $("swarm-modal").classList.add("open");
       renderSwarmStatus(created.swarm || {running: true, log: [], artifacts: {}});
+      if (created.github) {
+        swarmLog(`GitHub: ${created.github.full_name} (${created.github.private ? "private" : "public"})`);
+        swarmLog(created.github.push || "Repository created.");
+      }
       return;
     }
     const path = $("project-path").value.trim();

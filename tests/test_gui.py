@@ -144,6 +144,38 @@ def test_gui_validates_swarm_objective_before_creating_project(gui, tmp_path):
     assert not (tmp_path / "should-not-exist").exists()
 
 
+def test_gui_can_publish_new_project_as_public_or_private(gui, tmp_path, monkeypatch):
+    base, _state, _workspace = gui
+
+    class GitHub:
+        def whoami(self):
+            return "amon"
+
+        def create_repository(self, name, description="", private=True):
+            assert name == "published-product"
+            assert private is False
+            return {"full_name": f"amon/{name}", "html_url": f"https://github.com/amon/{name}",
+                    "clone_url": f"https://github.com/amon/{name}.git", "private": private}
+
+    monkeypatch.setattr("silkcode.github.cli_client_for_repos", lambda: GitHub())
+    monkeypatch.setattr("silkcode.tools.git.git_add_remote", lambda ws, name, url: "Added remote origin.")
+    monkeypatch.setattr("silkcode.tools.git.git_push", lambda ws: "Pushed main to origin.")
+    response = httpx.post(f"{base}/api/project/create", json={
+        "name": "Published Product",
+        "parent": str(tmp_path),
+        "template": "blank",
+        "description": "Public example",
+        "publish_github": True,
+        "github_visibility": "public",
+        "start_swarm": False,
+    })
+    assert response.status_code == 200, response.text
+    github = response.json()["github"]
+    assert github["full_name"] == "amon/published-product"
+    assert github["private"] is False
+    assert github["push"] == "Pushed main to origin."
+
+
 def test_gui_serves_workspace_images_but_not_other_files(gui):
     base, _state, ws = gui
     payload = b"\x89PNG\r\n\x1a\nimage"
