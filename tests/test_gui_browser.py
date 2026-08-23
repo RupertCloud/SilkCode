@@ -765,6 +765,32 @@ def test_project_switch_retries_one_transient_fetch_failure(browser, two_project
     assert not page.locator("#project-select").is_disabled()
 
 
+def test_add_project_retries_one_transient_fetch_failure(browser, two_project_gui):
+    url, _alpha, beta = two_project_gui
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    attempts = []
+
+    def briefly_disconnect(route):
+        attempts.append(route.request.post_data_json()["project"])
+        if len(attempts) == 1:
+            route.abort("connectionfailed")
+        else:
+            route.continue_()
+
+    page.route("**/api/project/open", briefly_disconnect)
+    page.goto(url)
+    wait_for_switcher(page)
+    page.click("#project-add")
+    page.fill("#project-path", str(beta))
+    page.click("#project-confirm")
+    page.wait_for_function(
+        "t => document.querySelector('#project-select').title === t", arg=str(beta))
+
+    assert attempts == [str(beta), str(beta)]
+    assert not page.locator("#project-modal").evaluate("el => el.classList.contains('open')")
+    assert page.locator("#project-error").text_content() == ""
+
+
 def test_project_card_close_frees_non_current_project(browser, two_project_gui):
     url, _alpha, beta = two_project_gui
     page = browser.new_page(viewport={"width": 1400, "height": 900})

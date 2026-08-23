@@ -1921,15 +1921,28 @@ $("project-confirm").onclick = async () => {
     const target = path || selectedProject;
     if (!target) throw new Error("Choose a recent project or enter a directory.");
     if (target.startsWith("github:")) fetchProgress = startFetchProgress(confirm);
-    const state = await api("/api/project/open", {project: target, session_id: currentSessionId});
+    // Use the same brief-disconnect recovery as the project cards. Opening a
+    // repository may perform git and session work, during which mobile browsers
+    // can transiently report "Failed to fetch" even though the daemon is back.
+    const state = await openProjectWithRetry(target);
     if (fetchProgress) {
       fetchProgress.complete();
       await new Promise(resolve => setTimeout(resolve, 180));
     }
     $("project-modal").classList.remove("open");
+    $("messages").innerHTML = ""; $("timeline").innerHTML = "";
+    streamEl = null;
     currentSessionId = state.session_id;
-    init();
-  } catch (err) { $("project-error").textContent = err.message; }
+    $("project-load-status").textContent = "Loading conversation…";
+    void init(state).catch(err => {
+      $("project-load-status").textContent = "Could not load conversation";
+      addMsg("error", err.message);
+    });
+  } catch (err) {
+    $("project-error").textContent = transientFetchError(err)
+      ? "Silk Code briefly lost contact with the daemon. Check that it is still running, then try again."
+      : err.message;
+  }
   finally { if (fetchProgress) fetchProgress.stop(); confirm.disabled = false; paintProjectTabs(); }
 };
 $("revert").onclick = async () => {
