@@ -10,13 +10,17 @@ restart everything:
     the new code goes live on its own. Sessions are persisted on disk and
     survive the restart.
 
-This works when silkcode is installed from a git checkout (e.g. a cloned
-repo or `pip install -e .`). Wheel installs carry no git metadata; those
-should be updated with `pip install -U silkcode` instead.
+A git checkout (a clone, or `pip install -e .`) is fast-forwarded in place.
+An install that carries no git metadata - `pip install
+git+https://github.com/RupertCloud/SilkCode`, which is what the README leads
+with - is reinstalled from wherever pip got it, recovered from the PEP 610
+record pip wrote at install time. There is no PyPI package to fall back on,
+so guessing `pip install -U silkcode` would only send people to a 404.
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -45,6 +49,114 @@ def git_repo_root(start: Path | None = None) -> Path | None:
     if proc.returncode != 0:
         return None
     return Path(proc.stdout.strip())
+
+
+def install_origin() -> dict | None:
+    """Where pip got this copy of Silk Code, from pip's own record.
+
+    pip writes a PEP 610 `direct_url.json` beside the installed metadata for
+    anything installed from a URL or a path - which is exactly how it
+    remembers that `pip install git+https://github.com/...` came from git, and
+    which revision was asked for. Returns {"kind", "spec"} where `spec` is
+    something `pip install` accepts, or None when there is no such record
+    (installed from an index, or a pip too old to write one).
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, distribution
+        raw = distribution("silkcode").read_text("direct_url.json")
+    except (PackageNotFoundError, OSError, ImportError):
+        return None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    url = data.get("url")
+    if not url:
+        return None
+    vcs = data.get("vcs_info")
+    if vcs:
+        spec = f"{vcs.get('vcs', 'git')}+{url}"
+        # The branch/tag originally asked for, so `silkcode update` tracks the
+        # same thing the install did rather than silently jumping to default.
+        revision = vcs.get("requested_revision")
+        if revision:
+            spec += f"@{revision}"
+        return {"kind": "vcs", "spec": spec, "url": url,
+                "commit_id": vcs.get("commit_id")}
+    if (data.get("dir_info") or {}).get("editable"):
+        return {"kind": "editable", "spec": url, "url": url}
+    return {"kind": "archive", "spec": url, "url": url}
+
+
+def update_pip_install(spec: str, on_progress: ProgressFn = lambda s: None) -> dict:
+    """Reinstall from the same place pip originally got it.
+
+    `--force-reinstall` is not optional here: the version string is static
+    between releases, so a plain `--upgrade` against a git URL decides the
+    requirement is already satisfied and does nothing at all.
+    """
+    on_progress(f"reinstalling from {spec} ...")
+    before = _installed_commit()
+    proc = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall", spec],
+        capture_output=True, text=True, timeout=900,
+    )
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout).strip().splitlines()
+        return {"status": "error",
+                "detail": "pip install failed: " + (tail[-1][:300] if tail else "unknown error"),
+                "before": before, "after": before}
+    after = _installed_commit()
+    if before and after and before == after:
+        return {"status": "up-to-date",
+                "detail": f"Already up to date: still at {before[:12]}, "
+                          "which is what the source has.",
+                "before": before, "after": after}
+    if not (before and after):
+        # pip succeeded, but nothing on disk can name the commit, so there is
+        # no honest way to say whether the code moved. Report the reinstall,
+        # not an improvement we cannot see.
+        return {"status": "updated",
+                "detail": f"reinstalled from {spec} (this install records no "
+                          "commit, so there is nothing to compare)",
+                "before": before, "after": after}
+    return {"status": "updated",
+            "detail": f"Updated: {before[:12]} -> {after[:12]}",
+            "before": before, "after": after}
+
+
+# Asked in a fresh interpreter, because after pip has replaced the package this
+# process is still holding the old one. A checkout can answer from git; a
+# `pip install git+...` has no git metadata anywhere, and its commit lives only
+# in the PEP 610 record - which is precisely the thing a reinstall rewrites when
+# it picks up new upstream code, so it is what makes "did anything change?"
+# answerable at all for that install.
+_COMMIT_PROBE = """
+import json
+from importlib.metadata import distribution
+from silkcode.version import commit
+found = None
+try:
+    raw = distribution("silkcode").read_text("direct_url.json")
+    if raw:
+        found = (json.loads(raw).get("vcs_info") or {}).get("commit_id")
+except Exception:
+    pass
+print(found or commit() or "")
+"""
+
+
+def _installed_commit() -> str | None:
+    """The commit the installed package is actually on, or None if nothing
+    on disk can say."""
+    try:
+        proc = subprocess.run([sys.executable, "-c", _COMMIT_PROBE],
+                              capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (proc.stdout.strip() or None) if proc.returncode == 0 else None
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -94,10 +206,18 @@ def update_installation(
     """
     repo = repo or git_repo_root()
     if repo is None or git_repo_root(start=repo) is None:
+        origin = install_origin()
+        if origin and origin["kind"] == "vcs":
+            return update_pip_install(origin["spec"], on_progress=on_progress)
         return {"status": "error",
-                "detail": "not a git checkout; update with: pip install -U silkcode"}
+                "detail": "not a git checkout, and pip recorded no source to "
+                          "reinstall from. Reinstall with: pip install --upgrade "
+                          "--force-reinstall git+https://github.com/RupertCloud/SilkCode"}
     branch = branch or current_branch(repo)
-    on_progress(f"updating {repo} on branch {branch} ...")
+    # "checking", not "updating": at this point we do not yet know whether
+    # there is anything to pull, and leading with "updating" makes a run that
+    # changed nothing read as though it did.
+    on_progress(f"checking {repo} on branch {branch} ...")
     before = head_commit(repo)
     dirty = working_tree_dirty(repo)
     if dirty and not force:
@@ -116,7 +236,8 @@ def update_installation(
     after = head_commit(repo)
     if after == before:
         return {"status": "up-to-date",
-                "detail": f"already up to date at {before[:12] if before else '?'}",
+                "detail": f"Already up to date: {branch} is at "
+                          f"{before[:12] if before else '?'}, same as origin.",
                 "before": before, "after": after}
     # sanity: the new code must import before we hot-apply it. It reports its
     # build rather than __version__ — the release number is the same string
@@ -132,7 +253,7 @@ def update_installation(
         return {"status": "error",
                 "detail": f"new code does not import: {check.stderr.strip()[:300]}",
                 "before": before, "after": after}
-    detail = f"{before[:12]} -> {after[:12]}"
+    detail = f"Updated {branch}: {before[:12]} -> {after[:12]}"
     imported = check.stdout.strip()
     if imported and after and not after.startswith(imported):
         # The pull landed, but `import silkcode` resolves somewhere else — a
@@ -141,7 +262,6 @@ def update_installation(
         detail += (f" — warning: `import silkcode` resolves to {imported}, not "
                    f"{after[:12]}. Another install is shadowing this checkout; "
                    "run `silkcode version` to see which one is in use.")
-    on_progress(f"updated {detail}")
     return {"status": "updated", "detail": detail,
             "before": before, "after": after}
 

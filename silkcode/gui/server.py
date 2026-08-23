@@ -35,6 +35,7 @@ from urllib.parse import parse_qs, urlparse
 from ..agent import Agent
 from ..agent.loop import DEFAULT_CONTEXT_TOKENS
 from ..config import Config, ConfigError
+from ..connections import ConnectionMonitor
 from ..context import assemble
 from ..lock import LockError, acquire, lock_state, release
 from ..permissions import PermissionManager
@@ -222,6 +223,9 @@ class GuiState:
         # tagged with it so `silkcode sessions` can tell instances apart when
         # several daemons run on the same machine.
         self.instance = instance
+        # Who is reaching this daemon, and who is being refused. Lives on the
+        # state rather than the handler because a handler is per-request.
+        self.connections = ConnectionMonitor()
         self.config = Config.load()
         self.remote_spec = remote
         if remote:
@@ -864,6 +868,10 @@ class GuiState:
         provided (i.e. the real `silkcode gui` daemon, not tests)."""
         if not restart_args:
             return False
+        # Remember them: the re-exec below reads this, and without it the
+        # daemon came back as `python -m silkcode` with no arguments - the
+        # REPL, in the wrong directory, on no port.
+        self._restart_args = restart_args
         from ..update import git_repo_root, head_changed, head_commit, restart_argv
         repo = git_repo_root()
         if repo is None:
@@ -897,6 +905,35 @@ class GuiState:
         threading.Thread(target=loop, daemon=True).start()
         return True
 
+    def _restart_after_reinstall(self) -> str:
+        """Re-exec so a pip-installed daemon actually runs the new code.
+
+        Returns what the caller should tell the user: "restarting" when this
+        process is on its way out, or "manual" when it cannot re-exec itself
+        and someone has to stop and start it.
+        """
+        from ..update import restart_argv
+        if not self._restart_args:
+            # No launch arguments recorded (a daemon embedded in something
+            # else, or a test). Coming back as a bare `python -m silkcode`
+            # would be worse than saying so.
+            return "manual"
+        with self.lock:
+            busy = (any(s.running for s in self.sessions.values())
+                    or any(sw.get("running") for sw in self.swarms.values()))
+        if busy:
+            return "manual"          # never cut a turn off mid-flight
+
+        def go() -> None:
+            self._restarting = True
+            self.save_all_sessions()
+            self.broadcast({"type": "restarting"})
+            time.sleep(0.5)          # let the browser see the event
+            os.execv(sys.executable, restart_argv(self._restart_args or []))
+
+        threading.Thread(target=go, daemon=True).start()
+        return "restarting"
+
     def update_service(self, params: dict | None = None) -> dict:
         """Pull the latest Silk Code from git (fast-forward only).
 
@@ -904,9 +941,11 @@ class GuiState:
         with the new code (see start_auto_reload). Refuses while a swarm is
         running so an in-flight run is never interrupted."""
         from ..update import git_repo_root, update_installation
+        # repo is None for a `pip install git+https://...`, which is not a
+        # checkout. update_installation reinstalls from the source pip
+        # recorded; this used to raise and recommend `pip install -U
+        # silkcode`, a package that does not exist on PyPI.
         repo = git_repo_root()
-        if repo is None:
-            raise ToolError("not a git checkout; update with: pip install -U silkcode")
         with self.lock:
             if any(sw.get("running") for sw in self.swarms.values()):
                 raise ToolError("a swarm is running in this session; stop it before updating")
@@ -916,6 +955,22 @@ class GuiState:
             self.broadcast({"type": "update_progress", "line": line})
 
         result = update_installation(repo=repo, branch=branch, on_progress=on_progress)
+        if repo is None and result.get("status") == "updated":
+            # A checkout gets picked up by start_auto_reload, which watches
+            # HEAD and re-execs. There is no HEAD to watch here, so nothing
+            # would ever swap the running code: pip replaced the files on
+            # disk while this process keeps serving the modules it imported
+            # at boot. Saying "updated" and letting the browser announce a
+            # restart would be a lie that survives until someone notices the
+            # version never changed.
+            result["restart"] = self._restart_after_reinstall()
+        if repo is None and result.get("status") == "error":
+            # Not a checkout *and* pip recorded no source to reinstall from -
+            # there is nothing this endpoint can do, which is the 400 the UI
+            # already knows how to show. Errors from a real checkout (a dirty
+            # tree, a non-fast-forward) keep coming back in the body, as
+            # before, because those the user can act on and retry.
+            raise ToolError(result["detail"])
         return result
 
     # ---- GitHub authorization (SRS sections 30-31, 60) ---------------------
@@ -1116,6 +1171,53 @@ class GuiState:
         walk(workspace.root, 0)
         return entries
 
+    def pairing_info(self, port: int, token: str | None,
+                     bound_host: str = "") -> dict:
+        """Everything needed to put another device on this daemon.
+
+        The same facts the terminal prints at startup, available on demand -
+        because a terminal scrolls, a second device shows up later, and
+        restarting the daemon to see a QR again is not an answer.
+
+        `bound_host` is what the listener is actually bound to, and it is the
+        difference between a useful answer and a confident wrong one. Having
+        a LAN interface does not mean anything is listening on it: the
+        default `silkcode gui` binds 127.0.0.1, and a machine with a LAN
+        address would otherwise be handed a QR for a URL nothing can connect
+        to. Interfaces say where packets *could* arrive; the binding says
+        whether anyone is there to answer.
+
+        This returns the token, inside the URL. That is not a leak: the
+        endpoint is behind the same token, so a caller can only learn a
+        credential it already presented.
+        """
+        from ..inference import reachable_addresses
+        from ..qr import QRError, encode
+
+        listening_everywhere = not bound_host or not is_loopback(bound_host)
+        suffix = f"/?token={token}" if token else "/"
+        addresses = [
+            {"address": address, "label": label,
+             "url": f"http://{address}:{port}{suffix}"}
+            for address, label in (reachable_addresses() if listening_everywhere else [])
+        ]
+        info: dict = {
+            "addresses": addresses,
+            "reachable": bool(addresses),
+            "loopback_only": not listening_everywhere,
+            "tokenless": token is None,
+            "qr": None,
+            "qr_for": None,
+        }
+        if addresses:
+            best = addresses[0]
+            try:
+                info["qr"] = [[bool(v) for v in row] for row in encode(best["url"])]
+                info["qr_for"] = best
+            except QRError as exc:
+                info["error"] = str(exc)
+        return info
+
     def read_file(self, rel_path: str, session_id: int | None = None) -> dict:
         from ..remotews import RemoteWorkspace
         workspace = self.get_session(session_id).workspace
@@ -1141,6 +1243,26 @@ class GuiState:
 
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "127.0.1.1"}
+
+
+_DENIAL_NOTICE_AT = {1, 5, 25, 100}
+
+
+def _warn_about_denial(denial: dict) -> None:
+    """Say something on the terminal when a request is refused.
+
+    Only at 1, 5, 25 and 100 refusals from a source: an operator should learn
+    that someone is knocking, and should not have their terminal filled by a
+    scanner. The token is 192 bits, so this is not brute-force defence - it is
+    so that "somebody is probing this" is visible at all.
+    """
+    count = denial.get("count", 1)
+    if count not in _DENIAL_NOTICE_AT:
+        return
+    agent = denial.get("agent") or "no user-agent"
+    times = "once" if count == 1 else f"{count} times"
+    print(f"refused {denial['address']} ({times}): {denial['reason']} "
+          f"on {denial['path']} [{agent[:60]}]", file=sys.stderr)
 
 
 def is_loopback(host: str) -> bool:
@@ -1179,6 +1301,23 @@ class GuiHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):  # noqa: A002 - BaseHTTPRequestHandler API
         pass
+
+    def _security_headers(self) -> None:
+        """Headers every response carries.
+
+        `Referrer-Policy` is the one that earns its place: the page is opened
+        as `/?token=...` and links out to silkcode.web.app, so a click could
+        carry the query to a third party. Current browsers default to
+        strict-origin-when-cross-origin and would strip it, but that is a
+        browser default being relied on rather than a decision here, and what
+        is at stake is a credential worth a shell on this machine.
+
+        The other two are cheap and uncontroversial: never sniff a response
+        into a different type, and never let this page be framed.
+        """
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
 
     def _presented_token(self) -> str:
         """The token from the header, the cookie, or the query string."""
@@ -1229,14 +1368,44 @@ class GuiHandler(BaseHTTPRequestHandler):
     def _authorized(self) -> bool:
         """No token configured (loopback) means no token check; otherwise every
         request must carry it, compared in constant time. Either way the
-        request must not have been made on another site's behalf."""
+        request must not have been made on another site's behalf.
+
+        The outcome is handed to the connection monitor on the way past. That
+        is bookkeeping, not a control - the decision is already made by the
+        time it is recorded - but a refusal nobody can see is a refusal nobody
+        can act on."""
+        allowed, reason = self._decide()
+        self._note(allowed, reason)
+        return allowed
+
+    def _decide(self) -> tuple[bool, str]:
         if not self._same_origin():
-            return False
+            return False, "cross-origin or unserved host"
         if not self.token:
-            return True
+            return True, ""
         import hmac
         presented = self._presented_token()
-        return bool(presented) and hmac.compare_digest(presented, self.token)
+        if not presented:
+            return False, "no token presented"
+        # The token itself is never recorded, right or wrong: a wrong one is
+        # usually a real credential with a typo, or the right credential for
+        # a different daemon.
+        if not hmac.compare_digest(presented, self.token):
+            return False, "token did not match"
+        return True, ""
+
+    def _note(self, allowed: bool, reason: str) -> None:
+        monitor = getattr(self.state, "connections", None)
+        if monitor is None:
+            return
+        denial = monitor.record(
+            address=self.client_address[0] if self.client_address else "?",
+            path=urlparse(self.path).path,
+            agent=self.headers.get("User-Agent", ""),
+            allowed=allowed, reason=reason,
+        )
+        if denial:
+            _warn_about_denial(denial)
 
     def _deny(self) -> None:
         if not self._same_origin():
@@ -1251,6 +1420,7 @@ class GuiHandler(BaseHTTPRequestHandler):
             status = 401
         try:
             self.send_response(status)
+            self._security_headers()
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -1262,6 +1432,7 @@ class GuiHandler(BaseHTTPRequestHandler):
         body = json.dumps(data).encode()
         try:
             self.send_response(status)
+            self._security_headers()
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -1313,6 +1484,7 @@ class GuiHandler(BaseHTTPRequestHandler):
         try:
             if route == "/":
                 self.send_response(200)
+                self._security_headers()
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")  # never serve a stale UI
                 if self.token:
@@ -1343,6 +1515,11 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json(st.sessions_summary(sid, _flag(params, "all")))
             elif route == "/api/environment":
                 self._json(st.environment())
+            elif route == "/api/connections":
+                self._json(st.connections.snapshot())
+            elif route == "/api/pairing":
+                bound_host, port = self.server.server_address[:2]
+                self._json(st.pairing_info(port, self.token, str(bound_host)))
             elif route == "/api/github/status":
                 self._json(st.github_status(sid))
             elif route == "/api/events":
@@ -1359,8 +1536,12 @@ class GuiHandler(BaseHTTPRequestHandler):
     def _sse(self) -> None:
         st = self.state
         q = st.subscribe()
+        monitor = getattr(st, "connections", None)
+        if monitor:
+            monitor.stream_opened()
         try:
             self.send_response(200)
+            self._security_headers()
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
@@ -1375,6 +1556,8 @@ class GuiHandler(BaseHTTPRequestHandler):
             pass
         finally:
             st.unsubscribe(q)
+            if monitor:
+                monitor.stream_closed()
 
     def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
         if not self._authorized():
@@ -1508,6 +1691,43 @@ def _stamped_app_html() -> bytes:
     return stamped if count else raw
 
 
+def _print_pairing(port: int, token: str | None) -> None:
+    """The addresses another device can open, and a QR for the best of them.
+
+    The URL carries a 32-character token, which is no fun to retype on a phone
+    keyboard - so the one you are most likely to want is also printed as a QR
+    to point a camera at. A Tailscale address is preferred over a LAN one
+    because it keeps working when you leave the house.
+    """
+    from ..inference import reachable_addresses
+    from ..qr import QRError, terminal_qr
+
+    addresses = reachable_addresses()
+    if not addresses:
+        print("\nNo network address found for this machine - it cannot be reached "
+              "from another device yet.")
+        return
+    suffix = f"/?token={token}" if token else "/"
+    print("\nReachable from another device:")
+    for address, label in addresses:
+        note = ("works from anywhere on your tailnet" if label == "Tailscale"
+                else "same network only")
+        print(f"  http://{address}:{port}{suffix}")
+        print(f"      {label} - {note}")
+
+    best, best_label = addresses[0]
+    try:
+        print(f"\nPoint a phone camera at this to open it ({best_label}):\n")
+        print(terminal_qr(f"http://{best}:{port}{suffix}"))
+    except QRError as exc:
+        # A QR is a convenience; the URL above is the actual answer.
+        print(f"(no QR: {exc})")
+    if not any(label == "Tailscale" for _, label in addresses):
+        print("\nOn the same Wi-Fi only. To reach this from anywhere, put both "
+              "machines on a\nTailscale tailnet (https://tailscale.com) and use the "
+              "100.x address it gives you.")
+
+
 def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1",
             port: int = 8377, grants: list[str] | None = None,
             use_sandbox: bool = False, auto_push: bool = False,
@@ -1551,6 +1771,8 @@ def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1
     display_host = "localhost" if bound_host in ("0.0.0.0", "::") else bound_host
     url = f"http://{display_host}:{bound_port}" + (f"/?token={token}" if token else "")
     print(f"Silk Code GUI: {url}")
+    if not is_loopback(host):
+        _print_pairing(bound_port, token)
     print(f"workspace: {state.workspace.root}")
     first = state.get_session()
     print(f"model: {first.provider_name}/{first.model}   session: #{first.id}")
