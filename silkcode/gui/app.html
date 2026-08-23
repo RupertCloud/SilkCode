@@ -212,6 +212,11 @@
     border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px; font-size: 12px; }
   .envtable button.keybtn { padding: 3px 9px; font-size: 12px; border-radius: 5px;
     border: 1px solid var(--border); background: var(--panel2); color: var(--text); cursor: pointer; }
+  #env-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 14px; }
+  .env-summary-card { padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel2); }
+  .env-summary-card b { display: block; font-size: 18px; color: var(--text); }
+  .env-summary-card span { color: var(--dim); font-size: 11px; }
+  #env-updated { color: var(--dim); font-size: 11px; margin-right: auto; align-self: center; }
   .daybar { display: flex; align-items: center; gap: 8px; font: 11px var(--mono); color: var(--dim); }
   .daybar .bar { height: 11px; background: var(--accent); border-radius: 3px; min-width: 2px; }
 
@@ -322,6 +327,9 @@
              border-radius: 16px 16px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px)); }
     .modal .row { flex-wrap: wrap; }
     .modal .row button { min-height: 44px; flex: 1; }
+    #env-summary { grid-template-columns: 1fr 1fr; }
+    #env-modal .envtable { min-width: 620px; }
+    #env-modal h4 { position: sticky; left: 0; }
     .team-options { grid-template-columns: 1fr; }
     table.envtable { min-width: 680px; }
     #tabs { overflow-x: auto; }
@@ -525,6 +533,12 @@
   <div class="modal" style="width:760px;max-width:95vw;max-height:88vh;overflow:auto">
     <h3>Environment</h3>
     <div style="color:var(--dim);font-size:12px;margin-bottom:12px" id="env-config-path"></div>
+    <div id="env-summary">
+      <div class="env-summary-card"><b id="env-ready-count">—</b><span>providers ready</span></div>
+      <div class="env-summary-card"><b id="env-token-count">—</b><span>tokens recorded</span></div>
+      <div class="env-summary-card"><b id="env-session-count">—</b><span>open sessions</span></div>
+      <div class="env-summary-card"><b id="env-device-count">—</b><span>active devices</span></div>
+    </div>
 
     <h4 style="font-size:13px;margin:14px 0 6px">Credentials</h4>
     <div style="color:var(--dim);font-size:12px;margin-bottom:6px">
@@ -553,6 +567,7 @@
 
 
     <div class="row">
+      <span id="env-updated"></span>
       <button id="env-refresh">Refresh</button>
       <button class="primary" id="env-close">Close</button>
     </div>
@@ -2110,13 +2125,21 @@ function renderCredentials(rows) {
     const envVar = c.env_var ? "$" + esc(c.env_var) : "";
     const origin = c.source ? esc(c.source) + (c.shadowed ? " (shadows config)" : "")
                  : (c.local ? "local" : "");
-    const source = [origin, envVar].filter(Boolean).join(" · ") || "—";
+    const source = c.invalid_env_var ? [origin, "invalid variable hidden"].filter(Boolean).join(" · ")
+                 : [origin, envVar].filter(Boolean).join(" · ") || "—";
     tr.innerHTML =
       `<td>${esc(c.provider)}${c.local ? ' <span class="pill off">local</span>' : ""}</td>` +
       `<td>${state}</td>` +
       `<td class="mono" title="${source}">${source}</td>` +
       `<td class="mono" title="${esc(c.base_url)}">${esc(c.base_url)}</td>`;
     const actions = document.createElement("td");
+    if (c.local && !c.needs_key) {
+      actions.textContent = "—";
+      actions.className = "mono";
+      tr.appendChild(actions);
+      table.appendChild(tr);
+      continue;
+    }
     const input = document.createElement("input");
     input.className = "keyin";
     input.type = "password";
@@ -2200,6 +2223,10 @@ function renderEnvironment(env) {
   renderCredentials(env.credentials);
   renderUsageBreakdown(env.usage);
   renderLive(env);
+  $("env-ready-count").textContent = env.credentials.filter(c => c.set || !c.needs_key).length +
+    "/" + env.credentials.length;
+  $("env-token-count").textContent = fmtTokens(env.usage.totals.total_tokens);
+  $("env-session-count").textContent = String(env.live.length);
 }
 function renderPairing(p) {
   const box = $("pair-body");
@@ -2262,9 +2289,25 @@ $("pair-btn").onclick = async () => {
 $("pair-close").onclick = () => $("pair-modal").classList.remove("open");
 
 function relTime(seconds) {
+  seconds = Math.max(0, Number(seconds) || 0);
   if (seconds < 60) return Math.round(seconds) + "s ago";
   if (seconds < 3600) return Math.round(seconds / 60) + "m ago";
   return Math.round(seconds / 3600) + "h ago";
+}
+
+function friendlyClient(agent) {
+  agent = String(agent || "");
+  const browser = /Edg\//.test(agent) ? "Edge"
+                : /CriOS\//.test(agent) ? "Chrome"
+                : /Chrome\//.test(agent) ? "Chrome"
+                : /Firefox\//.test(agent) ? "Firefox"
+                : /Safari\//.test(agent) ? "Safari" : "Browser";
+  const device = /iPhone|iPad/.test(agent) ? "iPhone/iPad"
+               : /Android/.test(agent) ? "Android"
+               : /Windows/.test(agent) ? "Windows"
+               : /Macintosh|Mac OS X/.test(agent) ? "Mac"
+               : /Linux/.test(agent) ? "Linux" : "device";
+  return `${browser} on ${device}`;
 }
 
 function renderConnections(c) {
@@ -2272,8 +2315,9 @@ function renderConnections(c) {
   const refused = c.denied_total === 1 ? "1 refused request"
                                        : c.denied_total + " refused requests";
   $("env-conn-summary").innerHTML =
-    `<b>${c.active}</b> active · ${streams} · ` +
+    `<b>${c.active}</b> active device${c.active === 1 ? "" : "s"} · ${streams} · ` +
     (c.denied_total ? `<b style="color:var(--warn)">${refused}</b>` : refused);
+  $("env-device-count").textContent = String(c.active);
 
   const table = $("env-connections");
   table.innerHTML = "<tr><th>Address</th><th>Requests</th><th>Refused</th>" +
@@ -2288,7 +2332,7 @@ function renderConnections(c) {
       `<td class="mono">${esc(cl.address)}${cl.active ? " ●" : ""}</td>` +
       `<td class="num">${cl.requests}</td>` +
       `<td class="num"${cl.denied ? ' style="color:var(--warn)"' : ""}>${cl.denied}</td>` +
-      `<td>${esc(cl.agent || "—")}</td>` +
+      `<td title="${esc(cl.agent || "")}">${esc(friendlyClient(cl.agent))}</td>` +
       `<td>${esc(relTime(cl.idle))}</td>`;
     table.appendChild(tr);
   }
@@ -2306,16 +2350,43 @@ function renderConnections(c) {
   }
 }
 
+let environmentTimer = null;
+let environmentLoading = false;
+
+async function refreshEnvironment() {
+  if (environmentLoading) return;
+  environmentLoading = true;
+  $("env-refresh").disabled = true;
+  $("env-refresh").textContent = "Refreshing…";
+  let failed = false;
+  const [connections, environment] = await Promise.allSettled([
+    api("/api/connections"), api("/api/environment"),
+  ]);
+  if (connections.status === "fulfilled") renderConnections(connections.value);
+  else { $("env-conn-summary").textContent = "could not read connections"; failed = true; }
+  if (environment.status === "fulfilled") renderEnvironment(environment.value);
+  else { $("env-config-path").textContent = "could not load: " + environment.reason.message; failed = true; }
+  $("env-updated").textContent = failed ? "Some information could not be refreshed" : "Updated just now";
+  $("env-refresh").disabled = false;
+  $("env-refresh").textContent = "Refresh";
+  environmentLoading = false;
+}
+
 async function openEnvironment() {
   $("env-modal").classList.add("open");
-  try { renderConnections(await api("/api/connections")); }
-  catch (e) { $("env-conn-summary").textContent = "could not read connections"; }
-  try { renderEnvironment(await api("/api/environment")); }
-  catch (err) { $("env-config-path").textContent = "could not load: " + err.message; }
+  await refreshEnvironment();
+  clearInterval(environmentTimer);
+  environmentTimer = setInterval(() => {
+    if ($("env-modal").classList.contains("open")) refreshEnvironment();
+  }, 10000);
 }
 $("env-btn").onclick = openEnvironment;
-$("env-refresh").onclick = openEnvironment;
-$("env-close").onclick = () => $("env-modal").classList.remove("open");
+$("env-refresh").onclick = refreshEnvironment;
+$("env-close").onclick = () => {
+  $("env-modal").classList.remove("open");
+  clearInterval(environmentTimer);
+  environmentTimer = null;
+};
 
 
 

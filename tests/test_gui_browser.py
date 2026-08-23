@@ -389,8 +389,12 @@ def test_a_key_can_be_added_for_every_provider_without_scrolling_sideways(browse
     rows = page.locator("#env-credentials tr").count()
     assert rows > 5, "expected a row per provider"
 
+    editable_rows = 0
     for i in range(2, rows + 1):
         row = f"#env-credentials tr:nth-child({i})"
+        if page.locator(f"{row} input.keyin").count() == 0:
+            continue  # local providers correctly have no irrelevant key form
+        editable_rows += 1
         for control in ("input.keyin", "button.keybtn"):
             box = page.locator(f"{row} {control}").first.bounding_box()
             assert box is not None, f"{control} missing on row {i}"
@@ -398,6 +402,8 @@ def test_a_key_can_be_added_for_every_provider_without_scrolling_sideways(browse
             assert right <= modal["x"] + modal["width"] + 1, (
                 f"row {i}'s {control} is {right - (modal['x'] + modal['width']):.0f}px "
                 "past the modal's edge — unreachable without scrolling sideways")
+    assert editable_rows > 0
+    assert page.locator("#env-credentials tr:has-text('ollama') input.keyin").count() == 0
 
     # and it still does the job: the key is stored, shown masked, never in full
     page.fill("#env-credentials tr:nth-child(2) input.keyin", "sk-live-secret-9911")

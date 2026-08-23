@@ -70,6 +70,28 @@ def test_environment_key_shadows_stored_key(home, monkeypatch):
     assert row["shadowed"] is True  # the stored key is present but not in use
 
 
+def test_malformed_environment_variable_never_leaks_through_overview(home):
+    config = Config.load()
+    # A historical GUI bug could put the credential itself in api_key_env.
+    secret = "sk-secret-was-put-in-the-wrong-field-1234"
+    config.providers["broken"] = {
+        "type": "openai_compat", "base_url": "https://example.test/v1",
+        "api_key_env": secret, "api_key": "stored-safe-copy-5678",
+    }
+
+    row = {c["provider"]: c for c in credentials(config)}["broken"]
+
+    assert row["env_var"] is None
+    assert row["invalid_env_var"] is True
+    assert secret not in json.dumps(row)
+    assert row["masked"] == "…5678"
+
+
+def test_provider_rejects_a_secret_where_an_environment_name_is_expected(home):
+    with pytest.raises(Exception, match="environment variable"):
+        Config.load().set_provider("bad", {"api_key_env": "sk-not-a-variable"})
+
+
 def test_set_and_clear_key(home, monkeypatch):
     config = Config.load()
     result = set_key(config, "deepseek", "sk-abc-7777")

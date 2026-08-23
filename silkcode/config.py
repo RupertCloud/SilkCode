@@ -10,7 +10,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
+
+ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def valid_env_name(value) -> str | None:
+    value = str(value or "").strip()
+    return value if ENV_NAME.fullmatch(value) else None
 
 
 def config_dir() -> Path:
@@ -140,6 +148,8 @@ class Config:
         return self.data.get("default_model") or "deepseek"
 
     def set_provider(self, name: str, cfg: dict) -> None:
+        if "api_key_env" in cfg and not valid_env_name(cfg.get("api_key_env")):
+            raise ConfigError("API key environment variable must be a name like DEEPSEEK_API_KEY")
         self.data.setdefault("providers", {})[name] = cfg
         merged = dict(self.providers.get(name, {}))
         merged.update(cfg)
@@ -231,7 +241,7 @@ class Config:
     def api_key_for(self, cfg: dict) -> str | None:
         if cfg.get("api_key"):
             return cfg["api_key"]
-        env = cfg.get("api_key_env")
+        env = valid_env_name(cfg.get("api_key_env"))
         if env:
             return os.environ.get(env)
         return None
