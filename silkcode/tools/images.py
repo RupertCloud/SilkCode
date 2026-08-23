@@ -79,7 +79,7 @@ def review_url(ws: Workspace, url: str, path: str | None = None,
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
-        raise ToolError("Headless review needs Playwright: pip install playwright && playwright install chromium") from exc
+        raise ToolError("Playwright is missing; reinstall Silk Code, then run: playwright install chromium") from exc
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -93,6 +93,9 @@ def review_url(ws: Workspace, url: str, path: str | None = None,
             status = response.status if response else "unknown"
             browser.close()
     except Exception as exc:
-        raise ToolError(f"Could not review {url}: {exc}") from exc
+        detail = str(exc)
+        if "Executable doesn't exist" in detail or "playwright install" in detail:
+            detail = "Chromium is not installed; run: playwright install chromium"
+        raise ToolError(f"Could not review {url}: {detail}") from exc
     return (f"{IMAGE_MARKER}{ws.relative(target)}\n"
             f"URL: {url}\nStatus: {status}\nTitle: {title}\nVisible text:\n{text}")

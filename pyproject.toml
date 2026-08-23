@@ -12,7 +12,7 @@ description = "Silk Code - an open, model-agnostic AI coding harness (agent runt
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = ["httpx>=0.27"]
+dependencies = ["httpx>=0.27", "playwright>=1.40"]
 
 [project.urls]
 Homepage = "https://silkcode.web.app"
@@ -23,7 +23,6 @@ Issues = "https://github.com/RupertCloud/SilkCode/issues"
 # setuptools_scm is a *build* requirement; it is here as well so the test
 # that asks the backend what version it will stamp can actually run.
 dev = ["pytest>=8", "setuptools_scm>=8"]
-browser = ["playwright>=1.40"]
 
 [project.scripts]
 silkcode = "silkcode.cli.main:main"
