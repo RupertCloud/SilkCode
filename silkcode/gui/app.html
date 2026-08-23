@@ -571,7 +571,7 @@
     </div>
     <div class="row">
       <button id="project-cancel">Cancel</button>
-      <button class="primary" id="project-confirm">Open</button>
+      <button class="primary" id="project-confirm" aria-live="polite">Open</button>
     </div>
     <div id="project-error" style="color:var(--err);font-size:12px;margin-top:6px"></div>
   </div>
@@ -1621,8 +1621,29 @@ document.querySelectorAll("#projects-help-modal button.copy").forEach(b => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && $("projects-help-modal").classList.contains("open")) closeProjectsHelp();
 });
+
+function startFetchProgress(button) {
+  let percent = 0;
+  button.textContent = "Fetching… 0%";
+  const timer = setInterval(() => {
+    // The clone happens in one server request, so this is an activity estimate,
+    // not a claim about bytes received. Leave the final 5% for confirmation.
+    const step = percent < 40 ? 8 : (percent < 75 ? 4 : 1);
+    percent = Math.min(95, percent + step);
+    button.textContent = `Fetching… ${percent}%`;
+  }, 300);
+  return {
+    complete() {
+      clearInterval(timer);
+      button.textContent = "Fetching… 100%";
+    },
+    stop() { clearInterval(timer); },
+  };
+}
+
 $("project-confirm").onclick = async () => {
   const confirm = $("project-confirm");
+  let fetchProgress = null;
   confirm.disabled = true;
   try {
     if (activeProjectTab === "new") {
@@ -1655,13 +1676,17 @@ $("project-confirm").onclick = async () => {
     const path = $("project-path").value.trim();
     const target = path || selectedProject;
     if (!target) throw new Error("Choose a recent project or enter a directory.");
-    if (target.startsWith("github:")) confirm.textContent = "Fetching…";
+    if (target.startsWith("github:")) fetchProgress = startFetchProgress(confirm);
     const state = await api("/api/project/open", {project: target, session_id: currentSessionId});
+    if (fetchProgress) {
+      fetchProgress.complete();
+      await new Promise(resolve => setTimeout(resolve, 180));
+    }
     $("project-modal").classList.remove("open");
     currentSessionId = state.session_id;
     init();
   } catch (err) { $("project-error").textContent = err.message; }
-  finally { confirm.disabled = false; paintProjectTabs(); }
+  finally { if (fetchProgress) fetchProgress.stop(); confirm.disabled = false; paintProjectTabs(); }
 };
 $("revert").onclick = async () => {
   try {

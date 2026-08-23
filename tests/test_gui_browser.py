@@ -811,6 +811,7 @@ def test_github_repository_selection_is_visible_and_fetches(browser, two_project
     assert "selected" in row.get_attribute("class")
     assert row.get_attribute("aria-pressed") == "true"
     assert page.locator("#project-confirm").text_content() == "Fetch & open"
+    assert page.locator("#project-confirm").get_attribute("aria-live") == "polite"
     assert "clone locally" in row.text_content()
     assert "/managed/projects/acme-widget" in row.get_attribute("title")
 
