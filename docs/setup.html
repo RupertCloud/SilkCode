@@ -202,16 +202,17 @@
   <section id="install">
     <p class="eyebrow">Step one</p>
     <h2>Install</h2>
-    <p class="lede">Python 3.10 or newer, and git. The only runtime dependency is
-    <code>httpx</code> — everything else, down to the QR encoder further down this page, is written
-    against the standard library. Pick your platform; the differences are real but small.</p>
+    <p class="lede">Python 3.10 or newer, and git. The dedicated installer creates an isolated
+    environment and installs both Silk Code and the Chromium browser used for visual link review.
+    Pick your platform; the differences are real but small.</p>
 
     <div class="os" id="os-macos">
       <h3>macOS</h3>
       <p>macOS ships Python 3.9, which is below the floor. Install a current one first — either from
       python.org or with Homebrew.</p>
       <pre class="code"><span class="p">$</span> brew install python@3.12 git
-<span class="p">$</span> pip3 install git+https://github.com/RupertCloud/SilkCode
+<span class="p">$</span> curl -fsSLO https://raw.githubusercontent.com/RupertCloud/SilkCode/main/install.py
+<span class="p">$</span> python3 install.py
 <span class="p">$</span> silkcode version</pre>
       <p>The first time you run the GUI with <code>--host 0.0.0.0</code>, macOS asks whether Python
       may accept incoming connections. Say yes, or the phone will simply time out.</p>
@@ -222,10 +223,11 @@
       <p>On Debian 12+, Ubuntu 23.04+, Fedora 38+ and their relatives, the system Python is marked
       externally managed, so a plain <code>pip install</code> stops with
       <code>error: externally-managed-environment</code>. That is the distribution protecting its own
-      packages, not a Silk Code problem. Install it in its own environment instead —
-      <code>pipx</code> is the least fuss for a command-line tool.</p>
-      <pre class="code"><span class="p">$</span> sudo apt install pipx git        <span class="cm"># or dnf / pacman</span>
-<span class="p">$</span> pipx install git+https://github.com/RupertCloud/SilkCode
+      packages, not a Silk Code problem. The dedicated installer creates its own environment and
+      does not modify the system Python.</p>
+      <pre class="code"><span class="p">$</span> sudo apt install python3-venv git        <span class="cm"># or dnf / pacman</span>
+<span class="p">$</span> curl -fsSLO https://raw.githubusercontent.com/RupertCloud/SilkCode/main/install.py
+<span class="p">$</span> python3 install.py
 <span class="p">$</span> silkcode version</pre>
       <p>A virtual environment works just as well if you prefer one:</p>
       <pre class="code"><span class="p">$</span> python3 -m venv ~/.venvs/silkcode
@@ -239,7 +241,8 @@
       <p>PowerShell throughout. <code>py</code> is the launcher that comes with the python.org build
       and is the reliable way to reach the right interpreter.</p>
       <pre class="code"><span class="p">&gt;</span> winget install Python.Python.3.12 Git.Git
-<span class="p">&gt;</span> py -m pip install git+https://github.com/RupertCloud/SilkCode
+<span class="p">&gt;</span> curl.exe -fsSLO https://raw.githubusercontent.com/RupertCloud/SilkCode/main/install.py
+<span class="p">&gt;</span> py install.py
 <span class="p">&gt;</span> silkcode version</pre>
       <p>If that last line reports that <code>silkcode</code> is not recognised, the install
       succeeded but the Scripts directory is not on your <code>PATH</code>. Either add it, or skip

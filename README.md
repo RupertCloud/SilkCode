@@ -19,8 +19,16 @@ sections 67-68).
 ## Install
 
 ```bash
+# Recommended: installs Silk Code and its headless Chromium browser together
+curl -fsSLO https://raw.githubusercontent.com/RupertCloud/SilkCode/main/install.py
+python3 install.py
+
+# Windows PowerShell
+curl.exe -fsSLO https://raw.githubusercontent.com/RupertCloud/SilkCode/main/install.py
+py install.py
+
+# Package-only alternatives (run `playwright install chromium` afterwards)
 pip install git+https://github.com/RupertCloud/SilkCode
-# or isolated, with pipx:
 pipx install git+https://github.com/RupertCloud/SilkCode
 ```
 
@@ -28,6 +36,8 @@ Or from a clone, for working on Silk Code itself:
 
 ```bash
 pip install -e .
+# or install the clone plus Chromium into an isolated user environment
+python3 install.py --source .
 ```
 
 Once a tagged release is published, the wheel from the
