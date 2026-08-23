@@ -714,6 +714,28 @@ class GuiState:
         self.broadcast({"type": "reload", "session": session.id})
         return self.state(session.id)
 
+    def open_project(self, project: str) -> dict:
+        """Activate a project's most recent conversation without moving the
+        conversation currently being viewed. Prefer an already-open session,
+        then a saved one, and create a blank conversation only when the project
+        has no history at all."""
+        if self.remote_spec:
+            raise ToolError("this daemon runs against a remote workspace; projects cannot be switched")
+        choice = resolve_project(project)
+        target = _normalized(str(choice.workspace.root))
+        self.closed_projects.discard(target)
+        candidates = [s for s in self.sessions_summary(all_projects=True)
+                      if _normalized(s.get("cwd") or "") == target]
+        if candidates:
+            session = self.load_session(max(candidates, key=lambda s: s["id"])["id"])
+        else:
+            session = self.new_session(project=project)
+        if choice.kind == "local":
+            remember_workspace(choice.workspace.root)
+        else:
+            record_recent_project(choice.kind, project, choice.label)
+        return self.state(session.id)
+
     def close_session(self, session_id: int | None = None) -> dict:
         """Stop and close a session: release its workspace lock and drop it from
         memory so another session can take over the project. The conversation
@@ -735,9 +757,13 @@ class GuiState:
             release(session.workspace.root, session.lock_owner)
         except Exception:
             pass  # releasing is best-effort; the lock goes stale on its own
+        project = str(session.workspace.root)
         del self.sessions[sid]
         if self.default_session_id == sid:
-            self.default_session_id = max(self.sessions) if self.sessions else self.new_session().id
+            same_project = [s.id for s in self.sessions.values()
+                            if _same_project(str(s.workspace.root), project)]
+            self.default_session_id = (max(same_project) if same_project
+                                       else self.new_session(project=project).id)
         self._mark_active(self.default_session_id)
         self.broadcast({"type": "session_closed", "session": sid})
         return {"ok": True, "session_id": self.default_session_id}
@@ -1707,6 +1733,11 @@ class GuiHandler(BaseHTTPRequestHandler):
                 if not target:
                     raise ToolError("no project given")
                 self._json(st.move_session(sid, target))
+            elif route == "/api/project/open":
+                target = str(body.get("project", "")).strip()
+                if not target:
+                    raise ToolError("no project given")
+                self._json(st.open_project(target))
             elif route == "/api/session/close":
                 self._json(st.close_session(sid))
             elif route == "/api/project/close":

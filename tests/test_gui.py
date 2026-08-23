@@ -1151,6 +1151,26 @@ def test_gui_update_reinstalls_a_pip_install_instead_of_refusing(gui, monkeypatc
 
 # ---- switching project ------------------------------------------------------
 
+def test_opening_project_restores_its_conversation_without_moving_current(gui, tmp_path):
+    base, state, workspace = gui
+    original = state.get_session()
+    original.transcript.append({"kind": "user", "text": "stay with alpha"})
+    other = tmp_path / "other-project"
+    other.mkdir()
+    theirs = state.new_session(project=str(other))
+    theirs.data["title"] = "beta conversation"
+    state.load_session(original.id)
+
+    resp = httpx.post(f"{base}/api/project/open", json={"project": str(other)})
+    assert resp.status_code == 200
+    assert resp.json()["session_id"] == theirs.id
+    assert original.workspace.root == workspace.resolve()
+    assert any(t.get("text") == "stay with alpha" for t in original.transcript)
+
+    back = httpx.post(f"{base}/api/project/open", json={"project": str(workspace)})
+    assert back.json()["session_id"] == original.id
+
+
 def test_a_session_can_move_to_another_project_keeping_its_conversation(gui, tmp_path):
     """The REPL has done this since `/project` shipped. The GUI could only ever
     open a *new* session on another project, which is why its picker was titled

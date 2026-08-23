@@ -171,12 +171,9 @@ def test_composer_always_visible_and_sessions_switch(browser, gui_url):
         f"composer pushed out of the viewport: {box}"
     assert page.is_visible("#send")
 
-    # create a second session: the + button now asks for a project first;
-    # confirming with nothing selected reuses the current project
+    # create a second conversation directly inside the selected project
     first_label = page.input_value("#session-select")
     page.click("#new-session")
-    page.wait_for_selector("#project-modal.open")
-    page.click("#project-confirm")
     page.wait_for_function(
         "sel => document.querySelector('#session-select').value !== sel", arg=first_label)
     # the conversation is empty; a workspace-lock notice is expected because
@@ -613,29 +610,18 @@ def test_the_switcher_lists_only_the_open_projects_sessions(browser, two_project
         f"another project's sessions are in the switcher: {options}"
 
 
-def test_the_other_projects_are_one_click_away_not_gone(browser, two_project_gui):
-    """Scoping the list must not strand work: everything else is behind a
-    single entry that says how much is there."""
-    url, _alpha, _beta = two_project_gui
+def test_other_projects_are_reached_through_project_cards_not_conversations(browser, two_project_gui):
+    url, _alpha, beta = two_project_gui
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(url)
     wait_for_switcher(page)
 
-    reveal = page.locator("#session-select option[value='__all__']")
-    assert reveal.count() == 1, "no way to reach sessions in other projects"
-    assert "2 sessions" in reveal.text_content(), reveal.text_content()
-
-    page.select_option("#session-select", "__all__")
-    # optgroups inside a closed <select> are never "visible"; wait on the DOM
-    page.wait_for_function(
-        "document.querySelectorAll('#session-select optgroup').length >= 2")
-
-    groups = page.locator("#session-select optgroup").all_text_contents()
-    labels = page.eval_on_selector_all(
-        "#session-select optgroup", "els => els.map(e => e.label)")
-    assert any("this project" in label for label in labels), labels
-    assert any("beta" in label for label in labels), labels
-    assert any("beta work" in text for text in groups), groups
+    assert page.locator("#session-select option[value='__all__']").count() == 0
+    page.locator(f".project-card[data-path='{beta}']").click()
+    page.wait_for_function("() => [...document.querySelectorAll('#session-select option')].some(o => o.textContent.includes('beta work'))")
+    options = page.locator("#session-select option").all_text_contents()
+    assert any("beta work" in text for text in options)
+    assert not any("alpha work" in text for text in options)
 
 
 def test_a_daemon_with_one_project_shows_no_reveal(browser, gui_url):
@@ -762,23 +748,21 @@ def test_the_picker_opens_where_a_local_user_can_act(browser, two_project_gui):
     assert any(alpha.name in r for r in recents), recents
 
 
-def test_the_two_verbs_of_the_picker_are_not_confused(browser, two_project_gui):
-    """One modal serves 'start a new session on a project' and 'move this
-    session'. It used to be titled 'Open a project for this session' while only
-    ever doing the first."""
+def test_new_conversation_and_open_project_are_separate_actions(browser, two_project_gui):
     url, _alpha, _beta = two_project_gui
     page = browser.new_page(viewport={"width": 1400, "height": 900})
     page.goto(url)
     page.wait_for_function("document.querySelectorAll('#project-select option').length > 0")
 
+    old = page.locator("#session-select").input_value()
     page.click("#new-session")
-    page.wait_for_selector("#project-modal.open")
-    assert "new session" in page.locator("#project-modal h3").text_content()
-    page.click("#project-cancel")
+    page.wait_for_function("old => document.querySelector('#session-select').value !== old",
+                           arg=old)
+    assert not page.locator("#project-modal").evaluate("el => el.classList.contains('open')")
 
     page.select_option("#project-select", "__open__")
     page.wait_for_selector("#project-modal.open")
-    assert "Move this session" in page.locator("#project-modal h3").text_content()
+    assert page.locator("#project-modal h3").text_content() == "Open project"
 
     # cancelling must put the switcher back, not leave it claiming a move
     page.click("#project-cancel")
