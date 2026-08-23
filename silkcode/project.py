@@ -204,6 +204,22 @@ def recent_projects(limit: int = 8) -> list[dict]:
     return items[:limit]
 
 
+def remember_workspace(root) -> None:
+    """Record a directory as a project that has been opened.
+
+    Every way into a project should end here, not only the picker. Recording
+    solely on "user chose a project from the list" meant the project you
+    launched on — `silkcode gui ~/payments-api`, the single most likely one to
+    want back — was the one project never in the list, so returning to where
+    you started meant typing its full path.
+    """
+    try:
+        path = Path(root).expanduser().resolve()
+    except OSError:
+        return
+    record_recent_project("local", str(path), path.name or str(path))
+
+
 def record_recent_project(kind: str, spec: str, label: str, limit: int = 8) -> None:
     """Remember a recently opened project, most recent first."""
     import json

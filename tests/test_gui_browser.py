@@ -353,18 +353,22 @@ def test_the_activity_rail_explains_itself_when_empty(browser, gui_url):
 
 
 def test_the_workspace_path_is_shortened_but_recoverable(browser, gui_url):
+    """The header used to carry the workspace as text (`#cwd`); it is a Project
+    switcher now. The guarantee is the same either way — a short label you can
+    read at a glance, and the full path still recoverable on hover."""
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(gui_url)
     page.wait_for_selector("#tree div", timeout=15000)
-    page.wait_for_function("() => document.getElementById('cwd').textContent.length > 0")
+    page.wait_for_function(
+        "() => document.querySelectorAll('#project-select option').length > 0")
 
-    shown = page.locator("#cwd").text_content()
-    full = page.locator("#cwd").get_attribute("title")
-    assert full and len(full) >= len(shown)
+    shown = page.locator("#project-select option[value]:checked").text_content()
+    full = page.locator("#project-select").get_attribute("title")
+    assert full and full.startswith("/"), f"the full path is not recoverable: {full!r}"
+    assert len(shown) <= len(full) + 20, f"the label is not a label: {shown!r}"
     assert not shown.endswith("/"), f"truncation left a dangling separator: {shown!r}"
-    if shown != full:
-        assert shown.startswith("…/"), shown
-        assert full.endswith(shown.lstrip("…/")), "the tail shown must be the real tail"
+    assert full.rstrip("/").endswith(shown.split("  (")[0]), \
+        f"the label {shown!r} is not the tail of {full!r}"
 
 
 def test_a_key_can_be_added_for_every_provider_without_scrolling_sideways(browser, gui_url):
@@ -641,3 +645,87 @@ def test_a_daemon_with_one_project_shows_no_reveal(browser, gui_url):
     page.goto(gui_url)
     wait_for_switcher(page)
     assert page.locator("#session-select option[value='__all__']").count() == 0
+
+
+# ---- project is a control, not a caption ------------------------------------
+
+def test_the_project_is_a_switcher_beside_session_model_and_mode(browser, two_project_gui):
+    """Session, Model and Mode were all dropdowns; Project — the thing that
+    scopes every file tool, git command and test run — was static text."""
+    url, alpha, beta = two_project_gui
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    page.goto(url)
+    page.wait_for_function("document.querySelectorAll('#project-select option').length > 0")
+
+    options = page.locator("#project-select option").all_text_contents()
+    assert any(alpha.name in o for o in options), options
+    assert any(beta.name in o for o in options), \
+        "a project with sessions was not offered in the switcher"
+    assert any("Open another" in o for o in options)
+
+
+def test_switching_project_moves_the_session_and_rescopes_its_list(browser, two_project_gui):
+    url, alpha, beta = two_project_gui
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    page.goto(url)
+    page.wait_for_function("document.querySelectorAll('#project-select option').length > 0")
+
+    page.select_option("#project-select", str(beta))
+    # Two waits, because init() renders these at different times: the header
+    # first, then the session list after an await. Waiting on a bare option
+    # count matched the pre-move render, which is how this test first "passed".
+    page.wait_for_function(
+        "t => document.querySelector('#project-select').title === t", arg=str(beta))
+    page.wait_for_function(
+        "[...document.querySelectorAll('#session-select option')]"
+        ".some(o => o.textContent.includes('beta work'))")
+
+    assert page.locator("#project-select").get_attribute("title") == str(beta)
+    sessions = page.locator("#session-select option").all_text_contents()
+    assert any("beta work" in s for s in sessions), sessions
+    assert not any("__all__" in (s or "") for s in sessions)
+
+
+def test_the_picker_opens_where_a_local_user_can_act(browser, two_project_gui):
+    """With no GitHub connection the picker used to open onto "No repositories
+    yet. Connect GitHub, then refresh." — an error about a service the user may
+    not use, in place of the thing they came for."""
+    url, alpha, beta = two_project_gui
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    page.goto(url)
+    page.wait_for_function("document.querySelectorAll('#project-select option').length > 0")
+
+    page.click("#new-session")
+    page.wait_for_selector("#project-modal.open")
+    page.wait_for_function(
+        "document.querySelectorAll('#project-recent-list button').length > 0")
+
+    assert page.locator("#project-tabs .ptab.active").text_content() == "Local directory"
+    assert page.locator("#project-recent-wrap").is_visible(), \
+        "recent projects are hidden again"
+    recents = page.locator("#project-recent-list button").all_text_contents()
+    assert any(alpha.name in r for r in recents), recents
+
+
+def test_the_two_verbs_of_the_picker_are_not_confused(browser, two_project_gui):
+    """One modal serves 'start a new session on a project' and 'move this
+    session'. It used to be titled 'Open a project for this session' while only
+    ever doing the first."""
+    url, _alpha, _beta = two_project_gui
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    page.goto(url)
+    page.wait_for_function("document.querySelectorAll('#project-select option').length > 0")
+
+    page.click("#new-session")
+    page.wait_for_selector("#project-modal.open")
+    assert "new session" in page.locator("#project-modal h3").text_content()
+    page.click("#project-cancel")
+
+    page.select_option("#project-select", "__open__")
+    page.wait_for_selector("#project-modal.open")
+    assert "Move this session" in page.locator("#project-modal h3").text_content()
+
+    # cancelling must put the switcher back, not leave it claiming a move
+    page.click("#project-cancel")
+    assert page.locator("#project-select").input_value() != "__all__"
+    assert page.locator("#project-select").input_value() != "__open__"

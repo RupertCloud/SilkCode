@@ -39,7 +39,7 @@ from ..context import assemble
 from ..lock import LockError, acquire, lock_state, release
 from ..permissions import PermissionManager
 from ..providers import ProviderError, build_provider
-from ..project import record_recent_project, resolve_project
+from ..project import record_recent_project, remember_workspace, resolve_project
 from ..repomap import IGNORED_DIRS
 from ..sessions import SessionStore, new_session
 from ..tools.git import git_diff, git_status
@@ -131,6 +131,10 @@ class AgentSession:
         # default workspace when the session was created on a directory.
         cwd = data.get("cwd") or str(state.workspace.root)
         self.workspace = state._resolve_workspace(cwd)
+        # The one place every session's project passes through: the daemon's
+        # launch project, a project picked from the modal, and the project of
+        # a session being resumed.
+        remember_workspace(self.workspace.root)
 
         # Advisory per-workspace lock: one writer at a time per project. A
         # second session on the same project is told "already in use" up front
@@ -392,6 +396,44 @@ class GuiState:
         except (FileNotFoundError, ToolError):
             return str(self.workspace.root)
 
+    def known_projects(self, session_id: int | None = None) -> list[dict]:
+        """Projects the switcher can offer: the one you are on, the ones other
+        open sessions are on, and the ones opened before. Most useful first,
+        de-duplicated by resolved path so one project is one entry."""
+        from ..project import recent_projects
+        here = self.project_root(session_id)
+        rows: list[dict] = [{"path": here, "label": Path(here).name or here,
+                             "current": True, "sessions": 0}]
+        seen = {_normalized(here)}
+
+        counts: dict[str, int] = {}
+        for s in self.sessions_summary(session_id, all_projects=True):
+            cwd = s.get("cwd") or ""
+            if cwd:
+                counts[_normalized(cwd)] = counts.get(_normalized(cwd), 0) + 1
+        rows[0]["sessions"] = counts.get(_normalized(here), 0)
+
+        # Any project this machine has sessions in, open or saved. A project
+        # you have work in but no session currently open on is precisely the
+        # one you are trying to get back to.
+        for summary in self.sessions_summary(session_id, all_projects=True):
+            root = summary.get("cwd") or ""
+            if not root or _normalized(root) in seen:
+                continue
+            seen.add(_normalized(root))
+            rows.append({"path": root, "label": Path(root).name or root,
+                         "current": False, "sessions": counts.get(_normalized(root), 0)})
+        for recent in recent_projects():
+            if recent.get("kind") != "local":
+                continue
+            path = recent.get("spec") or ""
+            if not path or _normalized(path) in seen:
+                continue
+            seen.add(_normalized(path))
+            rows.append({"path": path, "label": recent.get("label") or path,
+                         "current": False, "sessions": counts.get(_normalized(path), 0)})
+        return rows
+
     def other_projects(self, session_id: int | None = None) -> list[dict]:
         """Projects with sessions that this project's list does not show, so
         the switcher can say how much is behind the reveal instead of hiding
@@ -575,6 +617,7 @@ class GuiState:
             # what the switcher's reveal would add, so it can say how
             # much is there instead of hiding an unknown quantity
             "other_projects": self.other_projects(session.id),
+            "projects": self.known_projects(session.id),
             "project": str(session.workspace.root),
             "lock_conflict": session.lock_conflict,
             "lock": lock_state(session.workspace.root),
@@ -582,6 +625,62 @@ class GuiState:
 
     def stop(self, session_id: int | None = None) -> None:
         self.get_session(session_id).agent.request_stop()
+
+    def move_session(self, session_id: int | None, project: str) -> dict:
+        """Point an open session at another project, keeping the conversation.
+
+        The REPL has done this since `/project` shipped; the GUI could only
+        ever open a *new* session on another project, which is why its picker
+        was titled "Open a project for this session" while being wired to the
+        new-session button. Same operation, same semantics: the transcript,
+        checkpoints and usage survive, the system prompt is rebuilt for the
+        new tree, and the workspace lock moves with it.
+        """
+        session = self.get_session(session_id)
+        if session.running:
+            raise ToolError("this session is mid-turn; stop it before switching project")
+        if self.swarms.get(session.id, {}).get("running"):
+            raise ToolError("a swarm is running in this session; stop it first")
+        if self.remote_spec:
+            raise ToolError("this daemon runs against a remote workspace; "
+                            "projects cannot be switched from here")
+        choice = resolve_project(project)
+        if choice.workspace.root == session.workspace.root:
+            return self.state(session.id)  # already there; nothing to do
+
+        # Release the old lock before taking the new one, so moving A -> B and
+        # B -> A between two sessions cannot deadlock on each other.
+        try:
+            release(session.workspace.root, session.lock_owner)
+        except OSError:
+            pass
+        session.workspace = choice.workspace
+        session.lock_conflict = None
+        try:
+            acquire(session.workspace.root, session.lock_owner)
+        except LockError as exc:
+            session.lock_conflict = str(exc)
+        except OSError:
+            pass
+
+        project_context = assemble(session.workspace)
+        session.agent.set_workspace(session.workspace, project_context.text)
+        session.data["cwd"] = str(session.workspace.root)
+        self._save_session(session)
+        if choice.kind == "local":
+            remember_workspace(session.workspace.root)   # labelled by directory name
+        else:
+            record_recent_project(choice.kind, project, choice.label)
+
+        notices = list(project_context.warnings)
+        if session.lock_conflict:
+            notices.append(f"⚠ This project is already open in "
+                           f"{session.lock_conflict} — edits are refused until "
+                           "that session closes or the lock goes stale.")
+        for notice in notices:
+            session.transcript.append({"kind": "notice", "text": notice})
+        self.broadcast({"type": "reload", "session": session.id})
+        return self.state(session.id)
 
     def close_session(self, session_id: int | None = None) -> dict:
         """Stop and close a session: release its workspace lock and drop it from
@@ -1337,6 +1436,11 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/session":
                 session = st.load_session(int(body.get("id", 0)))
                 self._json(st.state(session.id))
+            elif route == "/api/session/project":
+                target = str(body.get("project", "")).strip()
+                if not target:
+                    raise ToolError("no project given")
+                self._json(st.move_session(sid, target))
             elif route == "/api/session/close":
                 self._json(st.close_session(sid))
             elif route == "/api/lock/takeover":
