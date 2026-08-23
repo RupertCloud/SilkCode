@@ -243,6 +243,32 @@ def test_code_blocks_render_with_copy_and_run_buttons(browser, gui_url):
     assert page.locator("#messages .code-bubble .cb-copy").count() == 2
 
 
+def test_assistant_markdown_renders_headings_lists_and_responsive_tables(browser, gui_url):
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    page.goto(gui_url)
+    page.wait_for_selector("#tree div", timeout=15000)
+    page.evaluate("""() => {
+        const raw = '## What this is\n\nAn **open-core** platform with `safe code`.\n\n'
+          + '| Component | Stack | Size |\n| --- | --- | --- |\n'
+          + '| Backend | Java | 2,158 files |\n| Frontend | React | 2,811 files |\n\n'
+          + '## Architecture\n\n- Backend modules\n- Frontend workspace\n\n'
+          + '[Task](https://taskfile.dev/) <script>window.pwned=true</script>';
+        const el = addMsg('assistant', raw); el.__raw = raw; formatAllMessages();
+    }""")
+
+    bubble = page.locator("#messages .msg.assistant").last
+    assert bubble.locator("h2").all_text_contents() == ["What this is", "Architecture"]
+    assert bubble.locator("strong").text_content() == "open-core"
+    assert bubble.locator("code").text_content() == "safe code"
+    assert bubble.locator("table tbody tr").count() == 2
+    assert bubble.locator("ul li").count() == 2
+    assert bubble.locator("a").get_attribute("href") == "https://taskfile.dev/"
+    assert page.evaluate("window.pwned") is None
+    assert bubble.locator("script").count() == 0
+    assert bubble.locator(".markdown-table-wrap").evaluate(
+        "el => el.scrollWidth >= el.clientWidth")
+
+
 def test_code_bubbles_are_not_squashed_by_the_message_column(browser, gui_url):
     """#messages is a column flex container, so a code bubble without
     flex-shrink:0 is compressed below its content height and the code is

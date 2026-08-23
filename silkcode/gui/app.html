@@ -85,6 +85,31 @@
   .msg.error { background: #4a2529; color: var(--err); font-family: var(--mono); font-size: 12px; }
   .msg.notice { background: #3a3220; color: #e8c766; font-family: var(--mono); font-size: 12px; }
   .msg.tool { background: transparent; border: 1px dashed var(--border); color: var(--dim); font-family: var(--mono); font-size: 12px; padding: 4px 10px; }
+  .markdown-body { white-space: normal; line-height: 1.58; }
+  .markdown-body > :first-child { margin-top: 0; }
+  .markdown-body > :last-child { margin-bottom: 0; }
+  .markdown-body h1, .markdown-body h2, .markdown-body h3,
+  .markdown-body h4 { color: var(--text); line-height: 1.25; margin: 18px 0 7px; }
+  .markdown-body h1 { font-size: 21px; }
+  .markdown-body h2 { font-size: 18px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+  .markdown-body h3 { font-size: 15px; }
+  .markdown-body h4 { font-size: 13px; color: var(--accent); }
+  .markdown-body p { margin: 8px 0; }
+  .markdown-body ul, .markdown-body ol { margin: 8px 0; padding-left: 24px; }
+  .markdown-body li { margin: 3px 0; }
+  .markdown-body code { font-family: var(--mono); font-size: .92em; background: #101318;
+                        color: #dbeeff; border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+  .markdown-body a { color: var(--accent); text-decoration: none; }
+  .markdown-body a:hover { text-decoration: underline; }
+  .markdown-body blockquote { margin: 9px 0; padding: 5px 12px; color: var(--dim);
+                               border-left: 3px solid var(--accent); background: #181d23; }
+  .markdown-table-wrap { overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); border-radius: 7px; }
+  .markdown-body table { width: 100%; border-collapse: collapse; min-width: 480px; font-size: 12px; }
+  .markdown-body th, .markdown-body td { padding: 7px 9px; border-right: 1px solid var(--border);
+                                         border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+  .markdown-body th { background: #202630; color: var(--text); font-weight: 650; }
+  .markdown-body tr:last-child td { border-bottom: 0; }
+  .markdown-body th:last-child, .markdown-body td:last-child { border-right: 0; }
 
   /* special code / terminal bubbles: distinct cards, not inline boxes */
   /* flex-shrink:0 is load-bearing: #messages is a column flex container, so
@@ -878,7 +903,7 @@ async function copyToClipboard(text) {
 }
 
 function msgText(el) {
-  return (el.textContent || "").trim();
+  return (el.__copyText || el.textContent || "").trim();
 }
 
 function addMsg(kind, text) {
@@ -979,7 +1004,8 @@ function makeProseWrap(kind, text) {
   w.className = "msg-wrap " + kind;
   const b = document.createElement("div");
   b.className = "msg " + kind;
-  b.textContent = text;
+  b.__copyText = text;
+  renderMarkdown(b, text);
   const btn = document.createElement("button");
   btn.className = "msg-copy";
   btn.title = "Copy message";
@@ -997,13 +1023,106 @@ function makeProseWrap(kind, text) {
   return w;
 }
 
+function appendInlineMarkdown(parent, text) {
+  const pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g;
+  let last = 0, match;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > last) parent.appendChild(document.createTextNode(text.slice(last, match.index)));
+    const token = match[0];
+    let node;
+    if (token.startsWith("`")) {
+      node = document.createElement("code"); node.textContent = token.slice(1, -1);
+    } else if (token.startsWith("**") || token.startsWith("__")) {
+      node = document.createElement("strong"); node.textContent = token.slice(2, -2);
+    } else if (token.startsWith("*")) {
+      node = document.createElement("em"); node.textContent = token.slice(1, -1);
+    } else {
+      const parts = /^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(token);
+      node = document.createElement("a"); node.textContent = parts[1];
+      node.href = parts[2]; node.target = "_blank"; node.rel = "noopener noreferrer";
+    }
+    parent.appendChild(node);
+    last = match.index + token.length;
+  }
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
+
+function tableCells(line) {
+  return line.trim().replace(/^\||\|$/g, "").split("|").map(cell => cell.trim());
+}
+
+function isTableDivider(line) {
+  const cells = tableCells(line);
+  return cells.length > 1 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
+}
+
+function renderMarkdown(target, raw) {
+  target.innerHTML = "";
+  target.classList.add("markdown-body");
+  const lines = String(raw || "").replace(/\r\n?/g, "\n").split("\n");
+  for (let i = 0; i < lines.length;) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+
+    const heading = /^(#{1,4})\s+(.+)$/.exec(line);
+    if (heading) {
+      const h = document.createElement("h" + heading[1].length);
+      appendInlineMarkdown(h, heading[2]); target.appendChild(h); i++; continue;
+    }
+    if (i + 1 < lines.length && line.includes("|") && isTableDivider(lines[i + 1])) {
+      const wrap = document.createElement("div"); wrap.className = "markdown-table-wrap";
+      const table = document.createElement("table");
+      const thead = document.createElement("thead"); const hr = document.createElement("tr");
+      for (const cell of tableCells(line)) {
+        const th = document.createElement("th"); appendInlineMarkdown(th, cell); hr.appendChild(th);
+      }
+      thead.appendChild(hr); table.appendChild(thead); i += 2;
+      const tbody = document.createElement("tbody");
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) {
+        const tr = document.createElement("tr");
+        for (const cell of tableCells(lines[i])) {
+          const td = document.createElement("td"); appendInlineMarkdown(td, cell); tr.appendChild(td);
+        }
+        tbody.appendChild(tr); i++;
+      }
+      table.appendChild(tbody); wrap.appendChild(table); target.appendChild(wrap); continue;
+    }
+    const list = /^\s*([-+*]|\d+\.)\s+(.+)$/.exec(line);
+    if (list) {
+      const ordered = /\d+\./.test(list[1]); const el = document.createElement(ordered ? "ol" : "ul");
+      while (i < lines.length) {
+        const item = /^\s*([-+*]|\d+\.)\s+(.+)$/.exec(lines[i]);
+        if (!item || /\d+\./.test(item[1]) !== ordered) break;
+        const li = document.createElement("li"); appendInlineMarkdown(li, item[2]); el.appendChild(li); i++;
+      }
+      target.appendChild(el); continue;
+    }
+    if (/^>\s?/.test(line)) {
+      const quote = document.createElement("blockquote"); const content = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) content.push(lines[i++].replace(/^>\s?/, ""));
+      appendInlineMarkdown(quote, content.join(" ")); target.appendChild(quote); continue;
+    }
+    const paragraph = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,4})\s+/.test(lines[i]) &&
+           !/^\s*([-+*]|\d+\.)\s+/.test(lines[i]) && !/^>\s?/.test(lines[i]) &&
+           !(i + 1 < lines.length && lines[i].includes("|") && isTableDivider(lines[i + 1]))) {
+      paragraph.push(lines[i++]);
+    }
+    const p = document.createElement("p"); appendInlineMarkdown(p, paragraph.join(" ")); target.appendChild(p);
+  }
+}
+
 // Rebuild a formatted message: prose goes back into a normal message bubble,
 // each fenced code chunk becomes its own special code bubble in the thread.
 // Returns true if the message contained code.
 function renderFormattedBubble(el, raw) {
   const parts = splitCode(raw);
   const hasCode = parts.some(p => p.type === "code");
-  if (!hasCode) return false;
+  if (!hasCode) {
+    el.__copyText = raw;
+    renderMarkdown(el, raw);
+    return false;
+  }
   const messages = $("messages");
   const wrap = el.parentElement;                 // the .msg-wrap container
   const kind = el.classList.contains("user") ? "user" : "assistant";
@@ -1031,7 +1150,7 @@ function renderFormattedBubble(el, raw) {
 
 function formatAllMessages() {
   // iterate over a snapshot: we replace/remove nodes as we go
-  const bubbles = Array.from(document.querySelectorAll("#messages .msg-wrap .msg"));
+  const bubbles = Array.from(document.querySelectorAll("#messages .msg-wrap .msg.assistant, #messages .msg-wrap .msg.user"));
   for (const el of bubbles) {
     if (el.classList.contains("formatted")) continue;
     const raw = el.__raw || el.textContent;
