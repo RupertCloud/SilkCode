@@ -1196,11 +1196,23 @@ class GuiState:
 
         listening_everywhere = not bound_host or not is_loopback(bound_host)
         suffix = f"/?token={token}" if token else "/"
-        addresses = [
-            {"address": address, "label": label,
-             "url": f"http://{address}:{port}{suffix}"}
-            for address, label in (reachable_addresses() if listening_everywhere else [])
-        ]
+        # A MagicDNS name where Tailscale offers one: `laptop.tail1a2b3.ts.net`
+        # survives the node being re-addressed, and is something a person can
+        # read off a screen and retype. Four octets is not.
+        magic_dns = None
+        try:
+            from ..tailnet import status as tailnet_status
+            state = tailnet_status()
+            if state.running and state.name:
+                magic_dns = state.name
+        except Exception:
+            magic_dns = None
+        addresses = []
+        for address, label in (reachable_addresses() if listening_everywhere else []):
+            dialable = magic_dns if (label == "Tailscale" and magic_dns) else address
+            addresses.append({"address": address, "label": label,
+                              "host": dialable,
+                              "url": f"http://{dialable}:{port}{suffix}"})
         info: dict = {
             "addresses": addresses,
             "reachable": bool(addresses),
@@ -1722,10 +1734,16 @@ def _print_pairing(port: int, token: str | None) -> None:
     except QRError as exc:
         # A QR is a convenience; the URL above is the actual answer.
         print(f"(no QR: {exc})")
-    if not any(label == "Tailscale" for _, label in addresses):
-        print("\nOn the same Wi-Fi only. To reach this from anywhere, put both "
-              "machines on a\nTailscale tailnet (https://tailscale.com) and use the "
-              "100.x address it gives you.")
+    has_tailnet = any(label == "Tailscale" for _, label in addresses)
+    try:
+        from ..tailnet import advice
+        hint = advice(has_tailnet)
+    except Exception:
+        hint = "" if has_tailnet else (
+            "\nOn the same Wi-Fi only. To reach this from anywhere, put both "
+            "machines on a\nTailscale tailnet (https://tailscale.com).")
+    if hint:
+        print("\n" + hint)
 
 
 def _token_path(host: str, port: int) -> "Path":
