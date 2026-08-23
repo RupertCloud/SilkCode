@@ -1405,6 +1405,43 @@ def _stamped_app_html() -> bytes:
     return stamped if count else raw
 
 
+def _print_pairing(port: int, token: str | None) -> None:
+    """The addresses another device can open, and a QR for the best of them.
+
+    The URL carries a 32-character token, which is no fun to retype on a phone
+    keyboard - so the one you are most likely to want is also printed as a QR
+    to point a camera at. A Tailscale address is preferred over a LAN one
+    because it keeps working when you leave the house.
+    """
+    from ..inference import reachable_addresses
+    from ..qr import QRError, terminal_qr
+
+    addresses = reachable_addresses()
+    if not addresses:
+        print("\nNo network address found for this machine - it cannot be reached "
+              "from another device yet.")
+        return
+    suffix = f"/?token={token}" if token else "/"
+    print("\nReachable from another device:")
+    for address, label in addresses:
+        note = ("works from anywhere on your tailnet" if label == "Tailscale"
+                else "same network only")
+        print(f"  http://{address}:{port}{suffix}")
+        print(f"      {label} - {note}")
+
+    best, best_label = addresses[0]
+    try:
+        print(f"\nPoint a phone camera at this to open it ({best_label}):\n")
+        print(terminal_qr(f"http://{best}:{port}{suffix}"))
+    except QRError as exc:
+        # A QR is a convenience; the URL above is the actual answer.
+        print(f"(no QR: {exc})")
+    if not any(label == "Tailscale" for _, label in addresses):
+        print("\nOn the same Wi-Fi only. To reach this from anywhere, put both "
+              "machines on a\nTailscale tailnet (https://tailscale.com) and use the "
+              "100.x address it gives you.")
+
+
 def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1",
             port: int = 8377, grants: list[str] | None = None,
             use_sandbox: bool = False, auto_push: bool = False,
@@ -1448,6 +1485,8 @@ def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1
     display_host = "localhost" if bound_host in ("0.0.0.0", "::") else bound_host
     url = f"http://{display_host}:{bound_port}" + (f"/?token={token}" if token else "")
     print(f"Silk Code GUI: {url}")
+    if not is_loopback(host):
+        _print_pairing(bound_port, token)
     print(f"workspace: {state.workspace.root}")
     first = state.get_session()
     print(f"model: {first.provider_name}/{first.model}   session: #{first.id}")

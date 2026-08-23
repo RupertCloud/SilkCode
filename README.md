@@ -250,9 +250,74 @@ probes whatever answers.
 > of it. Keep it to networks you trust, or use a private mesh (Tailscale/WireGuard)
 > rather than forwarding a port on your router.
 
-If you would rather keep Silk Code itself on the laptop and just *view* it from the
-phone, that also works — run the GUI on the laptop with `silkcode gui --host 0.0.0.0`
-and open it in the phone's browser. See [GUI](#gui).
+If you would rather keep Silk Code itself on the laptop and just *drive* it from the
+phone, that is the mirror image of this section — see
+[Run the agent on your laptop, open it on your phone](#run-the-agent-on-your-laptop-open-it-on-your-phone).
+
+## Run the agent on your laptop, open it on your phone
+
+The mirror image of the section above, and worth keeping straight:
+
+| | Where Silk Code runs | Where the model runs | Where you type |
+| --- | --- | --- | --- |
+| [`silkcode inference`](#run-the-model-on-your-laptop-drive-it-from-your-phone) | phone | laptop | phone |
+| `silkcode gui --host 0.0.0.0` | laptop | laptop or cloud | phone browser |
+
+Here the agent runs on your laptop —
+where your files, credentials, build tools and environment variables already
+are — and you drive it from a phone browser. Nothing is uploaded anywhere and
+no third party sits in the path.
+
+```bash
+# on the laptop
+silkcode gui ~/my-project --host 0.0.0.0
+```
+
+Because that is reachable beyond the machine, Silk Code generates an access
+token and prints the addresses another device can open, plus a QR to point a
+camera at instead of retyping a 32-character token:
+
+```
+This daemon is reachable beyond this machine, so it requires an access token.
+
+Silk Code GUI: http://localhost:8377/?token=JkdF8ZOnXtACibWY83liacawnDmg3u3G
+
+Reachable from another device:
+  http://100.101.102.103:8377/?token=JkdF8ZOnXtACibWY83liacawnDmg3u3G
+      Tailscale - works from anywhere on your tailnet
+  http://192.168.1.20:8377/?token=JkdF8ZOnXtACibWY83liacawnDmg3u3G
+      LAN - same network only
+
+Point a phone camera at this to open it (Tailscale):
+
+    █████████████████████████
+    ██ ▄▄▄▄▄ █▄▀█▀▄█ ▄▄▄▄▄ ██
+    ██ █   █ █ ▄ █ █ █   █ ██
+    ██ █▄▄▄█ █ ▀▄▀▄█ █▄▄▄█ ██
+    ██▄▄▄▄▄▄▄█▄█ █▄█▄▄▄▄▄▄▄██
+    …
+```
+
+Scan it and the session opens on the phone: same conversation, same files,
+same git diff, with the agent still running on the laptop.
+
+**Reaching it from anywhere.** A `192.168.x.y` address only resolves while both
+devices are on the same router. Put both machines on a
+[Tailscale](https://tailscale.com) tailnet and the `100.x` address keeps working
+from cellular or someone else's Wi-Fi — Silk Code detects that address
+(Tailscale allocates from `100.64.0.0/10`), labels it, lists it first, and puts
+*it* in the QR. When you have no such address it says so and points you here.
+
+**The phone layout.** The desktop GUI is a three-column grid; below 820px it
+becomes one pane at a time with a switcher — Chat, Project, Activity, Diff —
+and the composer pinned within thumb reach.
+
+> The token is the only thing standing between the network and an agent that
+> can run commands on your machine, so treat that URL as a shell credential.
+> Requests are rejected without it, cross-origin requests are refused, and a
+> DNS-rebinding guard checks the `Host` you were reached on. Prefer a tailnet
+> over forwarding a port on your router — a forwarded port puts the daemon on
+> the public internet with the token as the only gate.
 
 ## CLI
 

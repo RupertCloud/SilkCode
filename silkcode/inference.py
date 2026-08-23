@@ -183,6 +183,30 @@ def local_ipv4_addresses() -> list[str]:
     return found
 
 
+def reachable_addresses() -> list[tuple[str, str]]:
+    """This machine's addresses other devices can reach, best first.
+
+    A Tailscale (or other WireGuard mesh) address is listed ahead of the LAN
+    one because it is the address that keeps working: a phone on cellular, or
+    on a cafe's Wi-Fi, can still reach it, while 192.168.x.y only resolves
+    while both machines are on the same router.
+
+    Tailscale hands out addresses from 100.64.0.0/10, the carrier-grade NAT
+    range reserved by RFC 6598 - which is why a 100.x address here is a mesh
+    address rather than a LAN one.
+    """
+    out: list[tuple[str, str]] = []
+    for address in local_ipv4_addresses():
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            continue
+        label = "Tailscale" if ip in ipaddress.ip_network("100.64.0.0/10") else "LAN"
+        out.append((address, label))
+    out.sort(key=lambda pair: pair[1] != "Tailscale")   # mesh first
+    return out
+
+
 def subnet_hosts(ip: str, prefix: int = 24, limit: int = 512) -> list[str]:
     """The addresses to sweep, nearest first.
 
