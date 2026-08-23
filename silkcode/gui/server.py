@@ -267,6 +267,9 @@ class GuiState:
         self.subscribers: list[queue.Queue] = []
         self.pending: dict[str, dict] = {}
         self.sessions: dict[int, AgentSession] = {}
+        # Projects deliberately closed from the drawer stay hidden for this
+        # daemon run; saved conversations and repository files remain intact.
+        self.closed_projects: set[str] = set()
         self.swarms: dict[int, dict] = {}  # session id -> swarm status
         self._restart_args: list[str] | None = None
         self._restarting = False
@@ -337,6 +340,7 @@ class GuiState:
         data = new_session(session_id, title="", model=self.spec,
                            cwd=str(ws.root), mode=self.mode, instance=self.instance)
         session = AgentSession(self, data)
+        self.closed_projects.discard(_normalized(str(ws.root)))
         self.sessions[session.id] = session
         self.default_session_id = session.id
         self._mark_active(session.id)
@@ -354,6 +358,7 @@ class GuiState:
 
     def load_session(self, session_id: int) -> AgentSession:
         session = self.get_session(session_id)
+        self.closed_projects.discard(_normalized(str(session.workspace.root)))
         self.default_session_id = session.id
         self._mark_active(session.id)
         self.broadcast({"type": "reload", "session": session.id})
@@ -435,7 +440,7 @@ class GuiState:
         # one you are trying to get back to.
         for summary in summaries:
             root = summary.get("cwd") or ""
-            if not root or _normalized(root) in seen:
+            if not root or _normalized(root) in seen or _normalized(root) in self.closed_projects:
                 continue
             seen.add(_normalized(root))
             rows.append({"path": root, "label": Path(root).name or root,
@@ -446,7 +451,7 @@ class GuiState:
             if recent.get("kind") != "local":
                 continue
             path = recent.get("spec") or ""
-            if not path or _normalized(path) in seen:
+            if not path or _normalized(path) in seen or _normalized(path) in self.closed_projects:
                 continue
             seen.add(_normalized(path))
             rows.append({"path": path, "label": recent.get("label") or path,
@@ -671,6 +676,7 @@ class GuiState:
             raise ToolError("this daemon runs against a remote workspace; "
                             "projects cannot be switched from here")
         choice = resolve_project(project)
+        self.closed_projects.discard(_normalized(str(choice.workspace.root)))
         if choice.workspace.root == session.workspace.root:
             return self.state(session.id)  # already there; nothing to do
 
@@ -735,6 +741,24 @@ class GuiState:
         self._mark_active(self.default_session_id)
         self.broadcast({"type": "session_closed", "session": sid})
         return {"ok": True, "session_id": self.default_session_id}
+
+    def close_project(self, project: str, session_id: int | None = None) -> dict:
+        """Close every open session for a non-current project and forget its
+        in-memory project card. Saved conversations and repository files are
+        intentionally untouched, so Add can reopen it later."""
+        target = _normalized(project)
+        if target == _normalized(self.project_root(session_id)):
+            raise ToolError("switch to another project before closing this one")
+        matches = [s.id for s in self.sessions.values()
+                   if _normalized(str(s.workspace.root)) == target]
+        if any(self.swarms.get(sid, {}).get("running") for sid in matches):
+            raise ToolError("a swarm is running in this project; stop it first")
+        for sid in matches:
+            self.close_session(sid)
+        self.closed_projects.add(target)
+        return {"ok": True, "closed": len(matches),
+                "session_id": self.default_session_id,
+                "projects": self.known_projects(self.default_session_id)}
 
     def takeover_lock(self, session_id: int | None = None) -> dict:
         """Re-try acquiring the session's workspace lock. Succeeds when the
@@ -1685,6 +1709,11 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json(st.move_session(sid, target))
             elif route == "/api/session/close":
                 self._json(st.close_session(sid))
+            elif route == "/api/project/close":
+                target = str(body.get("project", "")).strip()
+                if not target:
+                    raise ToolError("no project given")
+                self._json(st.close_project(target, sid))
             elif route == "/api/lock/takeover":
                 self._json(st.takeover_lock(sid))
             elif route == "/api/swarm/start":

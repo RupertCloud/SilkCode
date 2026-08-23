@@ -703,6 +703,22 @@ def test_project_card_switches_repository_in_one_click(browser, two_project_gui)
     assert page.locator("#project-cards .project-card.current").get_attribute("data-path") == str(beta)
 
 
+def test_project_card_close_frees_non_current_project(browser, two_project_gui):
+    url, _alpha, beta = two_project_gui
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    page.goto(url)
+    page.wait_for_function("document.querySelectorAll('#project-cards .project-card').length >= 2")
+
+    page.on("dialog", lambda dialog: dialog.accept())
+    card = page.locator(f".project-card[data-path='{beta}']")
+    assert card.locator(".project-close").is_enabled()
+    card.locator(".project-close").click()
+    page.wait_for_function(
+        "p => !document.querySelector(`.project-card[data-path='${p}']`)", arg=str(beta))
+    assert page.locator(f".project-card[data-path='{beta}']").count() == 0
+    assert page.locator(".project-card.current .project-close").is_disabled()
+
+
 def test_switching_project_moves_the_session_and_rescopes_its_list(browser, two_project_gui):
     url, alpha, beta = two_project_gui
     page = browser.new_page(viewport={"width": 1400, "height": 900})

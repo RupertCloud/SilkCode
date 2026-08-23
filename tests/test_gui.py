@@ -787,6 +787,31 @@ def test_gui_close_session_refuses_running_swarm(gui):
     assert "swarm" in resp.json()["error"]
 
 
+def test_gui_close_project_releases_all_sessions_and_hides_card(gui, tmp_path):
+    base, state, _ws = gui
+    current = state.default_session_id
+    other = tmp_path / "other-project"
+    other.mkdir()
+    first = state.new_session(project=str(other))
+    second = state.new_session(project=str(other))
+    state.load_session(current)
+
+    resp = httpx.post(f"{base}/api/project/close", json={
+        "session_id": current, "project": str(other),
+    })
+    assert resp.status_code == 200
+    assert resp.json()["closed"] == 2
+    assert first.id not in state.sessions and second.id not in state.sessions
+    assert all(p["path"] != str(other) for p in resp.json()["projects"])
+    assert other.is_dir(), "closing a project deleted its repository"
+
+    refused = httpx.post(f"{base}/api/project/close", json={
+        "session_id": current, "project": str(state.get_session(current).workspace.root),
+    })
+    assert refused.status_code == 400
+    assert "switch" in refused.json()["error"]
+
+
 def test_gui_takeover_of_dead_owners_lock(gui, tmp_path):
     """When the lock's owner process is dead (liveness check), the GUI lets the
     session take the workspace over with one call instead of waiting for the
