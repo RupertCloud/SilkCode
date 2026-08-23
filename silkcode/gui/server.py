@@ -416,22 +416,32 @@ class GuiState:
         seen = {_normalized(here)}
 
         counts: dict[str, int] = {}
-        for s in self.sessions_summary(session_id, all_projects=True):
+        running: dict[str, int] = {}
+        open_counts: dict[str, int] = {}
+        summaries = self.sessions_summary(session_id, all_projects=True)
+        for s in summaries:
             cwd = s.get("cwd") or ""
             if cwd:
-                counts[_normalized(cwd)] = counts.get(_normalized(cwd), 0) + 1
+                key = _normalized(cwd)
+                counts[key] = counts.get(key, 0) + 1
+                running[key] = running.get(key, 0) + int(bool(s.get("running")))
+                open_counts[key] = open_counts.get(key, 0) + int(bool(s.get("open")))
         rows[0]["sessions"] = counts.get(_normalized(here), 0)
+        rows[0]["running"] = running.get(_normalized(here), 0)
+        rows[0]["open"] = open_counts.get(_normalized(here), 0)
 
         # Any project this machine has sessions in, open or saved. A project
         # you have work in but no session currently open on is precisely the
         # one you are trying to get back to.
-        for summary in self.sessions_summary(session_id, all_projects=True):
+        for summary in summaries:
             root = summary.get("cwd") or ""
             if not root or _normalized(root) in seen:
                 continue
             seen.add(_normalized(root))
             rows.append({"path": root, "label": Path(root).name or root,
-                         "current": False, "sessions": counts.get(_normalized(root), 0)})
+                         "current": False, "sessions": counts.get(_normalized(root), 0),
+                         "running": running.get(_normalized(root), 0),
+                         "open": open_counts.get(_normalized(root), 0)})
         for recent in recent_projects():
             if recent.get("kind") != "local":
                 continue
@@ -440,7 +450,9 @@ class GuiState:
                 continue
             seen.add(_normalized(path))
             rows.append({"path": path, "label": recent.get("label") or path,
-                         "current": False, "sessions": counts.get(_normalized(path), 0)})
+                         "current": False, "sessions": counts.get(_normalized(path), 0),
+                         "running": running.get(_normalized(path), 0),
+                         "open": open_counts.get(_normalized(path), 0)})
         return rows
 
     def other_projects(self, session_id: int | None = None) -> list[dict]:

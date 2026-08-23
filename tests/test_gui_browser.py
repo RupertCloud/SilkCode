@@ -684,6 +684,24 @@ def test_the_project_is_a_switcher_beside_session_model_and_mode(browser, two_pr
         "a project with sessions was not offered in the switcher"
     assert any("Open another" in o for o in options)
 
+    cards = page.locator("#project-cards .project-card")
+    assert cards.count() >= 2
+    assert any(alpha.name in text for text in cards.all_text_contents())
+    assert any(beta.name in text for text in cards.all_text_contents())
+    assert page.locator("#project-cards .project-card.current").count() == 1
+
+
+def test_project_card_switches_repository_in_one_click(browser, two_project_gui):
+    url, _alpha, beta = two_project_gui
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    page.goto(url)
+    page.wait_for_function("document.querySelectorAll('#project-cards .project-card').length >= 2")
+
+    page.locator(f".project-card[data-path='{beta}']").click()
+    page.wait_for_function(
+        "t => document.querySelector('#project-select').title === t", arg=str(beta))
+    assert page.locator("#project-cards .project-card.current").get_attribute("data-path") == str(beta)
+
 
 def test_switching_project_moves_the_session_and_rescopes_its_list(browser, two_project_gui):
     url, alpha, beta = two_project_gui
