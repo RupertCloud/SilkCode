@@ -653,6 +653,11 @@ def test_json_swallows_dead_socket(gui):
             raise BrokenPipeError(32, "Broken pipe")
 
     class DeadHandler:
+        # The real header helper, driven through the stubbed send_header
+        # below: only the socket is dead here, so borrowing it keeps this
+        # fake honest about what _json actually does.
+        _security_headers = GuiHandler._security_headers
+
         def __init__(self):
             self.wfile = DeadWfile()
 
