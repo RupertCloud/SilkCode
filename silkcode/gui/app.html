@@ -147,6 +147,7 @@
   .modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
   .modal button { padding: 6px 14px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); cursor: pointer; }
   .modal button.primary { background: var(--accent); color: #10222e; border: 0; font-weight: 700; }
+  #project-tabs .ptab.active { color: var(--accent); border-color: var(--accent); background: #202b36; }
   .modal button.danger { background: #4a2529; color: var(--err); }
   .modal label { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 2px; }
   .modal input, .modal select { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
@@ -518,13 +519,14 @@
     </div>
     <div data-pgpane="github">
       <div class="prompt" id="project-github-status">checking your repositories…</div>
+      <button id="project-github-connect" style="display:none;width:100%;margin:4px 0 8px">Connect GitHub</button>
       <div id="project-github-list" style="max-height:280px;overflow:auto;margin:6px 0"></div>
     </div>
     <div data-pgpane="local" style="display:none">
       <label>Path to a local project directory</label>
       <input id="project-path" placeholder="/path/to/your/project or ~/my-project">
       <div style="color:var(--dim);font-size:12px;margin-top:2px">
-        Leave empty to reuse this session's current project.
+        Enter a repository directory already available on this machine.
       </div>
     </div>
     <div class="row">
@@ -1407,10 +1409,14 @@ let selectedProject = null;  // "github:owner/repo" or a local path; null = curr
 // "No repositories yet. Connect GitHub, then refresh." — an error message
 // about a service they may not use, in place of the thing they wanted.
 let defaultProjectTab = "local";
+let activeProjectTab = "local";
 
 function paintProjectTabs() {
   document.querySelectorAll("#project-tabs .ptab").forEach(b => {
-    const on = b.dataset.pgtab === (selectedProject && selectedProject.startsWith("github") ? "github" : selectedProject ? "local" : defaultProjectTab);
+    const selectedTab = selectedProject
+      ? (selectedProject.startsWith("github") ? "github" : "local")
+      : activeProjectTab;
+    const on = b.dataset.pgtab === selectedTab;
     b.classList.toggle("active", on);
     document.querySelector(`[data-pgpane="${b.dataset.pgtab}"]`).style.display = on ? "" : "none";
   });
@@ -1450,10 +1456,11 @@ function renderProjectList(projects) {
 
   if (!github.length) {
     $("project-github-status").textContent =
-      "No GitHub repositories available. Connect GitHub from the header to clone one, "
-      + "or use the Local directory tab.";
+      "No GitHub repositories are available yet. Connect GitHub, then reopen this picker.";
+    $("project-github-connect").style.display = "";
     return;
   }
+  $("project-github-connect").style.display = "none";
   $("project-github-status").textContent =
     `${github.length} repositor${github.length === 1 ? "y" : "ies"} — click one:`;
   for (const p of github) {
@@ -1466,6 +1473,7 @@ function renderProjectList(projects) {
 function openProjectModal(opts) {
   $("project-modal").querySelector("h3").textContent = "Open project";
   selectedProject = null;
+  activeProjectTab = defaultProjectTab;
   $("project-path").value = "";
   $("project-error").textContent = "";
   $("project-modal").classList.add("open");
@@ -1475,8 +1483,17 @@ function openProjectModal(opts) {
     .catch(err => { $("project-github-status").textContent = "could not load projects: " + err.message; });
 }
 document.querySelectorAll("#project-tabs .ptab").forEach(b => {
-  b.onclick = () => { if (b.dataset.pgtab === "local") selectedProject = null; paintProjectTabs(); $("project-path").focus(); };
+  b.onclick = () => {
+    activeProjectTab = b.dataset.pgtab;
+    selectedProject = null;
+    paintProjectTabs();
+    if (activeProjectTab === "local") $("project-path").focus();
+  };
 });
+$("project-github-connect").onclick = () => {
+  $("project-modal").classList.remove("open");
+  $("github-btn").click();
+};
 $("project-cancel").onclick = () => {
   $("project-modal").classList.remove("open");
   // the switcher shows "Open another…" until it is put back; cancelling a move

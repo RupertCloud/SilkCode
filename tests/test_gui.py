@@ -104,6 +104,13 @@ def test_gui_tree_file_and_diff(gui):
     assert escape.status_code == 400
 
 
+def test_project_picker_endpoint_returns_a_list(gui):
+    base, _state, _ws = gui
+    response = httpx.get(f"{base}/api/projects")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+
 def test_gui_serves_workspace_images_but_not_other_files(gui):
     base, _state, ws = gui
     payload = b"\x89PNG\r\n\x1a\nimage"

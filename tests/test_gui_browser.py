@@ -769,6 +769,23 @@ def test_the_picker_opens_where_a_local_user_can_act(browser, two_project_gui):
     assert any(alpha.name in r for r in recents), recents
 
 
+def test_github_project_tab_can_be_selected_and_connects(browser, two_project_gui):
+    url, _alpha, _beta = two_project_gui
+    page = browser.new_page(viewport={"width": 1200, "height": 800})
+    page.goto(url)
+    wait_for_switcher(page)
+    page.click("#project-add")
+    page.wait_for_selector("#project-modal.open")
+
+    page.click("#project-tabs button[data-pgtab='github']")
+    assert page.locator("#project-tabs button[data-pgtab='github']").get_attribute("class") == "ptab active"
+    assert page.locator("[data-pgpane='github']").is_visible()
+    assert not page.locator("[data-pgpane='local']").is_visible()
+
+    page.click("#project-github-connect")
+    assert page.locator("#github-modal").evaluate("el => el.classList.contains('open')")
+
+
 def test_new_conversation_and_open_project_are_separate_actions(browser, two_project_gui):
     url, _alpha, _beta = two_project_gui
     page = browser.new_page(viewport={"width": 1400, "height": 900})
