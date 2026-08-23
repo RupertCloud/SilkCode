@@ -1,4 +1,4 @@
-"""The published pages: the landing page and the Projects how-to.
+"""The published pages: the landing page, the setup guide, and the Projects how-to.
 
 Documentation rots silently - a renamed template or a dropped flag stays
 "documented" until a user copies a command that no longer works. These tests
@@ -23,6 +23,7 @@ from silkcode.scaffold import TEMPLATES
 ROOT = Path(__file__).resolve().parents[1]
 LANDING = ROOT / "docs" / "index.html"
 HOWTO = ROOT / "docs" / "projects.html"
+SETUP = ROOT / "docs" / "setup.html"
 APP = ROOT / "silkcode" / "gui" / "app.html"
 
 
@@ -90,7 +91,7 @@ def test_the_landing_page_links_to_the_projects_howto():
 
 
 def test_every_in_page_link_resolves():
-    for path in (LANDING, HOWTO):
+    for path in (LANDING, HOWTO, SETUP):
         page = parse(path)
         missing = sorted(page.anchors - page.ids)
         assert not missing, f"{path.name} links to missing anchors: {missing}"
@@ -104,7 +105,7 @@ def test_the_howto_navigation_covers_its_sections():
 
 def test_the_pages_load_nothing_from_a_third_party():
     """These are shipped as static files (and the GUI page is served offline)."""
-    for path in (LANDING, HOWTO, APP):
+    for path in (LANDING, HOWTO, SETUP, APP):
         assert not parse(path).external, f"{path.name} loads external resources"
 
 
@@ -228,3 +229,34 @@ def test_the_install_command_we_do_document_is_one_that_works_today():
     text = README.read_text(encoding="utf-8")
     assert "pip install git+https://github.com/RupertCloud/SilkCode" in text
     assert "pip install -e ." in text, "the from-a-clone path is still worth showing"
+
+
+# ---- the setup guide is a page too ------------------------------------------
+# It was outside every check on this file, which is how its Tailscale banner
+# came to show a raw 100.x URL months after the code started using the
+# MagicDNS name. A setup guide that is wrong is worse than one that is thin.
+
+def test_the_setup_guide_shows_the_url_the_daemon_actually_prints():
+    """The pairing URL uses the MagicDNS name where Tailscale offers one."""
+    text = SETUP.read_text(encoding="utf-8")
+    assert ".ts.net:8377/?token=" in text, \
+        "the sample banner still shows a raw address; the daemon prints a name"
+
+
+def test_the_setup_guide_covers_installing_tailscale():
+    """It is part of installing, not a footnote discovered when the LAN
+    address stops answering on a train."""
+    text = SETUP.read_text(encoding="utf-8")
+    install = text.split("Then check what you installed")[0]
+    assert "tailscale" in install.lower(), \
+        "Tailscale is only mentioned after the install section"
+    for command in ("brew install --cask tailscale", "tailscale up"):
+        assert command in install, f"the install step never names `{command}`"
+
+
+def test_the_setup_guide_does_not_promise_silk_code_installs_it():
+    """Silk Code reads Tailscale's state and names commands. It never runs
+    `tailscale up`: that joins a network and changes how a machine is
+    reachable, which is the user's call."""
+    text = SETUP.read_text(encoding="utf-8").lower()
+    assert "never installs, starts or manages it" in text

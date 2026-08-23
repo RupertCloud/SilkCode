@@ -257,6 +257,24 @@
       detects you are on Windows.</p>
     </div>
 
+    <h3 style="margin-top:34px">Install Tailscale at the same time</h3>
+    <p>Not required, and Silk Code never installs, starts or manages it — but it is the difference
+    between a setup that works on your sofa and one that works on a train, and it is far less
+    annoying to do now than at the moment the LAN address stops answering. Install it on
+    <b>both</b> machines and sign both into the same account:</p>
+    <pre class="code"><span class="cm"># macOS</span>
+<span class="p">$</span> brew install --cask tailscale
+<span class="cm"># Linux</span>
+<span class="p">$</span> curl -fsSL https://tailscale.com/install.sh | sh
+<span class="cm"># Windows</span>
+<span class="p">&gt;</span> winget install tailscale.tailscale
+<span class="cm"># phone: the App Store / Play Store app, then leave the VPN toggle on</span>
+
+<span class="p">$</span> tailscale up</pre>
+    <p>Any WireGuard mesh that hands out <code>100.64.0.0/10</code> addresses works the same way —
+    Silk Code checks the range, not the vendor. <a href="#anywhere">Why this matters, and what the
+    banner looks like afterwards</a>.</p>
+
     <h3 style="margin-top:34px">Then check what you installed</h3>
     <pre class="code"><span class="p">$</span> silkcode version
 <span class="cm">Silk Code 0.2.0+ga07e7a8
@@ -467,11 +485,24 @@ Tailscale tailnet (https://tailscale.com) and use the 100.x address it gives you
         in that range is a mesh address and nothing else. Silk Code detects it, labels it, sorts it
         above the LAN address, and puts <em>that</em> one in the QR:</p>
         <pre class="code"><span class="cm">Reachable from another device:</span>
-  http://100.94.12.7:8377/?token=…
+  http://laptop.tail1a2b3.ts.net:8377/?token=…
       <span class="g">Tailscale - works from anywhere on your tailnet</span>
   http://192.168.1.20:8377/?token=…
       <span class="cm">LAN - same network only</span></pre>
-        <p>The "on the same Wi-Fi only" footer disappears, because it is no longer true.</p>
+        <p>The URL uses the <b>MagicDNS name</b> rather than the raw <code>100.x</code> where
+        Tailscale offers one: it survives the node being re-addressed, and it is something you can
+        read off a screen and retype. The address itself is still listed for anyone who wants it.</p>
+        <p>The "on the same Wi-Fi only" footer disappears, because it is no longer true. Before you
+        get that far, the banner tells you which of these you are actually in — Silk Code reads
+        <code>tailscale status</code> rather than printing the same suggestion regardless:</p>
+        <pre class="code"><span class="cm"># not installed</span>
+Tailscale is not installed here. Install it on this machine and on the phone…
+
+<span class="cm"># installed, never signed in</span>
+Tailscale is installed but not signed in. Run:  tailscale up
+
+<span class="cm"># installed, signed in, stopped</span>
+Tailscale is installed and signed in, but stopped. Run:  tailscale up</pre>
       </div>
     </div>
   </section>
