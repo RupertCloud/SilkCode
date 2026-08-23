@@ -179,3 +179,30 @@ def test_a_phone_in_landscape_also_gets_the_phone_layout():
     so the short viewport is the second way in."""
     text = APP.read_text(encoding="utf-8")
     assert "(max-height: 480px)" in text
+
+
+# ---- pairing a second device, from the page ---------------------------------
+
+def test_the_page_offers_a_pair_button():
+    """Startup prints the QR once, and only when the daemon was started off
+    loopback. Everything after that — a scrolled terminal, a second phone —
+    needs a way in that is not restarting the daemon."""
+    text = APP.read_text(encoding="utf-8")
+    assert 'id="pair-btn"' in text
+    assert 'id="pair-modal"' in text
+    assert '/api/pairing' in text
+
+
+def test_the_pair_modal_draws_the_qr_without_a_library():
+    """The daemon sends a matrix; the page renders cells. Nothing is fetched,
+    which matters because the GUI is served offline."""
+    text = APP.read_text(encoding="utf-8")
+    # the grid element is built in script, not markup, so look for both halves
+    assert 'grid.id = "pair-qr"' in text
+    assert "#pair-qr" in text          # its styles
+    assert "gridTemplateColumns" in text
+
+
+def test_the_pair_modal_warns_that_the_link_is_a_credential():
+    text = APP.read_text(encoding="utf-8")
+    assert "carries the access token" in text

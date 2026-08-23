@@ -175,3 +175,60 @@ def test_the_endpoint_reports_what_the_monitor_saw(daemon):
     assert body["denied_total"] == 1
     assert body["clients"]
     assert "streams" in body
+
+
+# ---- pairing on demand ------------------------------------------------------
+
+def test_pairing_details_are_available_without_restarting(daemon, monkeypatch):
+    """Startup prints the QR once. A terminal scrolls, a second device turns
+    up later, and killing the daemon to see a code again is not an answer."""
+    base, _ = daemon
+    monkeypatch.setattr("silkcode.inference.local_ipv4_addresses",
+                        lambda: ["100.101.102.103", "192.168.1.20"])
+    body = get(base, "/api/pairing", token=TOKEN).json()
+    assert body["reachable"] is True
+    assert [a["label"] for a in body["addresses"]] == ["Tailscale", "LAN"]
+    assert body["addresses"][0]["url"].startswith("http://100.101.102.103:")
+    assert TOKEN in body["addresses"][0]["url"]
+
+
+def test_the_pairing_qr_is_a_matrix_the_page_can_draw(daemon, monkeypatch):
+    base, _ = daemon
+    monkeypatch.setattr("silkcode.inference.local_ipv4_addresses",
+                        lambda: ["192.168.1.20"])
+    body = get(base, "/api/pairing", token=TOKEN).json()
+    qr = body["qr"]
+    assert qr and len(qr) == len(qr[0]), "not square"
+    assert all(isinstance(cell, bool) for row in qr for cell in row)
+    # it encodes the address it says it does
+    assert body["qr_for"]["address"] == "192.168.1.20"
+
+
+def test_the_qr_encodes_the_url_that_is_displayed(daemon, monkeypatch):
+    """The URL under the code and the code itself have to agree, or a scan
+    silently lands somewhere other than what the operator read."""
+    from silkcode.qr import encode
+    base, _ = daemon
+    monkeypatch.setattr("silkcode.inference.local_ipv4_addresses",
+                        lambda: ["192.168.1.20"])
+    body = get(base, "/api/pairing", token=TOKEN).json()
+    expected = [[bool(v) for v in row] for row in encode(body["qr_for"]["url"])]
+    assert body["qr"] == expected
+
+
+def test_pairing_needs_the_token_like_everything_else(daemon):
+    """It hands back a URL containing the credential, so it must sit behind
+    the credential. (A caller with the token learns nothing new — which is
+    why returning it here is not a leak.)"""
+    base, _ = daemon
+    assert get(base, "/api/pairing").status_code == 401
+
+
+def test_a_loopback_daemon_says_pairing_is_not_possible_yet(daemon, monkeypatch):
+    """No address means nothing to pair with. Saying so beats rendering an
+    empty box the operator has to interpret."""
+    base, _ = daemon
+    monkeypatch.setattr("silkcode.inference.local_ipv4_addresses", lambda: [])
+    body = get(base, "/api/pairing", token=TOKEN).json()
+    assert body["reachable"] is False
+    assert body["qr"] is None

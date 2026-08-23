@@ -1022,6 +1022,42 @@ class GuiState:
         walk(workspace.root, 0)
         return entries
 
+    def pairing_info(self, port: int, token: str | None) -> dict:
+        """Everything needed to put another device on this daemon.
+
+        The same facts the terminal prints at startup, available on demand -
+        because a terminal scrolls, a second device shows up later, and
+        restarting the daemon to see a QR again is not an answer.
+
+        This returns the token, inside the URL. That is not a leak: the
+        endpoint is behind the same token, so a caller can only learn a
+        credential it already presented.
+        """
+        from ..inference import reachable_addresses
+        from ..qr import QRError, encode
+
+        suffix = f"/?token={token}" if token else "/"
+        addresses = [
+            {"address": address, "label": label,
+             "url": f"http://{address}:{port}{suffix}"}
+            for address, label in reachable_addresses()
+        ]
+        info: dict = {
+            "addresses": addresses,
+            "reachable": bool(addresses),
+            "tokenless": token is None,
+            "qr": None,
+            "qr_for": None,
+        }
+        if addresses:
+            best = addresses[0]
+            try:
+                info["qr"] = [[bool(v) for v in row] for row in encode(best["url"])]
+                info["qr_for"] = best
+            except QRError as exc:
+                info["error"] = str(exc)
+        return info
+
     def read_file(self, rel_path: str, session_id: int | None = None) -> dict:
         from ..remotews import RemoteWorkspace
         workspace = self.get_session(session_id).workspace
@@ -1321,6 +1357,9 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json(st.environment())
             elif route == "/api/connections":
                 self._json(st.connections.snapshot())
+            elif route == "/api/pairing":
+                port = self.server.server_address[1]
+                self._json(st.pairing_info(port, self.token))
             elif route == "/api/github/status":
                 self._json(st.github_status(sid))
             elif route == "/api/events":

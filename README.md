@@ -301,6 +301,12 @@ Point a phone camera at this to open it (Tailscale):
 Scan it and the session opens on the phone: same conversation, same files,
 same git diff, with the agent still running on the laptop.
 
+**Pairing another device later.** That banner prints once, at startup. When the
+terminal has scrolled, or a second phone turns up, the **📱 Pair** button in the
+GUI shows the same QR and addresses on demand — no restart. If the daemon is on
+loopback it says so, and tells you to restart with `--host 0.0.0.0`, because
+there is nothing to pair with until then.
+
 **Reaching it from anywhere.** A `192.168.x.y` address only resolves while both
 devices are on the same router. Put both machines on a
 [Tailscale](https://tailscale.com) tailnet and the `100.x` address keeps working

@@ -186,6 +186,17 @@
      which cannot fit a phone: below this width it overflowed sideways and
      the composer sat off-screen. One pane at a time instead, chosen by the
      tab bar, with the composer pinned where a thumb can reach it. */
+  /* The QR is drawn from a matrix the daemon sends, so the page needs no
+     library. A dark module is a light cell here: scanners want the symbol
+     lighter than its surround, and this modal is dark. */
+  #pair-qr { display: grid; gap: 0; background: #fff; padding: 12px;
+             border-radius: 8px; width: max-content; margin: 10px auto; }
+  #pair-qr i { display: block; width: 4px; height: 4px; background: #fff; }
+  #pair-qr i.on { background: #000; }
+  #pair-url { font-family: var(--mono); font-size: 11px; word-break: break-all;
+              background: var(--panel2); border: 1px solid var(--border);
+              border-radius: 6px; padding: 8px; margin-top: 8px; }
+
   #mobile-tabs { display: none; }
   /* Two ways to be a phone. 768px is the conventional tablet boundary, and
      covers portrait (390-430px); a narrow desktop window keeps the three
@@ -263,6 +274,7 @@
   <span class="hgroup" role="group" aria-label="Settings and tools">
     <button id="add-model">+ Add model</button>
     <button id="github-btn">GitHub</button>
+    <button id="pair-btn" title="Show a QR to open this session on a phone">📱 Pair</button>
     <button id="env-btn" title="Keys, token usage and running sessions">⚙ Environment</button>
     <button id="swarm-btn" title="Multi-agent improvement loop: tester, critic and worker iterate until this project scores 10/10">🐝 Swarm</button>
     <button id="update-btn" title="Pull the latest Silk Code from git; the daemon restarts itself with the new code">↻ Update</button>
@@ -351,6 +363,16 @@
     <div class="row">
       <button id="gh-cancel">Close</button>
       <button class="primary" id="gh-save">Authorize</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="pair-modal">
+  <div class="modal" style="max-width:520px">
+    <h3>Pair a device</h3>
+    <div id="pair-body"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px">
+      <button id="pair-close">Close</button>
     </div>
   </div>
 </div>
@@ -1589,6 +1611,66 @@ function renderEnvironment(env) {
   renderUsageBreakdown(env.usage);
   renderLive(env);
 }
+function renderPairing(p) {
+  const box = $("pair-body");
+  box.innerHTML = "";
+  if (!p.reachable) {
+    box.innerHTML =
+      '<p style="color:var(--dim);font-size:13px">This daemon is listening on ' +
+      'loopback only, so nothing else can reach it.</p>' +
+      '<p style="color:var(--dim);font-size:13px">Restart it with ' +
+      '<span class="mono">--host 0.0.0.0</span> to pair a phone. It will ' +
+      'generate an access token and show a code to scan.</p>';
+    return;
+  }
+  if (p.tokenless) {
+    box.insertAdjacentHTML("beforeend",
+      '<p style="color:var(--warn);font-size:12px">This daemon is running ' +
+      'without an access token — anyone who can reach these addresses can ' +
+      'drive the agent.</p>');
+  }
+  if (p.qr) {
+    const grid = document.createElement("div");
+    grid.id = "pair-qr";
+    grid.style.gridTemplateColumns = `repeat(${p.qr.length}, 4px)`;
+    for (const row of p.qr) {
+      for (const on of row) {
+        const cell = document.createElement("i");
+        if (on) cell.className = "on";
+        grid.appendChild(cell);
+      }
+    }
+    box.appendChild(grid);
+    const cap = document.createElement("p");
+    cap.style.cssText = "text-align:center;color:var(--dim);font-size:12px";
+    cap.textContent = `Scan with a phone camera — ${p.qr_for.label}`;
+    box.appendChild(cap);
+  } else if (p.error) {
+    box.insertAdjacentHTML("beforeend",
+      `<p style="color:var(--warn);font-size:12px">${esc(p.error)}</p>`);
+  }
+  for (const a of p.addresses) {
+    const note = a.label === "Tailscale" ? "works from anywhere on your tailnet"
+                                         : "same network only";
+    box.insertAdjacentHTML("beforeend",
+      `<div style="margin-top:10px;font-size:12px;color:var(--dim)">` +
+      `<b style="color:var(--text)">${esc(a.label)}</b> — ${esc(note)}</div>` +
+      `<div id="pair-url">${esc(a.url)}</div>`);
+  }
+  box.insertAdjacentHTML("beforeend",
+    '<p style="color:var(--dim);font-size:12px;margin-top:12px">That link ' +
+    'carries the access token. Anyone who has it can run commands on this ' +
+    'machine, so share it only with your own devices.</p>');
+}
+
+$("pair-btn").onclick = async () => {
+  $("pair-modal").classList.add("open");
+  $("pair-body").textContent = "…";
+  try { renderPairing(await api("/api/pairing")); }
+  catch (e) { $("pair-body").textContent = "could not read pairing details"; }
+};
+$("pair-close").onclick = () => $("pair-modal").classList.remove("open");
+
 function relTime(seconds) {
   if (seconds < 60) return Math.round(seconds) + "s ago";
   if (seconds < 3600) return Math.round(seconds / 60) + "m ago";
