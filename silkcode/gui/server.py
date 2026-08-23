@@ -545,11 +545,18 @@ class GuiState:
                      pm: "PermissionManager | None" = None) -> str:
         req_id = uuid.uuid4().hex
         ev = threading.Event()
-        self.pending[req_id] = {"event": ev, "decision": "no", "prompt": prompt, "pm": pm}
+        self.pending[req_id] = {"event": ev, "decision": "no", "prompt": prompt,
+                                "pm": pm, "session": session_id}
         self.broadcast({"type": "permission_request", "id": req_id, "prompt": prompt,
                         "session": session_id})
-        ev.wait(PERMISSION_TIMEOUT)
-        return self.pending.pop(req_id)["decision"]
+        answered = ev.wait(PERMISSION_TIMEOUT)
+        entry = self.pending.pop(req_id)
+        if not answered:
+            # Every connected browser received the request. Tell all of them
+            # when it expires too, or remote clients retain a dead dialog.
+            self.broadcast({"type": "permission_resolved", "id": req_id,
+                            "decision": "no", "session": session_id})
+        return entry["decision"]
 
     def answer_permission(self, req_id: str, decision: str) -> bool:
         entry = self.pending.get(req_id)
@@ -566,6 +573,10 @@ class GuiState:
         else:
             entry["decision"] = decision
         entry["event"].set()
+        # The POST response reaches only the browser that acted. The event
+        # dismisses the matching dialog on every other connected GUI client.
+        self.broadcast({"type": "permission_resolved", "id": req_id,
+                        "decision": entry["decision"], "session": entry.get("session")})
         return True
 
     # ---- agent turns ------------------------------------------------------

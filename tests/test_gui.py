@@ -463,6 +463,28 @@ def test_gui_permission_flow(gui):
     assert result["decision"] == "yes"
 
 
+def test_permission_answer_is_broadcast_to_every_gui_client(gui):
+    base, state, _ws = gui
+    events = state.subscribe()
+    result = {}
+
+    thread = threading.Thread(
+        target=lambda: result.setdefault("decision", state._ask_via_gui("Run tests", 1)),
+        daemon=True)
+    thread.start()
+    request = events.get(timeout=2)
+    assert request["type"] == "permission_request"
+
+    response = httpx.post(f"{base}/api/permission",
+                          json={"id": request["id"], "decision": "no"})
+    assert response.status_code == 200
+    resolved = events.get(timeout=2)
+    assert resolved == {"type": "permission_resolved", "id": request["id"],
+                        "decision": "no", "session": 1}
+    thread.join(timeout=2)
+    assert result["decision"] == "no"
+
+
 def test_gui_second_session_same_project_locked(gui):
     """A second session on the same project gets 'already in use': its agent
     cannot write, the first session's can, and a notice lands in its transcript."""

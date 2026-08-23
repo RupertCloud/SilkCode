@@ -820,6 +820,19 @@ def test_github_repository_selection_is_visible_and_fetches(browser, two_project
     assert opened == ["github:acme/widget"]
 
 
+def test_remote_permission_answer_dismisses_the_local_dialog(browser, gui_url):
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    page.goto(gui_url)
+    page.wait_for_selector("#input")
+
+    page.evaluate("handleEvent({type:'permission_request', id:'shared-1', prompt:'Run tests', session:1})")
+    page.wait_for_selector("#perm-modal.open")
+    page.evaluate("handleEvent({type:'permission_resolved', id:'shared-1', decision:'yes', session:1})")
+
+    assert not page.locator("#perm-modal").evaluate("el => el.classList.contains('open')")
+    assert page.evaluate("permQueue.length") == 0
+
+
 def test_new_conversation_and_open_project_are_separate_actions(browser, two_project_gui):
     url, _alpha, _beta = two_project_gui
     page = browser.new_page(viewport={"width": 1400, "height": 900})

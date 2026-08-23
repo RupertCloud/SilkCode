@@ -1059,10 +1059,20 @@ function handleEvent(ev) {
   // permission requests must be answerable from any tab; everything else is
   // filtered to the session this tab is showing
   if (ev.type === "permission_request") {
+    if (permQueue.some(req => req.id === ev.id)) return;
     if (ev.session && ev.session !== currentSessionId) {
       ev.prompt = `[session #${ev.session}] ` + ev.prompt;
     }
     permQueue.push(ev); showNextPermission();
+    return;
+  }
+  if (ev.type === "permission_resolved") {
+    const index = permQueue.findIndex(req => req.id === ev.id);
+    if (index < 0) return;
+    const wasShowing = index === 0 && $("perm-modal").classList.contains("open");
+    permQueue.splice(index, 1);
+    if (wasShowing) $("perm-modal").classList.remove("open");
+    showNextPermission();
     return;
   }
   if (ev.session !== undefined && ev.session !== null && ev.session !== currentSessionId) {
