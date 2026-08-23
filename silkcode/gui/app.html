@@ -186,7 +186,7 @@
 <body>
 <header>
   <span class="logo">Silk Code</span>
-  <span class="path" id="cwd" title="Workspace"></span>
+  <label>Project <select id="project-select" title="The tree this session's file tools, git commands and tests are confined to"></select></label>
   <span id="status-dot" title="agent status"></span>
   <span class="spacer"></span>
   <label>Session <select id="session-select"></select></label>
@@ -320,7 +320,11 @@
 
 <div class="modal-bg" id="project-modal">
   <div class="modal" style="max-width:560px">
-    <h3>Open a project for this session</h3>
+    <h3>Open a project</h3>
+    <div id="project-recent-wrap" style="display:none;margin-bottom:12px">
+      <div class="prompt" style="margin-bottom:4px">Recently opened</div>
+      <div id="project-recent-list" style="max-height:150px;overflow:auto"></div>
+    </div>
     <div id="project-tabs" style="display:flex;gap:8px;margin-bottom:10px">
       <button class="ptab active" data-pgtab="github" style="flex:1">GitHub repository</button>
       <button class="ptab" data-pgtab="local" style="flex:1">Local directory</button>
@@ -354,9 +358,11 @@
 
     <h4>Open or switch project</h4>
     <ul>
+      <li><b>Project (header)</b> — switches the project this session is on. The conversation
+        comes with you; only the tree changes.</li>
       <li><b>＋ (new session)</b> — asks which project to run it on: a GitHub repository you have
         access to (cloned for you into <code>~/.silkcode/projects/</code>) or a local directory.
-        Recently opened projects are in the same list.</li>
+        Recently opened projects are listed above both, including the one you launched on.</li>
       <li><b>Terminal</b> — <code>silkcode ~/code/app</code>, or <code>/project</code> inside a
         REPL session to switch without losing the conversation.</li>
       <li>Opening the same project twice is allowed: the second session is read-only until the
@@ -1061,6 +1067,44 @@ function renderSessions(sessions, currentId, project) {
   sel.value = currentId;
 }
 
+// Project is what scopes every file tool, git command and test run, so it
+// belongs beside Session/Model/Mode rather than sitting in the corner as text.
+// Switching moves this session — the conversation comes with you, which is what
+// /project has always done in the REPL and what the GUI could not do at all.
+function renderProjects(projects, currentPath) {
+  const sel = $("project-select");
+  sel.innerHTML = "";
+  let current = projects.find(p => p.current) || {path: currentPath || "", label: shortenPath(currentPath || "")};
+  for (const p of projects) {
+    const opt = document.createElement("option");
+    opt.value = p.path;
+    const count = p.sessions ? `  (${p.sessions} session${p.sessions === 1 ? "" : "s"})` : "";
+    opt.textContent = (p.label || shortenPath(p.path)) + count;
+    opt.title = p.path;
+    sel.appendChild(opt);
+  }
+  const open = document.createElement("option");
+  open.value = "__open__";
+  open.textContent = "⋯ Open another project…";
+  sel.appendChild(open);
+  sel.value = current.path;
+  sel.title = current.path;
+}
+
+$("project-select").onchange = async (e) => {
+  const target = e.target.value;
+  if (target === "__open__") { openProjectModal({move: true}); return; }
+  const previous = $("project-select").title;
+  try {
+    const state = await api("/api/session/project", {project: target, session_id: currentSessionId});
+    currentSessionId = state.session_id;
+    init();
+  } catch (err) {
+    alert(err.message);
+    $("project-select").value = previous;   // the switch did not happen; do not pretend
+  }
+};
+
 async function refreshSessionList() {
   try {
     const state = await api("/api/state?session=" + currentSessionId
@@ -1093,46 +1137,76 @@ $("new-session").onclick = () => {
 // ---- new-session project picker ------------------------------------------
 let selectedProject = null;  // "github:owner/repo" or a local path; null = current
 
+// Which tab opens when nothing is chosen yet. GitHub used to win
+// unconditionally, so a user with no GitHub connection opened the picker onto
+// "No repositories yet. Connect GitHub, then refresh." — an error message
+// about a service they may not use, in place of the thing they wanted.
+let defaultProjectTab = "local";
+
 function paintProjectTabs() {
   document.querySelectorAll("#project-tabs .ptab").forEach(b => {
-    const on = b.dataset.pgtab === (selectedProject && selectedProject.startsWith("github") ? "github" : selectedProject ? "local" : "github");
+    const on = b.dataset.pgtab === (selectedProject && selectedProject.startsWith("github") ? "github" : selectedProject ? "local" : defaultProjectTab);
     b.classList.toggle("active", on);
     document.querySelector(`[data-pgpane="${b.dataset.pgtab}"]`).style.display = on ? "" : "none";
   });
 }
 
+function projectRow(label, spec) {
+  const row = document.createElement("button");
+  row.className = "project-row";
+  row.style.cssText = "display:block;width:100%;text-align:left;margin:2px 0;padding:6px 8px;cursor:pointer";
+  row.textContent = label;
+  row.title = spec;
+  row.onclick = () => { selectedProject = spec; paintProjectTabs(); $("project-confirm").focus(); };
+  return row;
+}
+
 function renderProjectList(projects) {
-  const box = $("project-github-list");
-  box.innerHTML = "";
-  if (!projects.length) {
-    $("project-github-status").textContent = "No repositories yet. Connect GitHub, then refresh.";
+  const repos = $("project-github-list");
+  const recents = $("project-recent-list");
+  repos.innerHTML = "";
+  recents.innerHTML = "";
+
+  const github = projects.filter(p => p.kind === "github");
+  const recent = projects.filter(p => p.kind !== "github");
+
+  // Recents sit above the tabs rather than inside the GitHub pane, so they are
+  // reachable whichever way you are opening a project. They used to be visible
+  // only under a tab a local-directory user had no reason to be on.
+  $("project-recent-wrap").style.display = recent.length ? "" : "none";
+  for (const p of recent) {
+    const isGithubSpec = p.spec && p.spec.startsWith("github");
+    recents.appendChild(projectRow(
+      (isGithubSpec ? "github/" : "") + (p.label || p.spec), p.spec));
+  }
+
+  defaultProjectTab = github.length ? "github" : "local";
+  paintProjectTabs();
+
+  if (!github.length) {
+    $("project-github-status").textContent =
+      "No GitHub repositories available. Connect GitHub from the header to clone one, "
+      + "or use the Local directory tab.";
     return;
   }
-  $("project-github-status").textContent = `${projects.length} repository/project available — click one:`;
-  for (const p of projects) {
-    if (p.kind === "github") {
-      const row = document.createElement("button");
-      row.className = "project-row";
-      row.style.cssText = "display:block;width:100%;text-align:left;margin:2px 0;padding:6px 8px;cursor:pointer";
-      let txt = "github/" + p.github_owner_repo;
-      if (p.label !== "github/" + p.github_owner_repo) txt += "  (" + p.label + ")";
-      row.textContent = txt;
-      row.onclick = () => { selectedProject = "github:" + p.github_owner_repo; paintProjectTabs(); $("project-confirm").focus(); };
-      box.appendChild(row);
-    } else {
-      // recent local projects
-      const row = document.createElement("button");
-      row.className = "project-row";
-      row.style.cssText = "display:block;width:100%;text-align:left;margin:2px 0;padding:6px 8px;cursor:pointer";
-      const isGithubSpec = p.spec && p.spec.startsWith("github");
-      row.textContent = (isGithubSpec ? "github/" : "local/") + (p.label || p.spec);
-      row.onclick = () => { selectedProject = p.spec; paintProjectTabs(); $("project-confirm").focus(); };
-      box.appendChild(row);
-    }
+  $("project-github-status").textContent =
+    `${github.length} repositor${github.length === 1 ? "y" : "ies"} — click one:`;
+  for (const p of github) {
+    let txt = "github/" + p.github_owner_repo;
+    if (p.label !== "github/" + p.github_owner_repo) txt += "  (" + p.label + ")";
+    repos.appendChild(projectRow(txt, "github:" + p.github_owner_repo));
   }
 }
 
-function openProjectModal() {
+let projectModalOpensNewSession = true;
+
+function openProjectModal(opts) {
+  // The same modal serves two verbs and must not confuse them: ＋ starts a new
+  // session on a project, the Project switcher moves the session you are in.
+  projectModalOpensNewSession = !(opts && opts.move);
+  $("project-modal").querySelector("h3").textContent =
+    projectModalOpensNewSession ? "Open a project in a new session"
+                                : "Move this session to another project";
   selectedProject = null;
   $("project-path").value = "";
   $("project-error").textContent = "";
@@ -1145,7 +1219,13 @@ function openProjectModal() {
 document.querySelectorAll("#project-tabs .ptab").forEach(b => {
   b.onclick = () => { if (b.dataset.pgtab === "local") selectedProject = null; paintProjectTabs(); $("project-path").focus(); };
 });
-$("project-cancel").onclick = () => $("project-modal").classList.remove("open");
+$("project-cancel").onclick = () => {
+  $("project-modal").classList.remove("open");
+  // the switcher shows "Open another…" until it is put back; cancelling a move
+  // must not leave the header claiming a project change that did not happen
+  const sel = $("project-select");
+  if (sel && sel.value === "__open__") sel.value = sel.title;
+};
 
 // ---- projects how-to ------------------------------------------------------
 // The GUI can open and switch projects but not create one - that is a terminal
@@ -1181,10 +1261,11 @@ $("project-confirm").onclick = async () => {
   const path = $("project-path").value.trim();
   $("project-confirm").disabled = true;
   try {
+    const target = path || selectedProject;
     let state;
-    if (path) state = await api("/api/session/new", {project: path});
-    else if (selectedProject) state = await api("/api/session/new", {project: selectedProject});
-    else state = await api("/api/session/new", {});
+    if (!target) state = await api("/api/session/new", {});
+    else if (projectModalOpensNewSession) state = await api("/api/session/new", {project: target});
+    else state = await api("/api/session/project", {project: target, session_id: currentSessionId});
     $("project-modal").classList.remove("open");
     currentSessionId = state.session_id;
     init();
@@ -1554,9 +1635,7 @@ async function init() {
     streamEl = null;
   }
   currentSessionId = state.session_id;
-  // keep the tail: the last segments identify the project, the prefix does not
-  $("cwd").textContent = shortenPath(state.cwd);
-  $("cwd").title = state.cwd;
+  renderProjects(state.projects || [], state.cwd);
   $("mode-select").value = state.mode;
   $("auto-push").checked = !!state.auto_push;
   $("session").textContent = "session #" + state.session_id;
