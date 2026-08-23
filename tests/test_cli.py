@@ -387,6 +387,19 @@ def test_gui_forwards_every_flag(home, monkeypatch):
     assert seen["kwargs"]["auto_push"] is True
 
 
+def test_gui_without_a_path_starts_project_chooser_mode(home, monkeypatch):
+    seen = {}
+    monkeypatch.setattr("silkcode.gui.server.run_gui",
+                        lambda *a, **k: seen.update(args=a, kwargs=k) or 0)
+
+    assert main(["gui", "--port", "9001"]) == 0
+
+    assert seen["args"][0] is None
+    assert seen["kwargs"]["restart_args"][0] == "gui"
+    assert "[path]" not in seen["kwargs"]["restart_args"]
+    assert "--port" in seen["kwargs"]["restart_args"]
+
+
 def test_gui_restart_args_reproduce_the_invocation(home, monkeypatch):
     """After a self-update the daemon re-execs itself with these args; if they
     don't round-trip, the GUI comes back configured differently."""

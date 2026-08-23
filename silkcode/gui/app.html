@@ -1535,9 +1535,14 @@ function renderSessions(sessions, currentId, project) {
 // belongs beside Session/Model/Mode rather than sitting in the corner as text.
 // Switching moves this session — the conversation comes with you, which is what
 // /project has always done in the REPL and what the GUI could not do at all.
-function renderProjects(projects, currentPath) {
+function renderProjects(projects, currentPath, projectless = false) {
   const sel = $("project-select");
   sel.innerHTML = "";
+  if (projectless) {
+    const choose = document.createElement("option");
+    choose.value = ""; choose.textContent = "Choose a project…"; choose.selected = true;
+    sel.appendChild(choose);
+  }
   let current = projects.find(p => p.current) || {path: currentPath || "", label: shortenPath(currentPath || "")};
   for (const p of projects) {
     const opt = document.createElement("option");
@@ -1551,10 +1556,16 @@ function renderProjects(projects, currentPath) {
   open.value = "__open__";
   open.textContent = "⋯ Open another project…";
   sel.appendChild(open);
-  sel.value = current.path;
-  sel.title = current.path;
+  sel.value = projectless ? "" : current.path;
+  sel.title = projectless ? "" : current.path;
   const cards = $("project-cards");
   cards.innerHTML = "";
+  if (projectless) {
+    const welcome = document.createElement("div");
+    welcome.className = "empty";
+    welcome.textContent = "Choose a GitHub repository, local folder, or create a new project to begin.";
+    cards.appendChild(welcome);
+  }
   for (const p of projects) {
     const card = document.createElement("div");
     card.className = "project-card" + (p.current ? " current" : "") + (p.running ? " running" : "");
@@ -1676,6 +1687,8 @@ let selectedProject = null;  // "github:owner/repo" or a local path; null = curr
 // about a service they may not use, in place of the thing they wanted.
 let defaultProjectTab = "local";
 let activeProjectTab = "local";
+let projectStartMode = false;
+let chooseBestProjectTab = false;
 
 function paintProjectTabs() {
   document.querySelectorAll("#project-tabs .ptab").forEach(b => {
@@ -1687,7 +1700,8 @@ function paintProjectTabs() {
     document.querySelector(`[data-pgpane="${b.dataset.pgtab}"]`).style.display = on ? "" : "none";
   });
   $("project-modal").querySelector("h3").textContent =
-    activeProjectTab === "new" ? "Create a project with Swarm" : "Open project";
+    projectStartMode ? "Choose a project to start"
+    : (activeProjectTab === "new" ? "Create a project with Swarm" : "Open project");
   $("project-confirm").textContent = activeProjectTab === "new"
     ? "Create & start Swarm"
     : (selectedProject && selectedProject.startsWith("github:") ? "Fetch & open" : "Open");
@@ -1745,6 +1759,8 @@ function renderProjectList(projects) {
   }
 
   defaultProjectTab = github.length ? "github" : "local";
+  if (chooseBestProjectTab && !selectedProject) activeProjectTab = defaultProjectTab;
+  chooseBestProjectTab = false;
   paintProjectTabs();
 
   if (!github.length) {
@@ -1770,7 +1786,8 @@ function renderProjectList(projects) {
 }
 
 function openProjectModal(opts) {
-  $("project-modal").querySelector("h3").textContent = "Open project";
+  projectStartMode = !!(opts && opts.start);
+  chooseBestProjectTab = !!(opts && opts.chooseBest);
   selectedProject = null;
   activeProjectTab = defaultProjectTab;
   $("project-path").value = "";
@@ -2540,6 +2557,7 @@ $("input").addEventListener("keydown", (e) => {
 // ---- init --------------------------------------------------------------------
 
 const UI_VERSION = "0.1.0";
+let projectChooserOpened = false;
 
 async function init() {
   const state = await api("/api/state" + (currentSessionId ? "?session=" + currentSessionId : ""));
@@ -2555,11 +2573,19 @@ async function init() {
     streamEl = null;
   }
   currentSessionId = state.session_id;
-  renderProjects(state.projects || [], state.cwd);
+  renderProjects(state.projects || [], state.cwd, !!state.projectless);
   $("mode-select").value = state.mode;
   $("auto-push").checked = !!state.auto_push;
   $("session").textContent = "session #" + state.session_id;
   setRunning(state.running);
+  if (state.projectless) {
+    $("input").disabled = true;
+    $("send").disabled = true;
+    $("input").placeholder = "Choose a project to start…";
+  } else {
+    $("input").disabled = false;
+    $("input").placeholder = "Ask Silk Code to build or change something…";
+  }
   renderUsage(state.usage);
   renderLock(state);
   await loadProviders(state.spec);
@@ -2570,6 +2596,10 @@ async function init() {
   transcript.forEach(renderEntry);
   formatAllMessages();  // render fenced code/terminal blocks in loaded messages
   loadTree(); loadDiff();
+  if (state.projectless && !projectChooserOpened) {
+    projectChooserOpened = true;
+    openProjectModal({start: true, chooseBest: true});
+  }
 }
 
 // ---- workspace lock ---------------------------------------------------------

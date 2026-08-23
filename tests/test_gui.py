@@ -113,6 +113,45 @@ def test_project_picker_endpoint_returns_a_list(gui):
     assert isinstance(response.json(), list)
 
 
+def _projectless_state(tmp_path, monkeypatch):
+    home = tmp_path / "projectless-home"
+    home.mkdir()
+    monkeypatch.setenv("SILKCODE_HOME", str(home))
+    (home / "config.json").write_text(json.dumps({
+        "default_model": "stub",
+        "providers": {"stub": {"type": "openai_compat", "base_url": "http://127.0.0.1:1",
+                                 "default_model": "stub-model"}},
+    }))
+    launcher = tmp_path / "launcher"
+    launcher.mkdir()
+    return GuiState(str(launcher), None, "ask", projectless=True), launcher
+
+
+def test_projectless_gui_does_not_record_or_lock_its_launcher(monkeypatch, tmp_path):
+    from silkcode.project import recent_projects
+
+    state, launcher = _projectless_state(tmp_path, monkeypatch)
+
+    data = state.state()
+    assert data["projectless"] is True
+    assert data["projects"] == []
+    assert str(launcher.resolve()) not in {item["spec"] for item in recent_projects()}
+    assert owner_of(launcher) is None
+
+
+def test_choosing_a_project_replaces_the_launcher_session(monkeypatch, tmp_path):
+    state, launcher = _projectless_state(tmp_path, monkeypatch)
+    project = tmp_path / "real-project"
+    project.mkdir()
+    launcher_id = state.default_session_id
+
+    result = state.open_project(str(project))
+
+    assert result["projectless"] is False
+    assert result["cwd"] == str(project.resolve())
+    assert launcher_id not in state.sessions
+
+
 def test_share_update_endpoint_reads_the_current_branch(gui):
     base, _state, workspace = gui
     subprocess.run(["git", "-C", str(workspace), "init"], check=True, capture_output=True)

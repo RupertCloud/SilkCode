@@ -36,7 +36,7 @@ from ..tools.images import IMAGE_MARKER, IMAGE_SUFFIXES
 
 from ..agent import Agent
 from ..agent.loop import DEFAULT_CONTEXT_TOKENS
-from ..config import Config, ConfigError
+from ..config import Config, ConfigError, config_dir
 from ..connections import ConnectionMonitor
 from ..context import assemble
 from ..lock import LockError, acquire, lock_state, release
@@ -140,7 +140,8 @@ class AgentSession:
         # The one place every session's project passes through: the daemon's
         # launch project, a project picked from the modal, and the project of
         # a session being resumed.
-        remember_workspace(self.workspace.root)
+        if not state.is_launcher_workspace(self.workspace):
+            remember_workspace(self.workspace.root)
 
         # Advisory per-workspace lock: one writer at a time per project. A
         # second session on the same project is told "already in use" up front
@@ -151,14 +152,15 @@ class AgentSession:
         # session replaces self.transcript wholesale, which used to throw
         # away any notice raised while the session was being constructed.
         notices: list[str] = []
-        try:
-            acquire(self.workspace.root, self.lock_owner)
-        except LockError as exc:
-            self.lock_conflict = str(exc)
-            notices.append(f"⚠ This project is already open in {exc.holder()} — "
-                           "edits are refused until that session closes or the lock goes stale.")
-        except OSError:
-            pass  # cannot create the lock file (e.g. read-only fs): locking is off
+        if not state.is_launcher_workspace(self.workspace):
+            try:
+                acquire(self.workspace.root, self.lock_owner)
+            except LockError as exc:
+                self.lock_conflict = str(exc)
+                notices.append(f"⚠ This project is already open in {exc.holder()} — "
+                               "edits are refused until that session closes or the lock goes stale.")
+            except OSError:
+                pass  # cannot create the lock file (e.g. read-only fs): locking is off
 
         permissions = PermissionManager(
             mode=data.get("mode") or state.mode,
@@ -220,7 +222,9 @@ class GuiState:
     def __init__(self, path: str, model_spec: str | None, mode: str,
                  grants: list[str] | None = None, use_sandbox: bool = False,
                  auto_push: bool = False, instance: str | None = None,
-                 remote: str | None = None):
+                 remote: str | None = None, projectless: bool = False):
+        self.projectless = bool(projectless and not remote)
+        self.launcher_session_id: int | None = None
         self.auto_push = auto_push
         if auto_push:
             grants = list(grants or []) + ["push"]
@@ -273,9 +277,15 @@ class GuiState:
         self.swarms: dict[int, dict] = {}  # session id -> swarm status
         self._restart_args: list[str] | None = None
         self._restarting = False
-        self._restore_active_session()
+        if not self.projectless:
+            self._restore_active_session()
         if not self.sessions:
             self.new_session()
+        if self.projectless:
+            self.launcher_session_id = self.default_session_id
+
+    def is_launcher_workspace(self, workspace) -> bool:
+        return self.projectless and str(workspace.root) == str(self.workspace.root)
 
     # ---- sessions ----------------------------------------------------------
 
@@ -414,6 +424,8 @@ class GuiState:
         """Projects the switcher can offer: the one you are on, the ones other
         open sessions are on, and the ones opened before. Most useful first,
         de-duplicated by resolved path so one project is one entry."""
+        if self.projectless:
+            return []
         from ..project import recent_projects
         here = self.project_root(session_id)
         rows: list[dict] = [{"path": here, "label": Path(here).name or here,
@@ -663,6 +675,7 @@ class GuiState:
             "project": str(session.workspace.root),
             "lock_conflict": session.lock_conflict,
             "lock": lock_state(session.workspace.root),
+            "projectless": self.projectless,
         }
 
     def stop(self, session_id: int | None = None) -> None:
@@ -734,6 +747,9 @@ class GuiState:
             raise ToolError("this daemon runs against a remote workspace; projects cannot be switched")
         choice = resolve_project(project)
         target = _normalized(str(choice.workspace.root))
+        launcher_id = self.launcher_session_id
+        self.projectless = False
+        self.launcher_session_id = None
         self.closed_projects.discard(target)
         candidates = [s for s in self.sessions_summary(all_projects=True)
                       if _normalized(s.get("cwd") or "") == target]
@@ -741,6 +757,8 @@ class GuiState:
             session = self.load_session(max(candidates, key=lambda s: s["id"])["id"])
         else:
             session = self.new_session(project=project)
+        if launcher_id is not None and launcher_id != session.id:
+            self.sessions.pop(launcher_id, None)
         if choice.kind == "local":
             remember_workspace(choice.workspace.root)
         else:
@@ -1987,7 +2005,7 @@ def remember_token(host: str, port: int, token: str) -> None:
         pass
 
 
-def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1",
+def run_gui(path: str | None, model_spec: str | None, mode: str, host: str = "127.0.0.1",
             port: int = 8377, grants: list[str] | None = None,
             use_sandbox: bool = False, auto_push: bool = False,
             restart_args: list[str] | None = None, token: str | None = None,
@@ -2004,10 +2022,15 @@ def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1
         print(f"    silkcode gui --port {port + 1} <path>")
         return 1
     bound_host, bound_port = server.server_address[:2]
+    projectless = path is None and remote is None
+    if projectless:
+        launcher = config_dir() / "launcher"
+        launcher.mkdir(parents=True, exist_ok=True)
+        path = str(launcher)
     try:
         state = GuiState(path, model_spec, mode, grants=grants, use_sandbox=use_sandbox,
                          auto_push=auto_push, instance=f"{bound_host}:{bound_port}",
-                         remote=remote)
+                         remote=remote, projectless=projectless)
     except (ToolError, ConfigError) as exc:
         print(f"error: {exc}")
         server.server_close()
@@ -2042,7 +2065,8 @@ def run_gui(path: str, model_spec: str | None, mode: str, host: str = "127.0.0.1
     print(f"Silk Code GUI: {url}")
     if not is_loopback(host):
         _print_pairing(bound_port, token)
-    print(f"workspace: {state.workspace.root}")
+    print("workspace: choose a project in the GUI" if projectless
+          else f"workspace: {state.workspace.root}")
     first = state.get_session()
     print(f"model: {first.provider_name}/{first.model}   session: #{first.id}")
     print(f"instance: {state.instance}   (run another on a different --host/--port "

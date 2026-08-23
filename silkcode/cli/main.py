@@ -240,6 +240,7 @@ def cmd_review(argv: list[str]) -> int:
 
 def cmd_gui(argv: list[str]) -> int:
     parser = _repl_parser("silkcode gui")
+    parser.set_defaults(path=None)  # no path: choose a project in the GUI
     parser.add_argument("--port", type=int, default=8377)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--token", help="access token required on every request; "
@@ -249,7 +250,7 @@ def cmd_gui(argv: list[str]) -> int:
     from ..gui.server import run_gui
     # Normalized launch args so the daemon can re-exec itself with the same
     # configuration after a self-update (silkcode update / GUI Update button).
-    restart_args = ["gui", args.path or "."]
+    restart_args = ["gui"] + ([args.path] if args.path else [])
     if args.model:
         restart_args += ["--model", args.model]
     restart_args += ["--mode", args.mode]
