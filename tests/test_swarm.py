@@ -7,6 +7,7 @@ import pytest
 from silkcode.permissions import PermissionManager
 from silkcode.swarm import (
     _parse_critic,
+    _parse_team_plan,
     format_swarm_report,
     run_swarm,
     score_workspace,
@@ -113,6 +114,28 @@ def test_parse_critic_caps_suggestions():
     many = [{"title": f"s{i}", "detail": f"d{i}"} for i in range(20)]
     parsed = _parse_critic(json.dumps({"critique": "c", "suggestions": many}))
     assert len(parsed["suggestions"]) == 5
+
+
+def test_parse_team_plan_normalizes_assignments():
+    parsed = _parse_team_plan(json.dumps({
+        "summary": "Ship the useful slice",
+        "tasks": [
+            {"owner": "dev1", "title": "API", "detail": "Add endpoint",
+             "acceptance": ["returns 200"]},
+            {"owner": "manager", "title": "invalid owner"},
+        ],
+    }))
+    assert parsed["summary"] == "Ship the useful slice"
+    assert parsed["tasks"] == [{
+        "owner": "dev1", "title": "API", "detail": "Add endpoint",
+        "acceptance": ["returns 200"],
+    }]
+
+
+def test_parse_team_plan_handles_non_json():
+    parsed = _parse_team_plan("Plan the release carefully")
+    assert parsed["summary"] == "Plan the release carefully"
+    assert parsed["tasks"] == []
 
 
 # --------------------------------------------------------------------------- #

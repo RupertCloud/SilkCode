@@ -1083,7 +1083,7 @@ def _inference_discover(argv: list[str]) -> int:
     parser.add_argument("--host", action="append", dest="hosts", metavar="HOST",
                         help="check this host only (repeatable); skips the sweep")
     parser.add_argument("--port", action="append", type=int, dest="ports", metavar="PORT",
-                        help="extra port to try (repeatable)")
+                        help="port to try instead of defaults (repeatable)")
     parser.add_argument("--prefix", type=int, default=24,
                         help="how much of the subnet to sweep (default 24 = 254 addresses)")
     parser.add_argument("--timeout", type=float, default=0.35,
@@ -1091,8 +1091,10 @@ def _inference_discover(argv: list[str]) -> int:
     parser.add_argument("--token", help="bearer token, if the servers require one")
     args = parser.parse_args(argv)
 
-    ports = [p for p, _ in KNOWN_PORTS]
-    ports += [p for p in (args.ports or []) if p not in ports]
+    # An explicit port is an exact target. Besides making the command less
+    # surprising, this prevents an unrelated local model on a default port
+    # from masking a failed check of the address the user actually supplied.
+    ports = list(dict.fromkeys(args.ports)) if args.ports else [p for p, _ in KNOWN_PORTS]
     own = local_ipv4()
     if args.hosts:
         print(f"Checking {len(args.hosts)} host(s) on {len(ports)} ports ...")

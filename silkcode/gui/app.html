@@ -150,7 +150,9 @@
   #project-tabs .ptab.active { color: var(--accent); border-color: var(--accent); background: #202b36; }
   .modal button.danger { background: #4a2529; color: var(--err); }
   .modal label { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 2px; }
-  .modal input, .modal select { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+  .modal input, .modal select, .modal textarea { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font: inherit; }
+  .modal textarea { resize: vertical; }
+  .team-options { display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
 
   /* projects how-to */
   .howto h4 { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent);
@@ -299,6 +301,7 @@
              border-radius: 16px 16px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px)); }
     .modal .row { flex-wrap: wrap; }
     .modal .row button { min-height: 44px; flex: 1; }
+    .team-options { grid-template-columns: 1fr; }
     table.envtable { min-width: 680px; }
     #tabs { overflow-x: auto; }
   }
@@ -356,7 +359,7 @@
     <button id="github-btn">GitHub</button>
     <button id="pair-btn" title="Show a QR to open this session on a phone">📱 Pair</button>
     <button id="env-btn" title="Keys, token usage and running sessions">⚙ Environment</button>
-    <button id="swarm-btn" title="Multi-agent improvement loop: tester, critic and worker iterate until this project scores 10/10">🐝 Swarm</button>
+    <button id="swarm-btn" title="Run an AI software team or the classic improvement swarm">👥 Team</button>
     <button id="update-btn" title="Pull the latest Silk Code from git; the daemon restarts itself with the new code">↻ Update</button>
   </span>
 
@@ -642,17 +645,21 @@
 
 <div class="modal-bg" id="swarm-modal">
   <div class="modal" style="width:600px">
-    <h3>Improvement swarm <span id="swarm-status" style="font-size:12px;color:var(--dim)"></span></h3>
+    <h3>Software team <span id="swarm-status" style="font-size:12px;color:var(--dim)"></span></h3>
     <div style="color:var(--dim);font-size:12px;margin-bottom:8px">
-      Three agents — <b>tester</b> (investigates failures), <b>critic</b> (prioritized suggestions),
-      <b>worker</b> (implements them) — iterate on this project, scoring it 0–10 each round
-      (test suite + hygiene), until it reaches the target, the score stalls, or you stop it.
-      The worker asks you before modifying files or running commands — pick
+      A product team turns an objective into shared business, user, design and engineering briefs,
+      assigns focused work to developers, then tests and critiques the result until it reaches the
+      target, stalls, or you stop it. Developers ask before modifying files or running commands — pick
       <b>Yes to all</b> to approve everything for the rest of the session.
     </div>
 
-    <div id="swarm-pipeline" style="display:flex;align-items:center;gap:6px;justify-content:center;margin:6px 0 10px;font-size:12px">
+    <div id="swarm-pipeline" style="display:flex;align-items:center;gap:6px;overflow-x:auto;margin:6px 0 10px;padding-bottom:4px;font-size:12px">
       <span class="sw-phase" data-phase="score">score</span><span class="sw-arrow">→</span>
+      <span class="sw-phase team-phase" data-phase="business">business</span><span class="sw-arrow team-phase">→</span>
+      <span class="sw-phase team-phase" data-phase="user">user</span><span class="sw-arrow team-phase">→</span>
+      <span class="sw-phase team-phase" data-phase="designer">design</span><span class="sw-arrow team-phase">→</span>
+      <span class="sw-phase team-phase" data-phase="head">head</span><span class="sw-arrow team-phase">→</span>
+      <span class="sw-phase team-phase" data-phase="dev1">devs</span><span class="sw-arrow team-phase">→</span>
       <span class="sw-phase" data-phase="tester">tester</span><span class="sw-arrow">→</span>
       <span class="sw-phase" data-phase="critic">critic</span><span class="sw-arrow">→</span>
       <span class="sw-phase" data-phase="worker">worker</span><span class="sw-arrow">→</span>
@@ -662,8 +669,11 @@
     <div id="swarm-chart" style="display:none"></div>
     <div id="swarm-stats" style="font-size:12px;color:var(--dim);margin-bottom:10px"></div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px">
+    <div class="team-options">
       <div>
+        <label>Workflow</label><select id="sw-workflow"><option value="team">Software team</option><option value="classic">Classic 3-agent swarm</option></select>
+        <label>Product objective</label><textarea id="sw-objective" rows="4" placeholder="What should the team build or improve?"></textarea>
+        <label>Developers</label><select id="sw-dev-count"><option value="1">1 developer</option><option value="2">2 developers</option><option value="3" selected>3 developers</option></select>
         <label>Worker model</label><input id="sw-model" placeholder="default">
         <label>Critic model (optional)</label><input id="sw-critic-model" placeholder="default">
         <label>Tester model (optional)</label><input id="sw-tester-model" placeholder="default">
@@ -1629,8 +1639,20 @@ function setSwarmRunning(running) {
 
 function setSwarmPhase(phase) {
   document.querySelectorAll(".sw-phase").forEach(el => {
-    el.classList.toggle("active", el.dataset.phase === phase);
+    const devGroup = el.dataset.phase === "dev1" && /^dev[123]$/.test(phase || "");
+    el.classList.toggle("active", el.dataset.phase === phase || devGroup);
   });
+}
+
+function setTeamWorkflow() {
+  const team = $("sw-workflow").value === "team";
+  document.querySelectorAll(".team-phase").forEach(el => { el.style.display = team ? "" : "none"; });
+  for (const id of ["sw-objective", "sw-dev-count"]) {
+    const field = $(id);
+    field.style.display = team ? "" : "none";
+    if (field.previousElementSibling) field.previousElementSibling.style.display = team ? "" : "none";
+  }
+  $("sw-start").textContent = team ? "Start team" : "Start swarm";
 }
 
 function renderSwarmChart() {
@@ -1684,10 +1706,12 @@ function renderSwarmStatus(s) {
 
 $("swarm-btn").onclick = () => {
   $("swarm-modal").classList.add("open");
+  setTeamWorkflow();
   api("/api/swarm/status", {session_id: currentSessionId})
     .then(renderSwarmStatus)
     .catch(() => {});
 };
+$("sw-workflow").onchange = setTeamWorkflow;
 $("sw-cancel").onclick = () => $("swarm-modal").classList.remove("open");
 $("sw-start").onclick = async () => {
   const btn = $("sw-start");
@@ -1696,6 +1720,9 @@ $("sw-start").onclick = async () => {
   try {
     const body = {
       model: $("sw-model").value.trim() || undefined,
+      team_mode: $("sw-workflow").value === "team",
+      objective: $("sw-objective").value.trim() || undefined,
+      developer_count: parseInt($("sw-dev-count").value, 10) || 3,
       critic_model: $("sw-critic-model").value.trim() || undefined,
       tester_model: $("sw-tester-model").value.trim() || undefined,
       target: parseFloat($("sw-target").value) || 10,

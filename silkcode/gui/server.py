@@ -858,6 +858,12 @@ class GuiState:
         except (TypeError, ValueError) as exc:
             raise ConfigError(f"bad swarm option: {exc}") from exc
         test_command = str(params.get("test_command") or "").strip() or None
+        team_mode = bool(params.get("team_mode"))
+        objective = str(params.get("objective") or "").strip() or None
+        try:
+            developer_count = int(params.get("developer_count") or 3)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"bad developer count: {exc}") from exc
 
         status = {
             "running": True,
@@ -903,6 +909,9 @@ class GuiState:
                     # also writes under the session's workspace lock
                     worker_permissions=session.permissions,
                     worker_owner=session.lock_owner,
+                    team_mode=team_mode,
+                    objective=objective,
+                    developer_count=developer_count,
                 )
                 status["result"] = asdict(result)
                 self.broadcast({"type": "swarm_done", "session": session.id,
