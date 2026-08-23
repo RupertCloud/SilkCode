@@ -246,20 +246,34 @@ def test_the_version_is_derived_from_git_rather_than_written_down():
         "no fallback: a build with no git history would fail rather than ship"
 
 
-def test_the_build_backend_agrees_with_us_about_the_version():
-    """The check above reads the file; this one asks setuptools what it will
-    actually stamp on the wheel, which is the number that ends up in the
-    filename the release notes link to."""
-    setuptools = pytest.importorskip("setuptools")   # a build dep, not a runtime one
-    del setuptools
-    out = subprocess.run(
-        [sys.executable, "-c",
-         "from setuptools.config.pyprojecttoml import read_configuration as r;"
-         "print(r('pyproject.toml')['project']['version'])"],
-        cwd=ROOT, capture_output=True, text=True, timeout=120)
-    if out.returncode != 0:
-        pytest.skip(f"setuptools cannot read the config here: {out.stderr[-200:]}")
-    assert out.stdout.strip() == V.RELEASE
+def test_the_project_configures_the_scheme_it_relies_on():
+    """The behaviour the release depends on is `guess-next-dev`: at a tag the
+    version is the tag, after it the next patch as a .devN. Asking
+    setuptools_scm to recompute the version here would only re-derive what the
+    next test measures directly, and its defaults differ from this project's
+    config — so check the config, and let the build prove the behaviour.
+    """
+    scm = pytest.importorskip("setuptools_scm")   # a build dep, in dev for this
+    config = scm.Configuration.from_file(str(ROOT / "pyproject.toml"))
+    assert config.version_scheme == "guess-next-dev"
+    assert config.fallback_version, "a build with no git history would fail"
+
+
+def test_a_tagged_build_is_named_exactly_the_tag(tmp_path):
+    """The release notes link .../v0.2.0/silkcode-0.2.0-py3-none-any.whl, so a
+    build at a tag has to produce precisely that — no dev suffix, no local
+    segment, or the published link 404s on its own page."""
+    scm = pytest.importorskip("setuptools_scm")
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "clone", "--quiet", str(ROOT), str(repo)], check=True, timeout=300)
+    subprocess.run(["git", "-C", str(repo), "tag", "v9.9.9"], check=True, timeout=60)
+    assert scm.get_version(root=str(repo)) == "9.9.9"
+
+    subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-q", "--allow-empty", "-m", "after"], check=True, timeout=60)
+    after = scm.get_version(root=str(repo))
+    assert after.startswith("9.9.10.dev"), after
+    assert "+g" in after, f"the commit is not in the version: {after}"
 
 
 # release | pre-release | .devN from setuptools_scm | + local segment
