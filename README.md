@@ -312,12 +312,59 @@ from cellular or someone else's Wi-Fi — Silk Code detects that address
 becomes one pane at a time with a switcher — Chat, Project, Activity, Diff —
 and the composer pinned within thumb reach.
 
-> The token is the only thing standing between the network and an agent that
-> can run commands on your machine, so treat that URL as a shell credential.
-> Requests are rejected without it, cross-origin requests are refused, and a
-> DNS-rebinding guard checks the `Host` you were reached on. Prefer a tailnet
-> over forwarding a port on your router — a forwarded port puts the daemon on
-> the public internet with the token as the only gate.
+### What guards it
+
+The token is the only thing between the network and an agent that runs commands
+on your machine, so treat that URL as a shell credential.
+
+| Control | What it does |
+| --- | --- |
+| Access token | 192 bits from `secrets.token_urlsafe`, required on every request once the daemon is off loopback. Compared in constant time. |
+| Same-origin check | A browser attaches `Origin` to cross-origin requests; one that disagrees with the `Host` we were reached on is refused, so another site cannot start an agent turn on your behalf. |
+| DNS-rebinding guard | Decided on the *parsed* address, not the spelling — a name like `127.0.0.1.evil.example` resolves to loopback and would fool a prefix match. |
+| Cookie flags | `HttpOnly`, `SameSite=Strict`, so script cannot read the token and another site cannot ride the cookie. |
+| `Referrer-Policy: no-referrer` | The page is opened as `/?token=…` and links out; this stops the query reaching a third party rather than relying on a browser default. |
+| `X-Frame-Options: DENY`, `nosniff` | Not framed, not sniffed into another content type. |
+| Path confinement | File reads resolve and must sit under the workspace root. |
+| No request logging | The HTTP access log is off, so a token in a query string never lands in a log file. |
+
+**Two things it does not do**, worth knowing before you expose it:
+
+- **Traffic is plain HTTP.** On a tailnet WireGuard encrypts it; on open Wi-Fi
+  the token crosses the air in the clear. Prefer the tailnet.
+- **There is no rate limit.** A 192-bit token is not brute-forceable, so the
+  answer to knocking is visibility rather than lockout — see below.
+
+### Watching who connects
+
+`⚙ Environment → Connections` shows who is reaching the daemon:
+
+```
+1 active · 1 live stream · 4 refused requests
+
+ADDRESS         REQUESTS  REFUSED  CLIENT                    LAST SEEN
+100.101.102.103 ●     128        0  Mozilla/5.0 (iPhone…)     0s ago
+192.168.1.44           4        4  curl/8.4.0                12s ago
+
+Most recent refusals
+  192.168.1.44  token did not match  /api/state
+  192.168.1.44  no token presented   /
+```
+
+The daemon also says something on its own terminal the first time an address is
+refused, and again at 5, 25 and 100 — enough to notice a scanner, not enough to
+let one fill your scrollback:
+
+```
+refused 192.168.1.44 (once): no token presented on / [curl/8.4.0]
+```
+
+Presented tokens are never recorded, right or wrong: a wrong one is usually a
+real credential with a typo, or the right credential for a different daemon, and
+the record is rendered in a web page. Client strings are attacker-chosen, so they
+are capped, flattened to one line, and escaped at render. Rows are keyed by
+address, so devices behind one NAT share a row.
+
 
 ## CLI
 

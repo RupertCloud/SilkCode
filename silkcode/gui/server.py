@@ -35,6 +35,7 @@ from urllib.parse import parse_qs, urlparse
 from ..agent import Agent
 from ..agent.loop import DEFAULT_CONTEXT_TOKENS
 from ..config import Config, ConfigError
+from ..connections import ConnectionMonitor
 from ..context import build_context
 from ..lock import LockError, acquire, lock_state, release
 from ..permissions import PermissionManager
@@ -210,6 +211,9 @@ class GuiState:
         # tagged with it so `silkcode sessions` can tell instances apart when
         # several daemons run on the same machine.
         self.instance = instance
+        # Who is reaching this daemon, and who is being refused. Lives on the
+        # state rather than the handler because a handler is per-request.
+        self.connections = ConnectionMonitor()
         self.config = Config.load()
         self.remote_spec = remote
         if remote:
@@ -1045,6 +1049,26 @@ class GuiState:
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", "127.0.1.1"}
 
 
+_DENIAL_NOTICE_AT = {1, 5, 25, 100}
+
+
+def _warn_about_denial(denial: dict) -> None:
+    """Say something on the terminal when a request is refused.
+
+    Only at 1, 5, 25 and 100 refusals from a source: an operator should learn
+    that someone is knocking, and should not have their terminal filled by a
+    scanner. The token is 192 bits, so this is not brute-force defence - it is
+    so that "somebody is probing this" is visible at all.
+    """
+    count = denial.get("count", 1)
+    if count not in _DENIAL_NOTICE_AT:
+        return
+    agent = denial.get("agent") or "no user-agent"
+    times = "once" if count == 1 else f"{count} times"
+    print(f"refused {denial['address']} ({times}): {denial['reason']} "
+          f"on {denial['path']} [{agent[:60]}]", file=sys.stderr)
+
+
 def is_loopback(host: str) -> bool:
     """Whether `host` addresses this machine and only this machine.
 
@@ -1081,6 +1105,23 @@ class GuiHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):  # noqa: A002 - BaseHTTPRequestHandler API
         pass
+
+    def _security_headers(self) -> None:
+        """Headers every response carries.
+
+        `Referrer-Policy` is the one that earns its place: the page is opened
+        as `/?token=...` and links out to silkcode.web.app, so a click could
+        carry the query to a third party. Current browsers default to
+        strict-origin-when-cross-origin and would strip it, but that is a
+        browser default being relied on rather than a decision here, and what
+        is at stake is a credential worth a shell on this machine.
+
+        The other two are cheap and uncontroversial: never sniff a response
+        into a different type, and never let this page be framed.
+        """
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
 
     def _presented_token(self) -> str:
         """The token from the header, the cookie, or the query string."""
@@ -1131,14 +1172,44 @@ class GuiHandler(BaseHTTPRequestHandler):
     def _authorized(self) -> bool:
         """No token configured (loopback) means no token check; otherwise every
         request must carry it, compared in constant time. Either way the
-        request must not have been made on another site's behalf."""
+        request must not have been made on another site's behalf.
+
+        The outcome is handed to the connection monitor on the way past. That
+        is bookkeeping, not a control - the decision is already made by the
+        time it is recorded - but a refusal nobody can see is a refusal nobody
+        can act on."""
+        allowed, reason = self._decide()
+        self._note(allowed, reason)
+        return allowed
+
+    def _decide(self) -> tuple[bool, str]:
         if not self._same_origin():
-            return False
+            return False, "cross-origin or unserved host"
         if not self.token:
-            return True
+            return True, ""
         import hmac
         presented = self._presented_token()
-        return bool(presented) and hmac.compare_digest(presented, self.token)
+        if not presented:
+            return False, "no token presented"
+        # The token itself is never recorded, right or wrong: a wrong one is
+        # usually a real credential with a typo, or the right credential for
+        # a different daemon.
+        if not hmac.compare_digest(presented, self.token):
+            return False, "token did not match"
+        return True, ""
+
+    def _note(self, allowed: bool, reason: str) -> None:
+        monitor = getattr(self.state, "connections", None)
+        if monitor is None:
+            return
+        denial = monitor.record(
+            address=self.client_address[0] if self.client_address else "?",
+            path=urlparse(self.path).path,
+            agent=self.headers.get("User-Agent", ""),
+            allowed=allowed, reason=reason,
+        )
+        if denial:
+            _warn_about_denial(denial)
 
     def _deny(self) -> None:
         if not self._same_origin():
@@ -1153,6 +1224,7 @@ class GuiHandler(BaseHTTPRequestHandler):
             status = 401
         try:
             self.send_response(status)
+            self._security_headers()
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -1164,6 +1236,7 @@ class GuiHandler(BaseHTTPRequestHandler):
         body = json.dumps(data).encode()
         try:
             self.send_response(status)
+            self._security_headers()
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -1215,6 +1288,7 @@ class GuiHandler(BaseHTTPRequestHandler):
         try:
             if route == "/":
                 self.send_response(200)
+                self._security_headers()
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Cache-Control", "no-store")  # never serve a stale UI
                 if self.token:
@@ -1245,6 +1319,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json(st.sessions_summary(sid, _flag(params, "all")))
             elif route == "/api/environment":
                 self._json(st.environment())
+            elif route == "/api/connections":
+                self._json(st.connections.snapshot())
             elif route == "/api/github/status":
                 self._json(st.github_status(sid))
             elif route == "/api/events":
@@ -1261,8 +1337,12 @@ class GuiHandler(BaseHTTPRequestHandler):
     def _sse(self) -> None:
         st = self.state
         q = st.subscribe()
+        monitor = getattr(st, "connections", None)
+        if monitor:
+            monitor.stream_opened()
         try:
             self.send_response(200)
+            self._security_headers()
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
@@ -1277,6 +1357,8 @@ class GuiHandler(BaseHTTPRequestHandler):
             pass
         finally:
             st.unsubscribe(q)
+            if monitor:
+                monitor.stream_closed()
 
     def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
         if not self._authorized():
