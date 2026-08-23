@@ -239,11 +239,15 @@ def available_projects() -> list[dict]:
     from .github import list_github_repos
     items: list[dict] = []
     for r in list_github_repos():
+        owner, _, repo = r["full_name"].partition("/")
+        local_path = local_path_for_github(owner, repo)
         items.append({
             "kind": "github",
             "spec": "github:" + r["full_name"],
             "label": "github/" + r["full_name"],
             "github_owner_repo": r["full_name"],
+            "local_path": str(local_path),
+            "downloaded": (local_path / ".git").is_dir(),
         })
     seen_specs = {i["spec"] for i in items}
     for recent in recent_projects():

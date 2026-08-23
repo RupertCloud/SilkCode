@@ -148,6 +148,14 @@
   .modal button { padding: 6px 14px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel2); color: var(--text); cursor: pointer; }
   .modal button.primary { background: var(--accent); color: #10222e; border: 0; font-weight: 700; }
   #project-tabs .ptab.active { color: var(--accent); border-color: var(--accent); background: #202b36; }
+  .project-row { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+                 width: 100%; text-align: left; margin: 4px 0; padding: 9px 10px; cursor: pointer; }
+  .project-row:hover { border-color: #536276; background: #202833; }
+  .project-row.selected { color: var(--text); border-color: var(--accent); background: #20333e;
+                          box-shadow: inset 3px 0 var(--accent); }
+  .project-row .project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .project-row .project-state { flex: none; color: var(--dim); font-size: 11px; }
+  .project-row.selected .project-state { color: var(--accent); }
   .modal button.danger { background: #4a2529; color: var(--err); }
   .modal label { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 2px; }
   .modal input, .modal select, .modal textarea { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font: inherit; }
@@ -1467,16 +1475,40 @@ function paintProjectTabs() {
   });
   $("project-modal").querySelector("h3").textContent =
     activeProjectTab === "new" ? "Create a project with Swarm" : "Open project";
-  $("project-confirm").textContent = activeProjectTab === "new" ? "Create & start Swarm" : "Open";
+  $("project-confirm").textContent = activeProjectTab === "new"
+    ? "Create & start Swarm"
+    : (selectedProject && selectedProject.startsWith("github:") ? "Fetch & open" : "Open");
 }
 
-function projectRow(label, spec) {
+function projectRow(label, spec, meta = {}) {
   const row = document.createElement("button");
   row.className = "project-row";
-  row.style.cssText = "display:block;width:100%;text-align:left;margin:2px 0;padding:6px 8px;cursor:pointer";
-  row.textContent = label;
+  row.type = "button";
+  row.dataset.projectSpec = spec;
+  row.setAttribute("aria-pressed", "false");
+  const name = document.createElement("span");
+  name.className = "project-name";
+  name.textContent = label;
+  row.appendChild(name);
+  if (meta.state) {
+    const state = document.createElement("span");
+    state.className = "project-state";
+    state.textContent = meta.state;
+    row.appendChild(state);
+  }
   row.title = spec;
-  row.onclick = () => { selectedProject = spec; paintProjectTabs(); $("project-confirm").focus(); };
+  row.onclick = () => {
+    selectedProject = spec;
+    activeProjectTab = spec.startsWith("github:") ? "github" : "local";
+    document.querySelectorAll("#project-modal .project-row").forEach(candidate => {
+      const on = candidate === row;
+      candidate.classList.toggle("selected", on);
+      candidate.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    $("project-error").textContent = "";
+    paintProjectTabs();
+  };
+  row.ondblclick = () => $("project-confirm").click();
   return row;
 }
 
@@ -1510,11 +1542,17 @@ function renderProjectList(projects) {
   }
   $("project-github-connect").style.display = "none";
   $("project-github-status").textContent =
-    `${github.length} repositor${github.length === 1 ? "y" : "ies"} — click one:`;
+    `${github.length} repositor${github.length === 1 ? "y" : "ies"} — select one, then choose Fetch & open.`;
   for (const p of github) {
     let txt = "github/" + p.github_owner_repo;
     if (p.label !== "github/" + p.github_owner_repo) txt += "  (" + p.label + ")";
-    repos.appendChild(projectRow(txt, "github:" + p.github_owner_repo));
+    const row = projectRow(txt, "github:" + p.github_owner_repo, {
+      state: p.downloaded ? "update local copy" : "clone locally",
+    });
+    row.title = p.downloaded
+      ? `Fetch changes into ${p.local_path}, then open it`
+      : `Clone into ${p.local_path}, then open it`;
+    repos.appendChild(row);
   }
 }
 
@@ -1584,7 +1622,8 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && $("projects-help-modal").classList.contains("open")) closeProjectsHelp();
 });
 $("project-confirm").onclick = async () => {
-  $("project-confirm").disabled = true;
+  const confirm = $("project-confirm");
+  confirm.disabled = true;
   try {
     if (activeProjectTab === "new") {
       const objective = $("project-new-objective").value.trim();
@@ -1616,12 +1655,13 @@ $("project-confirm").onclick = async () => {
     const path = $("project-path").value.trim();
     const target = path || selectedProject;
     if (!target) throw new Error("Choose a recent project or enter a directory.");
+    if (target.startsWith("github:")) confirm.textContent = "Fetching…";
     const state = await api("/api/project/open", {project: target, session_id: currentSessionId});
     $("project-modal").classList.remove("open");
     currentSessionId = state.session_id;
     init();
   } catch (err) { $("project-error").textContent = err.message; }
-  finally { $("project-confirm").disabled = false; }
+  finally { confirm.disabled = false; paintProjectTabs(); }
 };
 $("revert").onclick = async () => {
   try {

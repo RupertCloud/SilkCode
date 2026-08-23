@@ -243,6 +243,18 @@ def test_available_projects_merges_github_and_recents(home, monkeypatch):
     items = available_projects()
     assert {"github:acme/widget", "/work/thing"} == {i["spec"] for i in items}
     assert items[0]["kind"] == "github", "GitHub repos come first"
+    assert items[0]["downloaded"] is False
+    assert items[0]["local_path"] == str(local_path_for_github("acme", "widget"))
+
+
+def test_available_project_marks_an_existing_managed_clone(home, monkeypatch):
+    monkeypatch.setattr("silkcode.github.list_github_repos",
+                        lambda: [{"full_name": "acme/widget", "description": "d"}])
+    (local_path_for_github("acme", "widget") / ".git").mkdir(parents=True)
+
+    item = available_projects()[0]
+
+    assert item["downloaded"] is True
 
 
 def test_a_recent_github_repo_is_not_listed_twice(home, monkeypatch):

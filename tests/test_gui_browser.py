@@ -786,6 +786,39 @@ def test_github_project_tab_can_be_selected_and_connects(browser, two_project_gu
     assert page.locator("#github-modal").evaluate("el => el.classList.contains('open')")
 
 
+def test_github_repository_selection_is_visible_and_fetches(browser, two_project_gui):
+    url, _alpha, _beta = two_project_gui
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    page.route("**/api/projects", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps([{
+            "kind": "github", "spec": "github:acme/widget",
+            "label": "github/acme/widget", "github_owner_repo": "acme/widget",
+            "local_path": "/managed/projects/acme-widget", "downloaded": False,
+        }])))
+    opened = []
+    page.route("**/api/project/open", lambda route: (
+        opened.append(route.request.post_data_json()["project"]),
+        route.fulfill(status=200, content_type="application/json",
+                      body=json.dumps({"session_id": 1}))))
+    page.goto(url)
+    wait_for_switcher(page)
+    page.click("#project-add")
+    page.wait_for_selector("#project-github-list .project-row")
+
+    row = page.locator("#project-github-list .project-row")
+    row.click()
+    assert "selected" in row.get_attribute("class")
+    assert row.get_attribute("aria-pressed") == "true"
+    assert page.locator("#project-confirm").text_content() == "Fetch & open"
+    assert "clone locally" in row.text_content()
+    assert "/managed/projects/acme-widget" in row.get_attribute("title")
+
+    page.click("#project-confirm")
+    page.wait_for_function("() => !document.getElementById('project-modal').classList.contains('open')")
+    assert opened == ["github:acme/widget"]
+
+
 def test_new_conversation_and_open_project_are_separate_actions(browser, two_project_gui):
     url, _alpha, _beta = two_project_gui
     page = browser.new_page(viewport={"width": 1400, "height": 900})
