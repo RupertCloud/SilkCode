@@ -259,16 +259,21 @@
 
     <h3 style="margin-top:34px">Then check what you installed</h3>
     <pre class="code"><span class="p">$</span> silkcode version
-<span class="cm">Silk Code 0.1.0+gd4e5f6a
-  source    commit d4e5f6a on main
+<span class="cm">Silk Code 0.2.0+ga07e7a8
+  source    commit a07e7a8 on main
   update    silkcode update
   install   /usr/local/lib/python3.12/site-packages/silkcode</span></pre>
 
     <p>That is worth running once now. Because <code>silkcode update</code> pulls whatever is on the
     branch, the release number alone identifies nothing — everyone tracking <code>main</code> reports
-    "0.1.0" while running different code. The commit in that output is what actually names your
+    the same one while running different code. The <code>+g</code> suffix is what actually names your
     build, and the <code>update</code> line names the command that updates <em>this particular</em>
     install, which differs between a git checkout, a pip install from git, and a wheel.</p>
+
+    <p>A <code>pip install git+https://…</code> reports that suffix too, which it did not always do:
+    pip records the commit it resolved, and <code>silkcode version</code> reads it when there is no
+    checkout to ask. Without that, the most common install was the one whose bug reports said
+    least.</p>
 
     <div class="note"><b>Updating.</b> <code>silkcode update</code> fast-forwards a checkout, or
     reinstalls a pip install from the URL and branch pip recorded when you installed it. Every
