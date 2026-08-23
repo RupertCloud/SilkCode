@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Set up Silk Code on macOS, Linux or Windows, run the models on your laptop, and drive the agent from your phone over LAN or a Tailscale tailnet.">
+<link rel="canonical" href="https://silkcode.web.app/setup.html">
+<title>Setup · Silk Code</title>
+</head>
+<body>
+<style>
+  :root {
+    /* dark-first: the product's own palette (matches the landing page) */
+    --bg: #14161a; --panel: #1b1e24; --panel-2: #20242c; --border: #2b303a;
+    --text: #d7dae0; --dim: #8d95a3; --accent: #5cc8ff; --gold: #e6c07b;
+    --ok: #7ad48a; --err: #e06c75;
+    --thread: linear-gradient(180deg, var(--gold), var(--accent));
+    --code-bg: #101216;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f3f4f7; --panel: #ffffff; --panel-2: #eef0f4; --border: #d9dde5;
+      --text: #1b1e24; --dim: #5c6472; --accent: #0d76b8; --gold: #9a6f22;
+      --ok: #257a3e; --err: #b3392f;
+      --code-bg: #1b1e24;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f3f4f7; --panel: #ffffff; --panel-2: #eef0f4; --border: #d9dde5;
+    --text: #1b1e24; --dim: #5c6472; --accent: #0d76b8; --gold: #9a6f22;
+    --ok: #257a3e; --err: #b3392f;
+    --code-bg: #1b1e24;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 16px/1.65 var(--sans); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; position: relative; }
+  .thread { position: absolute; left: 3px; top: 0; bottom: 0; width: 2px;
+            background: var(--thread); opacity: .45; }
+  @media (max-width: 720px) { .thread { display: none; } }
+
+  h1, h2, h3, h4 { font-family: var(--mono); text-wrap: balance; }
+  h2 { font-size: 26px; margin-bottom: 6px; letter-spacing: -.01em; }
+  h3 { font-size: 17px; margin-bottom: 6px; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .22em;
+             text-transform: uppercase; color: var(--gold); display: flex;
+             align-items: center; gap: 10px; }
+  .eyebrow::before { content: ""; width: 26px; height: 2px; background: var(--thread); display: inline-block; }
+  section { padding: 52px 0 8px; scroll-margin-top: 70px; }
+  section > p.lede { color: var(--dim); max-width: 64ch; margin: 6px 0 20px; }
+  p { max-width: 72ch; }
+  p + p { margin-top: 12px; }
+
+  /* top bar */
+  .topbar { position: sticky; top: 0; z-index: 5; background: var(--bg);
+            border-bottom: 1px solid var(--border); }
+  .topbar .wrap { display: flex; align-items: center; gap: 18px; padding-top: 12px;
+                  padding-bottom: 12px; flex-wrap: wrap; }
+  .topbar .home { font-family: var(--mono); font-weight: 700; color: var(--text); }
+  .topbar .home .silk { color: var(--accent); }
+  .topbar nav { display: flex; gap: 16px; font-size: 14px; flex-wrap: wrap; }
+
+  header.page { padding: 56px 0 12px; }
+  header.page h1 { font-size: clamp(32px, 5.4vw, 46px); letter-spacing: -.03em; line-height: 1.1; }
+  header.page .tag { font-size: 18px; color: var(--dim); max-width: 62ch; margin: 14px 0 6px; }
+  .promise { font-family: var(--mono); font-size: 15px; color: var(--gold);
+             border-left: 2px solid var(--gold); padding: 4px 0 4px 14px; margin: 20px 0 6px; }
+
+  pre.code { background: var(--code-bg); color: #d7dae0; border: 1px solid var(--border);
+             border-radius: 10px; padding: 14px 18px; font: 13.5px/1.7 var(--mono);
+             overflow-x: auto; margin-top: 12px; }
+  pre.code .cm { color: #8d95a3; }
+  pre.code .p { color: #5cc8ff; font-weight: 700; }
+  pre.code .g { color: #7ad48a; }
+  code { font-family: var(--mono); font-size: .92em; background: var(--panel-2);
+         padding: 1.5px 6px; border-radius: 5px; }
+  pre.code code { background: none; padding: 0; }
+
+  table.cmds { border-collapse: collapse; width: 100%; font-size: 14.5px; margin-top: 16px; }
+  .cmds th { text-align: left; font-family: var(--mono); font-size: 12px; letter-spacing: .1em;
+             text-transform: uppercase; color: var(--gold); padding: 0 12px 6px 0;
+             border-bottom: 1px solid var(--border); }
+  .cmds td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .cmds td:first-child { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
+  .cmds td:last-child { color: var(--dim); }
+  .table-scroll { overflow-x: auto; }
+
+  /* grid children default to min-width:auto, so a long line inside a code block
+     widens its track and the whole page scrolls sideways on a phone; 0 lets the
+     block's own overflow-x do the scrolling instead */
+  .step > *, .cell { min-width: 0; }
+
+  .step { display: grid; grid-template-columns: 56px 1fr; gap: 18px; margin: 26px 0; }
+  .step-no { font-family: var(--mono); font-size: 22px; color: var(--gold);
+             border-top: 2px solid var(--gold); padding-top: 8px; font-variant-numeric: tabular-nums; }
+  .step p { color: var(--dim); font-size: 15px; margin: 8px 0; max-width: 64ch; }
+  @media (max-width: 600px) { .step { grid-template-columns: 1fr; gap: 6px; } }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+          gap: 14px; margin-top: 22px; }
+  .cell { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+          padding: 18px 18px 16px; }
+  .cell h3 { font-size: 15px; color: var(--accent); margin-bottom: 8px; }
+  .cell p { font-size: 14px; color: var(--dim); }
+
+  .note { border-left: 2px solid var(--accent); background: var(--panel);
+          padding: 12px 16px; border-radius: 0 8px 8px 0; margin-top: 18px;
+          font-size: 14.5px; color: var(--dim); }
+  .note b { color: var(--text); }
+
+  dl.faq { margin-top: 18px; }
+  dl.faq dt { font-family: var(--mono); font-size: 14.5px; color: var(--text);
+              margin-top: 18px; }
+  dl.faq dd { margin: 6px 0 0; color: var(--dim); font-size: 15px; max-width: 72ch; }
+
+  footer { margin-top: 70px; padding: 28px 0 46px; border-top: 1px solid var(--border);
+           color: var(--dim); font-size: 14px; display: flex; gap: 18px; flex-wrap: wrap; }
+  footer .spacer { flex: 1; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .cell { transition: border-color .15s ease, transform .15s ease; }
+    .cell:hover { border-color: var(--accent); transform: translateY(-2px); }
+  }
+</style>
+<style>
+  /* the pairing banner is terminal output, and reads as such */
+  .term { background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px;
+          overflow: hidden; margin-top: 14px; }
+  .term-bar { display: flex; gap: 7px; padding: 11px 14px; border-bottom: 1px solid var(--border); }
+  .term-bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--border); }
+  .term pre { padding: 16px 20px 20px; font: 13px/1.6 var(--mono); color: #d7dae0; overflow-x: auto; }
+  .term .c { color: #8d95a3; }
+  .term .t { color: #e6c07b; }
+  .term .g { color: #7ad48a; }
+  .term .qr { display: block; margin: 4px 0 2px; border-radius: 4px; }
+  /* the nav links straight to #os-windows, and the topbar is sticky - without
+     this the heading it lands on sits underneath the bar */
+  .os { border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px 20px;
+        margin-top: 18px; background: var(--panel); scroll-margin-top: 70px; }
+  .os h3 { color: var(--accent); font-size: 16px; margin-bottom: 10px; }
+  .os p { font-size: 15px; color: var(--dim); }
+  .os .note { margin-top: 14px; }
+  /* Eight links wrapped onto three rows, and the bar is sticky - a fifth of a
+     phone screen permanently spent on navigation. One row that scrolls sideways
+     within itself costs 51px instead of 171px, and the page still does not
+     scroll sideways because the overflow is the nav's own.
+     Width alone misses a phone in landscape - 844px wide, ~390px tall - which
+     is why height is the second way in, as in the app's own stylesheet. */
+  @media (max-width: 720px), (max-height: 480px) {
+    /* min-width:auto is the flex default, so without this the nav refuses to
+       shrink below its content and pushes the whole page sideways instead of
+       scrolling within itself. */
+    .topbar nav { flex-wrap: nowrap; overflow-x: auto; min-width: 0;
+                  scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .topbar nav::-webkit-scrollbar { display: none; }
+    .topbar nav a { white-space: nowrap; }
+    .topbar .wrap { flex-wrap: nowrap; gap: 14px; }
+    .topbar .home { flex-shrink: 0; }
+  }
+  /* An inline path or URL has no spaces to break at, so it runs off the side of
+     a phone and takes the page with it (the Tailscale app-bundle path is 52
+     characters). Breaking mid-token is the lesser evil in a narrow column. */
+  code { overflow-wrap: anywhere; }
+  .warn { border-left-color: var(--gold); }
+  .warn b { color: var(--gold); }
+</style>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="home" href="./"><span class="silk">Silk</span> Code</a>
+    <nav aria-label="On this page">
+      <a href="#install">Install</a>
+      <a href="#os-windows">Windows</a>
+      <a href="#which">Which way round</a>
+      <a href="#gui">Phone as screen</a>
+      <a href="#inference">Laptop as GPU</a>
+      <a href="#anywhere">From anywhere</a>
+      <a href="#security">Security</a>
+      <a href="#reference">Reference</a>
+    </nav>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="thread" aria-hidden="true"></div>
+
+  <header class="page">
+    <p class="eyebrow">How to · Setup</p>
+    <h1>Setting Silk Code up</h1>
+    <p class="tag">From nothing installed to typing at your agent from a phone on the train, with
+    the model running on the laptop you left at home. Install takes one command; the rest of this
+    page is about splitting the work across machines.</p>
+    <p class="promise">The phone is a good place to drive a coding agent.<br>It is a poor place to run the model.</p>
+  </header>
+
+  <section id="install">
+    <p class="eyebrow">Step one</p>
+    <h2>Install</h2>
+    <p class="lede">Python 3.10 or newer, and git. The only runtime dependency is
+    <code>httpx</code> — everything else, down to the QR encoder further down this page, is written
+    against the standard library. Pick your platform; the differences are real but small.</p>
+
+    <div class="os" id="os-macos">
+      <h3>macOS</h3>
+      <p>macOS ships Python 3.9, which is below the floor. Install a current one first — either from
+      python.org or with Homebrew.</p>
+      <pre class="code"><span class="p">$</span> brew install python@3.12 git
+<span class="p">$</span> pip3 install git+https://github.com/RupertCloud/SilkCode
+<span class="p">$</span> silkcode version</pre>
+      <p>The first time you run the GUI with <code>--host 0.0.0.0</code>, macOS asks whether Python
+      may accept incoming connections. Say yes, or the phone will simply time out.</p>
+    </div>
+
+    <div class="os" id="os-linux">
+      <h3>Linux</h3>
+      <p>On Debian 12+, Ubuntu 23.04+, Fedora 38+ and their relatives, the system Python is marked
+      externally managed, so a plain <code>pip install</code> stops with
+      <code>error: externally-managed-environment</code>. That is the distribution protecting its own
+      packages, not a Silk Code problem. Install it in its own environment instead —
+      <code>pipx</code> is the least fuss for a command-line tool.</p>
+      <pre class="code"><span class="p">$</span> sudo apt install pipx git        <span class="cm"># or dnf / pacman</span>
+<span class="p">$</span> pipx install git+https://github.com/RupertCloud/SilkCode
+<span class="p">$</span> silkcode version</pre>
+      <p>A virtual environment works just as well if you prefer one:</p>
+      <pre class="code"><span class="p">$</span> python3 -m venv ~/.venvs/silkcode
+<span class="p">$</span> ~/.venvs/silkcode/bin/pip install git+https://github.com/RupertCloud/SilkCode</pre>
+      <p>If a firewall is active, the GUI port needs opening before another device can reach it:
+      <code>sudo ufw allow 8377/tcp</code>.</p>
+    </div>
+
+    <div class="os" id="os-windows">
+      <h3>Windows</h3>
+      <p>PowerShell throughout. <code>py</code> is the launcher that comes with the python.org build
+      and is the reliable way to reach the right interpreter.</p>
+      <pre class="code"><span class="p">&gt;</span> winget install Python.Python.3.12 Git.Git
+<span class="p">&gt;</span> py -m pip install git+https://github.com/RupertCloud/SilkCode
+<span class="p">&gt;</span> silkcode version</pre>
+      <p>If that last line reports that <code>silkcode</code> is not recognised, the install
+      succeeded but the Scripts directory is not on your <code>PATH</code>. Either add it, or skip
+      the shim entirely — <code>py -m silkcode.cli.main version</code> runs the same code, and every
+      command on this page works that way.</p>
+      <div class="note warn"><b>The firewall prompt is the one to watch.</b> The first time you bind
+      <code>--host 0.0.0.0</code>, Windows Defender asks which networks Python may accept connections
+      on. Tick <b>Private networks</b>. If that dialog is dismissed — and it is easy to dismiss —
+      Windows blocks the port silently, and the symptom on the phone is an indefinite hang rather
+      than any error worth reading.</div>
+      <p>One syntax difference to know about elsewhere on this page: PowerShell does not accept
+      <code>VAR=value command</code>. Where a POSIX shell takes
+      <code>OLLAMA_HOST=0.0.0.0:11434 ollama serve</code>, set it in your user environment variables
+      instead — which is exactly what <code>silkcode inference host</code> tells you to do when it
+      detects you are on Windows.</p>
+    </div>
+
+    <h3 style="margin-top:34px">Then check what you installed</h3>
+    <pre class="code"><span class="p">$</span> silkcode version
+<span class="cm">Silk Code 0.1.0+gd4e5f6a
+  source    commit d4e5f6a on main
+  update    silkcode update
+  install   /usr/local/lib/python3.12/site-packages/silkcode</span></pre>
+
+    <p>That is worth running once now. Because <code>silkcode update</code> pulls whatever is on the
+    branch, the release number alone identifies nothing — everyone tracking <code>main</code> reports
+    "0.1.0" while running different code. The commit in that output is what actually names your
+    build, and the <code>update</code> line names the command that updates <em>this particular</em>
+    install, which differs between a git checkout, a pip install from git, and a wheel.</p>
+
+    <div class="note"><b>Updating.</b> <code>silkcode update</code> fast-forwards a checkout, or
+    reinstalls a pip install from the URL and branch pip recorded when you installed it. Every
+    subcommand also answers to its flag form, so <code>silkcode -update</code> and
+    <code>silkcode --update</code> do the same thing. If nothing has changed it says so, rather than
+    announcing an update that did not happen.</div>
+  </section>
+
+  <section id="which">
+    <p class="eyebrow">The decision</p>
+    <h2>Which machine does what</h2>
+    <p class="lede">There are two ways to involve a phone, and they are mirror images. Picking the
+    wrong one is the single most common way to end up fighting this, so it is worth thirty seconds
+    up front.</p>
+
+    <div class="table-scroll">
+    <table class="cmds">
+      <thead><tr><th>Setup</th><th>Silk Code runs</th><th>The model runs</th><th>You type on</th><th>Good when</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>silkcode gui<br>--host 0.0.0.0</td>
+          <td>laptop</td>
+          <td>laptop or cloud</td>
+          <td>phone browser</td>
+          <td>Your code, tools and git are on the laptop. Almost always this one.</td>
+        </tr>
+        <tr>
+          <td>silkcode<br>inference link</td>
+          <td>phone <span class="cm">(or any second machine)</span></td>
+          <td>laptop</td>
+          <td>that machine</td>
+          <td>Silk Code is installed where you are typing, and you only want the laptop's GPU.</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>The first is the one most people want. Your repository, your test runner and your git
+    credentials live on the laptop; the phone is a screen and a keyboard for them. The second exists
+    because a phone or a light laptop can run Silk Code perfectly well and simply has no GPU worth
+    using — so only inference crosses the network.</p>
+  </section>
+
+  <section id="gui">
+    <p class="eyebrow">Setup A</p>
+    <h2>Phone as a screen for the laptop</h2>
+    <p class="lede">Run the GUI daemon bound to every interface instead of loopback. That one flag is
+    the whole difference — and it is also why the default is loopback, since binding wider puts a
+    shell-equivalent daemon on whatever network you are attached to.</p>
+
+    <div class="step">
+      <div class="step-no">1</div>
+      <div>
+        <h3>Start the daemon so something else can reach it</h3>
+        <p>Without <code>--host</code> it binds <code>127.0.0.1</code>, which on a phone means the
+        phone — nothing else on the network can connect, however good the Wi-Fi is.</p>
+        <pre class="code"><span class="p">$</span> silkcode gui ~/code/my-project --host 0.0.0.0</pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-no">2</div>
+      <div>
+        <h3>Scan what it prints</h3>
+        <p>Because the daemon is now reachable beyond this machine, it generates an access token by
+        itself — you do not pass <code>--token</code> unless you want to pin a stable one across
+        restarts. The token is 32 characters and no fun to retype on a phone keyboard, so the URL
+        carrying it is also drawn as a QR code.</p>
+        <div class="term" role="img" aria-label="The Silk Code pairing banner: an access token URL, the addresses another device can reach, and a QR code">
+          <div class="term-bar"><i></i><i></i><i></i></div>
+          <pre><span class="c">This daemon is reachable beyond this machine, so it requires an access token.
+Open the URL below (it carries the token); share it with nobody you would not
+give a shell on this machine.</span>
+
+Silk Code GUI: http://localhost:8377/?token=<span class="t">4Y55WNL_lY9n1lkomrrcnHQD2dJsCk2F</span>
+
+Reachable from another device:
+  http://192.168.1.20:8377/?token=<span class="t">…</span>
+      <span class="c">LAN - same network only</span>
+
+Point a phone camera at this to open it (LAN):
+
+<svg class="qr" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 45 45" width="150" height="150" shape-rendering="crispEdges" role="img" aria-label="QR code encoding the pairing URL shown above"><rect width="45" height="45" fill="#fff"/><g fill="#000"><rect x="4" y="4" width="7" height="1"/><rect x="13" y="4" width="4" height="1"/><rect x="19" y="4" width="1" height="1"/><rect x="21" y="4" width="1" height="1"/><rect x="31" y="4" width="2" height="1"/><rect x="34" y="4" width="7" height="1"/><rect x="4" y="5" width="1" height="1"/><rect x="10" y="5" width="1" height="1"/><rect x="17" y="5" width="1" height="1"/><rect x="20" y="5" width="1" height="1"/><rect x="22" y="5" width="1" height="1"/><rect x="24" y="5" width="1" height="1"/><rect x="26" y="5" width="3" height="1"/><rect x="31" y="5" width="1" height="1"/><rect x="34" y="5" width="1" height="1"/><rect x="40" y="5" width="1" height="1"/><rect x="4" y="6" width="1" height="1"/><rect x="6" y="6" width="3" height="1"/><rect x="10" y="6" width="1" height="1"/><rect x="12" y="6" width="2" height="1"/><rect x="16" y="6" width="2" height="1"/><rect x="19" y="6" width="1" height="1"/><rect x="25" y="6" width="3" height="1"/><rect x="30" y="6" width="3" height="1"/><rect x="34" y="6" width="1" height="1"/><rect x="36" y="6" width="3" height="1"/><rect x="40" y="6" width="1" height="1"/><rect x="4" y="7" width="1" height="1"/><rect x="6" y="7" width="3" height="1"/><rect x="10" y="7" width="1" height="1"/><rect x="12" y="7" width="3" height="1"/><rect x="16" y="7" width="1" height="1"/><rect x="21" y="7" width="2" height="1"/><rect x="24" y="7" width="1" height="1"/><rect x="27" y="7" width="3" height="1"/><rect x="31" y="7" width="2" height="1"/><rect x="34" y="7" width="1" height="1"/><rect x="36" y="7" width="3" height="1"/><rect x="40" y="7" width="1" height="1"/><rect x="4" y="8" width="1" height="1"/><rect x="6" y="8" width="3" height="1"/><rect x="10" y="8" width="1" height="1"/><rect x="12" y="8" width="1" height="1"/><rect x="14" y="8" width="1" height="1"/><rect x="17" y="8" width="1" height="1"/><rect x="19" y="8" width="1" height="1"/><rect x="21" y="8" width="1" height="1"/><rect x="24" y="8" width="6" height="1"/><rect x="34" y="8" width="1" height="1"/><rect x="36" y="8" width="3" height="1"/><rect x="40" y="8" width="1" height="1"/><rect x="4" y="9" width="1" height="1"/><rect x="10" y="9" width="1" height="1"/><rect x="12" y="9" width="1" height="1"/><rect x="15" y="9" width="1" height="1"/><rect x="17" y="9" width="1" height="1"/><rect x="19" y="9" width="3" height="1"/><rect x="25" y="9" width="1" height="1"/><rect x="29" y="9" width="1" height="1"/><rect x="31" y="9" width="1" height="1"/><rect x="34" y="9" width="1" height="1"/><rect x="40" y="9" width="1" height="1"/><rect x="4" y="10" width="7" height="1"/><rect x="12" y="10" width="1" height="1"/><rect x="14" y="10" width="1" height="1"/><rect x="16" y="10" width="1" height="1"/><rect x="18" y="10" width="1" height="1"/><rect x="20" y="10" width="1" height="1"/><rect x="22" y="10" width="1" height="1"/><rect x="24" y="10" width="1" height="1"/><rect x="26" y="10" width="1" height="1"/><rect x="28" y="10" width="1" height="1"/><rect x="30" y="10" width="1" height="1"/><rect x="32" y="10" width="1" height="1"/><rect x="34" y="10" width="7" height="1"/><rect x="12" y="11" width="1" height="1"/><rect x="14" y="11" width="1" height="1"/><rect x="16" y="11" width="2" height="1"/><rect x="20" y="11" width="3" height="1"/><rect x="24" y="11" width="4" height="1"/><rect x="32" y="11" width="1" height="1"/><rect x="4" y="12" width="1" height="1"/><rect x="6" y="12" width="5" height="1"/><rect x="13" y="12" width="1" height="1"/><rect x="15" y="12" width="1" height="1"/><rect x="20" y="12" width="1" height="1"/><rect x="25" y="12" width="1" height="1"/><rect x="29" y="12" width="2" height="1"/><rect x="34" y="12" width="5" height="1"/><rect x="4" y="13" width="2" height="1"/><rect x="7" y="13" width="1" height="1"/><rect x="9" y="13" width="1" height="1"/><rect x="13" y="13" width="1" height="1"/><rect x="15" y="13" width="1" height="1"/><rect x="19" y="13" width="1" height="1"/><rect x="22" y="13" width="1" height="1"/><rect x="24" y="13" width="1" height="1"/><rect x="26" y="13" width="1" height="1"/><rect x="28" y="13" width="3" height="1"/><rect x="32" y="13" width="1" height="1"/><rect x="35" y="13" width="1" height="1"/><rect x="37" y="13" width="1" height="1"/><rect x="39" y="13" width="1" height="1"/><rect x="5" y="14" width="3" height="1"/><rect x="10" y="14" width="1" height="1"/><rect x="13" y="14" width="1" height="1"/><rect x="16" y="14" width="1" height="1"/><rect x="18" y="14" width="3" height="1"/><rect x="23" y="14" width="1" height="1"/><rect x="26" y="14" width="1" height="1"/><rect x="29" y="14" width="3" height="1"/><rect x="36" y="14" width="1" height="1"/><rect x="39" y="14" width="2" height="1"/><rect x="4" y="15" width="3" height="1"/><rect x="11" y="15" width="1" height="1"/><rect x="16" y="15" width="2" height="1"/><rect x="19" y="15" width="1" height="1"/><rect x="23" y="15" width="4" height="1"/><rect x="28" y="15" width="1" height="1"/><rect x="33" y="15" width="2" height="1"/><rect x="40" y="15" width="1" height="1"/><rect x="4" y="16" width="1" height="1"/><rect x="7" y="16" width="1" height="1"/><rect x="9" y="16" width="4" height="1"/><rect x="15" y="16" width="1" height="1"/><rect x="17" y="16" width="1" height="1"/><rect x="19" y="16" width="6" height="1"/><rect x="26" y="16" width="1" height="1"/><rect x="29" y="16" width="1" height="1"/><rect x="31" y="16" width="1" height="1"/><rect x="34" y="16" width="7" height="1"/><rect x="6" y="17" width="2" height="1"/><rect x="9" y="17" width="1" height="1"/><rect x="12" y="17" width="3" height="1"/><rect x="17" y="17" width="1" height="1"/><rect x="19" y="17" width="2" height="1"/><rect x="23" y="17" width="1" height="1"/><rect x="26" y="17" width="3" height="1"/><rect x="30" y="17" width="1" height="1"/><rect x="33" y="17" width="1" height="1"/><rect x="39" y="17" width="1" height="1"/><rect x="4" y="18" width="1" height="1"/><rect x="6" y="18" width="5" height="1"/><rect x="14" y="18" width="1" height="1"/><rect x="18" y="18" width="2" height="1"/><rect x="22" y="18" width="1" height="1"/><rect x="24" y="18" width="1" height="1"/><rect x="26" y="18" width="1" height="1"/><rect x="29" y="18" width="1" height="1"/><rect x="31" y="18" width="1" height="1"/><rect x="34" y="18" width="2" height="1"/><rect x="37" y="18" width="1" height="1"/><rect x="40" y="18" width="1" height="1"/><rect x="5" y="19" width="2" height="1"/><rect x="9" y="19" width="1" height="1"/><rect x="11" y="19" width="3" height="1"/><rect x="16" y="19" width="5" height="1"/><rect x="24" y="19" width="1" height="1"/><rect x="27" y="19" width="1" height="1"/><rect x="30" y="19" width="2" height="1"/><rect x="33" y="19" width="1" height="1"/><rect x="4" y="20" width="2" height="1"/><rect x="9" y="20" width="2" height="1"/><rect x="17" y="20" width="2" height="1"/><rect x="22" y="20" width="5" height="1"/><rect x="28" y="20" width="1" height="1"/><rect x="30" y="20" width="1" height="1"/><rect x="32" y="20" width="5" height="1"/><rect x="38" y="20" width="2" height="1"/><rect x="5" y="21" width="5" height="1"/><rect x="11" y="21" width="1" height="1"/><rect x="13" y="21" width="1" height="1"/><rect x="16" y="21" width="5" height="1"/><rect x="25" y="21" width="1" height="1"/><rect x="35" y="21" width="1" height="1"/><rect x="38" y="21" width="2" height="1"/><rect x="6" y="22" width="1" height="1"/><rect x="9" y="22" width="2" height="1"/><rect x="14" y="22" width="2" height="1"/><rect x="24" y="22" width="6" height="1"/><rect x="31" y="22" width="1" height="1"/><rect x="34" y="22" width="1" height="1"/><rect x="36" y="22" width="2" height="1"/><rect x="39" y="22" width="2" height="1"/><rect x="6" y="23" width="1" height="1"/><rect x="8" y="23" width="2" height="1"/><rect x="11" y="23" width="1" height="1"/><rect x="14" y="23" width="3" height="1"/><rect x="18" y="23" width="1" height="1"/><rect x="20" y="23" width="1" height="1"/><rect x="25" y="23" width="1" height="1"/><rect x="27" y="23" width="1" height="1"/><rect x="31" y="23" width="2" height="1"/><rect x="40" y="23" width="1" height="1"/><rect x="6" y="24" width="2" height="1"/><rect x="10" y="24" width="1" height="1"/><rect x="12" y="24" width="3" height="1"/><rect x="16" y="24" width="3" height="1"/><rect x="24" y="24" width="1" height="1"/><rect x="26" y="24" width="2" height="1"/><rect x="29" y="24" width="1" height="1"/><rect x="31" y="24" width="2" height="1"/><rect x="34" y="24" width="5" height="1"/><rect x="4" y="25" width="1" height="1"/><rect x="9" y="25" width="1" height="1"/><rect x="11" y="25" width="1" height="1"/><rect x="14" y="25" width="1" height="1"/><rect x="17" y="25" width="2" height="1"/><rect x="20" y="25" width="2" height="1"/><rect x="23" y="25" width="1" height="1"/><rect x="25" y="25" width="1" height="1"/><rect x="27" y="25" width="2" height="1"/><rect x="30" y="25" width="1" height="1"/><rect x="37" y="25" width="1" height="1"/><rect x="4" y="26" width="4" height="1"/><rect x="9" y="26" width="5" height="1"/><rect x="16" y="26" width="1" height="1"/><rect x="18" y="26" width="4" height="1"/><rect x="25" y="26" width="1" height="1"/><rect x="29" y="26" width="1" height="1"/><rect x="31" y="26" width="1" height="1"/><rect x="33" y="26" width="1" height="1"/><rect x="35" y="26" width="3" height="1"/><rect x="39" y="26" width="2" height="1"/><rect x="4" y="27" width="1" height="1"/><rect x="8" y="27" width="2" height="1"/><rect x="11" y="27" width="2" height="1"/><rect x="14" y="27" width="2" height="1"/><rect x="20" y="27" width="9" height="1"/><rect x="30" y="27" width="1" height="1"/><rect x="32" y="27" width="1" height="1"/><rect x="35" y="27" width="3" height="1"/><rect x="39" y="27" width="2" height="1"/><rect x="5" y="28" width="3" height="1"/><rect x="9" y="28" width="2" height="1"/><rect x="13" y="28" width="1" height="1"/><rect x="17" y="28" width="1" height="1"/><rect x="20" y="28" width="1" height="1"/><rect x="23" y="28" width="1" height="1"/><rect x="25" y="28" width="1" height="1"/><rect x="28" y="28" width="4" height="1"/><rect x="33" y="28" width="4" height="1"/><rect x="38" y="28" width="1" height="1"/><rect x="4" y="29" width="1" height="1"/><rect x="6" y="29" width="2" height="1"/><rect x="11" y="29" width="1" height="1"/><rect x="14" y="29" width="1" height="1"/><rect x="16" y="29" width="4" height="1"/><rect x="22" y="29" width="1" height="1"/><rect x="24" y="29" width="1" height="1"/><rect x="26" y="29" width="1" height="1"/><rect x="28" y="29" width="1" height="1"/><rect x="31" y="29" width="2" height="1"/><rect x="34" y="29" width="2" height="1"/><rect x="37" y="29" width="2" height="1"/><rect x="4" y="30" width="1" height="1"/><rect x="6" y="30" width="2" height="1"/><rect x="10" y="30" width="1" height="1"/><rect x="13" y="30" width="1" height="1"/><rect x="15" y="30" width="1" height="1"/><rect x="17" y="30" width="5" height="1"/><rect x="23" y="30" width="1" height="1"/><rect x="26" y="30" width="1" height="1"/><rect x="28" y="30" width="1" height="1"/><rect x="31" y="30" width="3" height="1"/><rect x="35" y="30" width="1" height="1"/><rect x="38" y="30" width="3" height="1"/><rect x="4" y="31" width="1" height="1"/><rect x="7" y="31" width="1" height="1"/><rect x="9" y="31" width="1" height="1"/><rect x="12" y="31" width="2" height="1"/><rect x="15" y="31" width="2" height="1"/><rect x="19" y="31" width="1" height="1"/><rect x="23" y="31" width="5" height="1"/><rect x="31" y="31" width="1" height="1"/><rect x="35" y="31" width="2" height="1"/><rect x="40" y="31" width="1" height="1"/><rect x="4" y="32" width="1" height="1"/><rect x="7" y="32" width="5" height="1"/><rect x="13" y="32" width="2" height="1"/><rect x="19" y="32" width="2" height="1"/><rect x="23" y="32" width="1" height="1"/><rect x="26" y="32" width="1" height="1"/><rect x="29" y="32" width="1" height="1"/><rect x="31" y="32" width="8" height="1"/><rect x="40" y="32" width="1" height="1"/><rect x="12" y="33" width="4" height="1"/><rect x="18" y="33" width="3" height="1"/><rect x="22" y="33" width="3" height="1"/><rect x="27" y="33" width="4" height="1"/><rect x="32" y="33" width="1" height="1"/><rect x="36" y="33" width="4" height="1"/><rect x="4" y="34" width="7" height="1"/><rect x="13" y="34" width="2" height="1"/><rect x="19" y="34" width="1" height="1"/><rect x="22" y="34" width="1" height="1"/><rect x="24" y="34" width="1" height="1"/><rect x="26" y="34" width="1" height="1"/><rect x="28" y="34" width="2" height="1"/><rect x="32" y="34" width="1" height="1"/><rect x="34" y="34" width="1" height="1"/><rect x="36" y="34" width="3" height="1"/><rect x="40" y="34" width="1" height="1"/><rect x="4" y="35" width="1" height="1"/><rect x="10" y="35" width="1" height="1"/><rect x="12" y="35" width="1" height="1"/><rect x="14" y="35" width="7" height="1"/><rect x="24" y="35" width="1" height="1"/><rect x="28" y="35" width="1" height="1"/><rect x="30" y="35" width="3" height="1"/><rect x="36" y="35" width="2" height="1"/><rect x="39" y="35" width="2" height="1"/><rect x="4" y="36" width="1" height="1"/><rect x="6" y="36" width="3" height="1"/><rect x="10" y="36" width="1" height="1"/><rect x="12" y="36" width="1" height="1"/><rect x="14" y="36" width="2" height="1"/><rect x="17" y="36" width="2" height="1"/><rect x="22" y="36" width="1" height="1"/><rect x="24" y="36" width="6" height="1"/><rect x="31" y="36" width="8" height="1"/><rect x="4" y="37" width="1" height="1"/><rect x="6" y="37" width="3" height="1"/><rect x="10" y="37" width="1" height="1"/><rect x="12" y="37" width="3" height="1"/><rect x="16" y="37" width="2" height="1"/><rect x="19" y="37" width="3" height="1"/><rect x="29" y="37" width="2" height="1"/><rect x="34" y="37" width="1" height="1"/><rect x="36" y="37" width="1" height="1"/><rect x="38" y="37" width="1" height="1"/><rect x="40" y="37" width="1" height="1"/><rect x="4" y="38" width="1" height="1"/><rect x="6" y="38" width="3" height="1"/><rect x="10" y="38" width="1" height="1"/><rect x="12" y="38" width="3" height="1"/><rect x="16" y="38" width="2" height="1"/><rect x="21" y="38" width="1" height="1"/><rect x="24" y="38" width="1" height="1"/><rect x="28" y="38" width="2" height="1"/><rect x="31" y="38" width="1" height="1"/><rect x="33" y="38" width="1" height="1"/><rect x="38" y="38" width="3" height="1"/><rect x="4" y="39" width="1" height="1"/><rect x="10" y="39" width="1" height="1"/><rect x="14" y="39" width="1" height="1"/><rect x="16" y="39" width="3" height="1"/><rect x="20" y="39" width="1" height="1"/><rect x="22" y="39" width="1" height="1"/><rect x="25" y="39" width="4" height="1"/><rect x="35" y="39" width="2" height="1"/><rect x="40" y="39" width="1" height="1"/><rect x="4" y="40" width="7" height="1"/><rect x="12" y="40" width="2" height="1"/><rect x="16" y="40" width="1" height="1"/><rect x="18" y="40" width="1" height="1"/><rect x="26" y="40" width="1" height="1"/><rect x="29" y="40" width="1" height="1"/><rect x="34" y="40" width="7" height="1"/></g></svg>
+
+<span class="c">On the same Wi-Fi only. To reach this from anywhere, put both machines on a
+Tailscale tailnet (https://tailscale.com) and use the 100.x address it gives you.</span></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-no">3</div>
+      <div>
+        <h3>Pair the next device without restarting</h3>
+        <p>That banner prints once, at startup. Terminals scroll, and a second device turns up
+        later. The <b>📱 Pair</b> button in the GUI header asks for the same facts on demand and
+        draws the same QR — so getting a tablet on does not cost you the sessions running in the
+        daemon you would otherwise have to restart.</p>
+        <p>On a daemon still bound to loopback, that button tells you so and names the flag that
+        changes it, rather than rendering an empty box for you to interpret.</p>
+      </div>
+    </div>
+
+    <div class="note"><b>The QR is drawn, not fetched.</b> The GUI is served from your own machine
+    and stays that way — no request leaves it to render the code. Silk Code has one runtime
+    dependency, so the encoder is written against the QR specification directly.</div>
+  </section>
+
+  <section id="inference">
+    <p class="eyebrow">Setup B</p>
+    <h2>Laptop as a GPU for somewhere else</h2>
+    <p class="lede">The mirror image: Silk Code runs where you are typing, and only inference crosses
+    the network. Three commands, one on the laptop and two where you are.</p>
+
+    <div class="step">
+      <div class="step-no">1</div>
+      <div>
+        <h3>On the laptop: check it is listening on a reachable address</h3>
+        <p>This is the half that is easy to miss. Ollama, LM Studio, vLLM and llama.cpp all bind
+        <code>127.0.0.1</code> by default. That is the right default, and it is the exact reason a
+        phone on the same Wi-Fi gets <em>connection refused</em> — a failure that reads like a
+        network problem and is not one. So the question is not "is it running" but "is it listening
+        somewhere else can reach":</p>
+        <pre class="code"><span class="p">$</span> silkcode inference host
+
+<span class="cm">This machine is reachable at: 192.168.1.20
+
+  http://192.168.1.20:11435       ollama       4 models - reachable from the network
+  port 11434 (ollama) is running, but only on 127.0.0.1 - nothing else can reach it
+    restart it listening on every interface:  OLLAMA_HOST=0.0.0.0:11434 ollama serve</span></pre>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-no">2</div>
+      <div>
+        <h3>Where you are typing: find it and link it</h3>
+        <p><code>discover</code> scans the usual ports across the local network; <code>link</code>
+        probes the address before saving it, so a typo fails now rather than on your first prompt.</p>
+        <pre class="code"><span class="p">$</span> silkcode inference discover
+<span class="p">$</span> silkcode inference link http://192.168.1.20:11435
+<span class="p">$</span> silkcode inference ping --chat   <span class="cm"># is it up, and can it actually generate?</span></pre>
+        <p>Linking never offers an embedding model as the default. An Ollama install usually holds
+        one, it sorts first alphabetically, and handing it to a coding agent fails on the very first
+        turn with an error that explains nothing.</p>
+      </div>
+    </div>
+
+    <div class="note"><b>Linking adds a provider; it replaces none.</b> DeepSeek, Kimi, Qwen, GLM,
+    MiniMax, OpenRouter and Cloudflare Workers AI stay exactly one <code>--model</code> away, and
+    <code>--model auto</code> prefers a reachable local server and falls back to whichever cloud
+    provider has a key. A stored token is not treated as proof of reachability — <code>auto</code>
+    will not hand you a laptop that is asleep.</div>
+  </section>
+
+  <section id="anywhere">
+    <p class="eyebrow">Beyond the house</p>
+    <h2>Reaching it from anywhere</h2>
+    <p class="lede">A <code>192.168.x.y</code> address stops resolving the moment your phone drops to
+    cellular. Putting both machines on a Tailscale tailnet fixes that, and encrypts the traffic on
+    the way — which the plain LAN path does not do.</p>
+
+    <div class="step">
+      <div class="step-no">1</div>
+      <div>
+        <h3>On the laptop</h3>
+        <pre class="code"><span class="p">$</span> brew install --cask tailscale   <span class="cm"># or tailscale.com/download</span>
+<span class="p">$</span> tailscale ip -4
+<span class="cm">100.94.12.7</span></pre>
+        <p>Sign in when it opens. If you installed the App Store build, the CLI lives inside the app
+        bundle at <code>/Applications/Tailscale.app/Contents/MacOS/Tailscale</code>.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-no">2</div>
+      <div>
+        <h3>On the phone</h3>
+        <p>Install Tailscale, sign in with <b>the same account</b>, and leave the VPN toggle on.
+        That toggle is the whole trick: with it on, the phone reaches <code>100.94.12.7</code> over
+        cellular, hotel Wi-Fi, anywhere.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-no">3</div>
+      <div>
+        <h3>Start the daemon exactly as before</h3>
+        <p>Nothing about the command changes. What changes is the banner. Tailscale allocates from
+        <code>100.64.0.0/10</code> — the carrier-grade NAT range reserved by RFC 6598 — so an address
+        in that range is a mesh address and nothing else. Silk Code detects it, labels it, sorts it
+        above the LAN address, and puts <em>that</em> one in the QR:</p>
+        <pre class="code"><span class="cm">Reachable from another device:</span>
+  http://100.94.12.7:8377/?token=…
+      <span class="g">Tailscale - works from anywhere on your tailnet</span>
+  http://192.168.1.20:8377/?token=…
+      <span class="cm">LAN - same network only</span></pre>
+        <p>The "on the same Wi-Fi only" footer disappears, because it is no longer true.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="security">
+    <p class="eyebrow">Worth knowing</p>
+    <h2>What you are exposing</h2>
+    <p class="lede">A Silk Code daemon edits files and runs commands. Anyone who reaches it with the
+    token has, in practical terms, a shell on that machine. The controls are straightforward, but
+    they are worth understanding rather than assuming.</p>
+
+    <div class="grid">
+      <div class="cell"><h3>The token is the whole gate</h3>
+        <p>192 bits of randomness, compared in constant time, required on every request — header,
+        cookie or query string. There is no second factor. Treat the pairing URL like an SSH key.</p></div>
+      <div class="cell"><h3>Cross-origin requests are refused</h3>
+        <p>Even with a valid token, a request from another origin gets a 403, and the rebinding
+        guard checks the address that was actually parsed rather than the header as sent.</p></div>
+      <div class="cell"><h3>The token cannot leak by link</h3>
+        <p>The page is served at <code>/?token=…</code> and links out. Every response carries
+        <code>Referrer-Policy: no-referrer</code>, so a click cannot carry the credential to a third
+        party — rather than relying on a browser default to strip it.</p></div>
+      <div class="cell"><h3>Refusals are visible</h3>
+        <p><b>Environment → Connections</b> shows who connected and who was turned away, and the
+        daemon says something on its own terminal as refusals from a source accumulate.</p></div>
+      <div class="cell"><h3>No token is ever recorded</h3>
+        <p>Not even a wrong one — a wrong token is usually a real credential with a typo, or the
+        right one for a different daemon. The monitor is not given the token to store.</p></div>
+      <div class="cell"><h3>Plain HTTP on the LAN</h3>
+        <p>Nothing encrypts the LAN path. On a tailnet, WireGuard does. On open Wi-Fi, nothing does
+        — which is the real argument for the Tailscale route above.</p></div>
+    </div>
+
+    <div class="note warn"><b><code>--host 0.0.0.0</code> means the whole network, not just your
+    phone.</b> On your own Wi-Fi that is fine. On café or hotel Wi-Fi you are putting a
+    token-guarded shell in front of everyone on that network, over plain HTTP. The token will not be
+    guessed; the traffic is still readable. Prefer the tailnet when you are not at home.</div>
+  </section>
+
+  <section id="reference">
+    <p class="eyebrow">Reference</p>
+    <h2>The commands on this page</h2>
+    <div class="table-scroll">
+    <table class="cmds">
+      <tbody>
+        <tr><td>silkcode gui [path] --host 0.0.0.0</td><td>Serve the GUI to other devices; generates an access token and prints a QR.</td></tr>
+        <tr><td>silkcode gui --port N</td><td>Another port (default 8377). Run several instances at once, each on its own host/port and project.</td></tr>
+        <tr><td>silkcode gui --token T</td><td>Pin a token instead of generating a fresh one each start.</td></tr>
+        <tr><td>silkcode inference host</td><td>On the model machine: which addresses reach it, and which servers are listening where.</td></tr>
+        <tr><td>silkcode inference discover</td><td>Scan the local network for model servers.</td></tr>
+        <tr><td>silkcode inference link &lt;url&gt;</td><td>Send inference to that server. Probes before saving.</td></tr>
+        <tr><td>silkcode inference ping --chat</td><td>Is it up, and can it generate? Reports round-trip latency.</td></tr>
+        <tr><td>silkcode inference</td><td>Status of the linked server, and which cloud providers are set up.</td></tr>
+        <tr><td>silkcode version</td><td>What this install actually is, and the command that updates it.</td></tr>
+        <tr><td>silkcode update</td><td>Fast-forward a checkout, or reinstall a pip install from its recorded source.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <dl class="faq">
+      <dt>The QR scans but the page will not load.</dt>
+      <dd>Almost always the phone is on a different network from the laptop — guest Wi-Fi and the
+      main SSID are separate networks on most routers. Check the address in the URL matches what
+      <code>silkcode inference host</code> reports, or move to the tailnet.</dd>
+
+      <dt>Can I run more than one daemon on the laptop?</dt>
+      <dd>Yes — give each its own <code>--host</code>/<code>--port</code> and project. Session ids
+      are unique across instances and every session records which instance created it.</dd>
+
+      <dt>Do I need Tailscale for this to work at all?</dt>
+      <dd>No. On one network, the LAN address is enough. Tailscale buys you two things: it keeps
+      working when you leave, and it encrypts the traffic.</dd>
+
+      <dt>Is my code sent anywhere?</dt>
+      <dd>Only to whichever model you chose. Point Silk Code at a server on your own hardware and
+      nothing leaves your machines at all.</dd>
+    </dl>
+  </section>
+
+  <footer>
+    <span>Silk Code · <a href="https://github.com/RupertCloud/SilkCode/blob/main/LICENSE">MIT license</a> ·
+    runs entirely on your machine</span>
+    <span class="spacer"></span>
+    <a href="./">Home</a>
+    <a href="projects.html">Projects</a>
+    <a href="https://github.com/RupertCloud/SilkCode">GitHub</a>
+    <a href="https://github.com/RupertCloud/SilkCode/blob/main/SRS.md">Specification</a>
+  </footer>
+</div>
+</body>
+</html>
