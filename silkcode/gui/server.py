@@ -1336,12 +1336,19 @@ class GuiHandler(BaseHTTPRequestHandler):
         header = self.headers.get("Authorization", "")
         if header.startswith("Bearer "):
             return header[len("Bearer "):].strip()
+        # A pairing URL is an explicit attempt to authenticate this browser.
+        # Prefer it to an existing cookie so a token rotation (or a cookie
+        # left by another daemon on the same host) can establish a new
+        # session instead of being rejected because the stale cookie wins.
+        query_token = (parse_qs(urlparse(self.path).query).get("token") or [""])[0]
+        if query_token:
+            return query_token
         cookie = self.headers.get("Cookie", "")
         for part in cookie.split(";"):
             name, _, value = part.strip().partition("=")
             if name == "silk_token":
                 return value
-        return (parse_qs(urlparse(self.path).query).get("token") or [""])[0]
+        return ""
 
     def _same_origin(self) -> bool:
         """Reject requests a browser made on behalf of another site.
