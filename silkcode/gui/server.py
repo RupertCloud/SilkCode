@@ -32,6 +32,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from ..tools.images import IMAGE_MARKER, IMAGE_SUFFIXES
+
 from ..agent import Agent
 from ..agent.loop import DEFAULT_CONTEXT_TOKENS
 from ..config import Config, ConfigError
@@ -103,6 +105,9 @@ def _transcript_from_messages(messages: list[dict]) -> list[dict]:
                     "name": tc.get("function", {}).get("name", "?"),
                     "args": args if len(args) <= 200 else args[:200] + "...",
                 })
+        elif m.get("role") == "tool" and str(m.get("content", "")).startswith(IMAGE_MARKER):
+            path = str(m["content"]).splitlines()[0][len(IMAGE_MARKER):]
+            out.append({"kind": "image", "path": path})
     return out
 
 
@@ -262,6 +267,9 @@ class GuiState:
         self.subscribers: list[queue.Queue] = []
         self.pending: dict[str, dict] = {}
         self.sessions: dict[int, AgentSession] = {}
+        # Projects deliberately closed from the drawer stay hidden for this
+        # daemon run; saved conversations and repository files remain intact.
+        self.closed_projects: set[str] = set()
         self.swarms: dict[int, dict] = {}  # session id -> swarm status
         self._restart_args: list[str] | None = None
         self._restarting = False
@@ -332,6 +340,7 @@ class GuiState:
         data = new_session(session_id, title="", model=self.spec,
                            cwd=str(ws.root), mode=self.mode, instance=self.instance)
         session = AgentSession(self, data)
+        self.closed_projects.discard(_normalized(str(ws.root)))
         self.sessions[session.id] = session
         self.default_session_id = session.id
         self._mark_active(session.id)
@@ -349,6 +358,7 @@ class GuiState:
 
     def load_session(self, session_id: int) -> AgentSession:
         session = self.get_session(session_id)
+        self.closed_projects.discard(_normalized(str(session.workspace.root)))
         self.default_session_id = session.id
         self._mark_active(session.id)
         self.broadcast({"type": "reload", "session": session.id})
@@ -411,31 +421,43 @@ class GuiState:
         seen = {_normalized(here)}
 
         counts: dict[str, int] = {}
-        for s in self.sessions_summary(session_id, all_projects=True):
+        running: dict[str, int] = {}
+        open_counts: dict[str, int] = {}
+        summaries = self.sessions_summary(session_id, all_projects=True)
+        for s in summaries:
             cwd = s.get("cwd") or ""
             if cwd:
-                counts[_normalized(cwd)] = counts.get(_normalized(cwd), 0) + 1
+                key = _normalized(cwd)
+                counts[key] = counts.get(key, 0) + 1
+                running[key] = running.get(key, 0) + int(bool(s.get("running")))
+                open_counts[key] = open_counts.get(key, 0) + int(bool(s.get("open")))
         rows[0]["sessions"] = counts.get(_normalized(here), 0)
+        rows[0]["running"] = running.get(_normalized(here), 0)
+        rows[0]["open"] = open_counts.get(_normalized(here), 0)
 
         # Any project this machine has sessions in, open or saved. A project
         # you have work in but no session currently open on is precisely the
         # one you are trying to get back to.
-        for summary in self.sessions_summary(session_id, all_projects=True):
+        for summary in summaries:
             root = summary.get("cwd") or ""
-            if not root or _normalized(root) in seen:
+            if not root or _normalized(root) in seen or _normalized(root) in self.closed_projects:
                 continue
             seen.add(_normalized(root))
             rows.append({"path": root, "label": Path(root).name or root,
-                         "current": False, "sessions": counts.get(_normalized(root), 0)})
+                         "current": False, "sessions": counts.get(_normalized(root), 0),
+                         "running": running.get(_normalized(root), 0),
+                         "open": open_counts.get(_normalized(root), 0)})
         for recent in recent_projects():
             if recent.get("kind") != "local":
                 continue
             path = recent.get("spec") or ""
-            if not path or _normalized(path) in seen:
+            if not path or _normalized(path) in seen or _normalized(path) in self.closed_projects:
                 continue
             seen.add(_normalized(path))
             rows.append({"path": path, "label": recent.get("label") or path,
-                         "current": False, "sessions": counts.get(_normalized(path), 0)})
+                         "current": False, "sessions": counts.get(_normalized(path), 0),
+                         "running": running.get(_normalized(path), 0),
+                         "open": open_counts.get(_normalized(path), 0)})
         return rows
 
     def other_projects(self, session_id: int | None = None) -> list[dict]:
@@ -510,6 +532,11 @@ class GuiState:
             session.transcript.append(entry)
             self.broadcast({"type": "tool_start", "session": session.id, **entry})
         elif kind == "tool_result":
+            output = str(data["output"])
+            if output.startswith(IMAGE_MARKER):
+                entry = {"kind": "image", "path": output.splitlines()[0][len(IMAGE_MARKER):]}
+                session.transcript.append(entry)
+                self.broadcast({"type": "image", "session": session.id, **entry})
             first = str(data["output"]).splitlines()[0] if str(data["output"]) else ""
             self.broadcast({"type": "tool_result", "name": data["name"],
                             "output": first[:200], "session": session.id})
@@ -649,6 +676,7 @@ class GuiState:
             raise ToolError("this daemon runs against a remote workspace; "
                             "projects cannot be switched from here")
         choice = resolve_project(project)
+        self.closed_projects.discard(_normalized(str(choice.workspace.root)))
         if choice.workspace.root == session.workspace.root:
             return self.state(session.id)  # already there; nothing to do
 
@@ -686,6 +714,87 @@ class GuiState:
         self.broadcast({"type": "reload", "session": session.id})
         return self.state(session.id)
 
+    def open_project(self, project: str) -> dict:
+        """Activate a project's most recent conversation without moving the
+        conversation currently being viewed. Prefer an already-open session,
+        then a saved one, and create a blank conversation only when the project
+        has no history at all."""
+        if self.remote_spec:
+            raise ToolError("this daemon runs against a remote workspace; projects cannot be switched")
+        choice = resolve_project(project)
+        target = _normalized(str(choice.workspace.root))
+        self.closed_projects.discard(target)
+        candidates = [s for s in self.sessions_summary(all_projects=True)
+                      if _normalized(s.get("cwd") or "") == target]
+        if candidates:
+            session = self.load_session(max(candidates, key=lambda s: s["id"])["id"])
+        else:
+            session = self.new_session(project=project)
+        if choice.kind == "local":
+            remember_workspace(choice.workspace.root)
+        else:
+            record_recent_project(choice.kind, project, choice.label)
+        return self.state(session.id)
+
+    def create_project(self, params: dict) -> dict:
+        """Scaffold, git-initialize, and activate a brand-new local project."""
+        if self.remote_spec:
+            raise ToolError("this daemon runs against a remote workspace; projects cannot be created")
+        from ..scaffold import DEFAULT_TEMPLATE, create_project, validate_name
+
+        name = str(params.get("name") or "").strip()
+        parent = str(params.get("parent") or "").strip()
+        template = str(params.get("template") or DEFAULT_TEMPLATE).strip()
+        description = str(params.get("description") or "").strip()
+        if not name:
+            raise ToolError("project name must not be empty")
+        if not parent:
+            parent = str(Path(self.project_root()).parent)
+        objective = str(params.get("objective") or description).strip()
+        if params.get("start_swarm") and not objective:
+            raise ToolError("describe what the Swarm should build")
+        publish = bool(params.get("publish_github"))
+        visibility = str(params.get("github_visibility") or "private").lower()
+        if visibility not in {"private", "public"}:
+            raise ToolError("GitHub visibility must be private or public")
+        github_client = None
+        if publish:
+            from ..github import cli_client_for_repos
+            github_client = cli_client_for_repos()
+            github_client.whoami()  # fail before creating local files
+        slug = validate_name(name)
+        result = create_project(name, template=template, parent=parent,
+                                description=description, git=True)
+        github = None
+        if publish:
+            if result.git != "initialized" or not result.commit or result.commit.startswith("git error"):
+                raise ToolError("the local project was created, but Git could not make its initial "
+                                "commit; configure your Git name/email before publishing")
+            from ..tools.git import git_add_remote, git_push
+            repository = github_client.create_repository(
+                slug, description=description or objective,
+                private=visibility == "private")
+            remote_url = repository.get("clone_url") or (
+                f"https://github.com/{repository['full_name']}.git")
+            remote = git_add_remote(Workspace(result.path), "origin", remote_url)
+            pushed = remote if remote.startswith("git error") else git_push(Workspace(result.path))
+            github = {**repository, "push": pushed}
+        state = self.open_project(str(result.path))
+        swarm = None
+        if params.get("start_swarm"):
+            swarm = self.start_swarm({
+                "team_mode": True,
+                "objective": objective,
+                "developer_count": int(params.get("developer_count") or 0),
+                "max_iterations": int(params.get("max_iterations") or 0),
+                "max_tokens": int(params.get("max_tokens") or 0),
+                "target": float(params.get("target") or 10),
+            }, state["session_id"])
+        return {"state": state, "project": str(result.path), "git": result.git,
+                "commit": result.commit, "files": result.files,
+                "test_command": result.test_command, "swarm": swarm,
+                "github": github}
+
     def close_session(self, session_id: int | None = None) -> dict:
         """Stop and close a session: release its workspace lock and drop it from
         memory so another session can take over the project. The conversation
@@ -707,12 +816,34 @@ class GuiState:
             release(session.workspace.root, session.lock_owner)
         except Exception:
             pass  # releasing is best-effort; the lock goes stale on its own
+        project = str(session.workspace.root)
         del self.sessions[sid]
         if self.default_session_id == sid:
-            self.default_session_id = max(self.sessions) if self.sessions else self.new_session().id
+            same_project = [s.id for s in self.sessions.values()
+                            if _same_project(str(s.workspace.root), project)]
+            self.default_session_id = (max(same_project) if same_project
+                                       else self.new_session(project=project).id)
         self._mark_active(self.default_session_id)
         self.broadcast({"type": "session_closed", "session": sid})
         return {"ok": True, "session_id": self.default_session_id}
+
+    def close_project(self, project: str, session_id: int | None = None) -> dict:
+        """Close every open session for a non-current project and forget its
+        in-memory project card. Saved conversations and repository files are
+        intentionally untouched, so Add can reopen it later."""
+        target = _normalized(project)
+        if target == _normalized(self.project_root(session_id)):
+            raise ToolError("switch to another project before closing this one")
+        matches = [s.id for s in self.sessions.values()
+                   if _normalized(str(s.workspace.root)) == target]
+        if any(self.swarms.get(sid, {}).get("running") for sid in matches):
+            raise ToolError("a swarm is running in this project; stop it first")
+        for sid in matches:
+            self.close_session(sid)
+        self.closed_projects.add(target)
+        return {"ok": True, "closed": len(matches),
+                "session_id": self.default_session_id,
+                "projects": self.known_projects(self.default_session_id)}
 
     def takeover_lock(self, session_id: int | None = None) -> dict:
         """Re-try acquiring the session's workspace lock. Succeeds when the
@@ -758,6 +889,7 @@ class GuiState:
             "log": list(status["log"]),
             "result": status["result"],
             "error": status["error"],
+            "artifacts": status.get("artifacts", {}),
         }
 
     def start_swarm(self, params: dict, session_id: int | None = None) -> dict:
@@ -786,6 +918,12 @@ class GuiState:
         except (TypeError, ValueError) as exc:
             raise ConfigError(f"bad swarm option: {exc}") from exc
         test_command = str(params.get("test_command") or "").strip() or None
+        team_mode = bool(params.get("team_mode"))
+        objective = str(params.get("objective") or "").strip() or None
+        try:
+            developer_count = int(params.get("developer_count") or 0)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"bad developer count: {exc}") from exc
 
         status = {
             "running": True,
@@ -794,6 +932,7 @@ class GuiState:
             "log": [],
             "result": None,
             "error": None,
+            "artifacts": {},
             "_stop": threading.Event(),
         }
         self.swarms[session.id] = status
@@ -811,6 +950,10 @@ class GuiState:
                 elif kind == "phase":
                     self.broadcast({"type": "swarm_phase", "session": session.id,
                                     "role": data.get("role")})
+                elif kind == "artifact":
+                    status["artifacts"] = data.get("artifacts") or {}
+                    self.broadcast({"type": "swarm_artifact", "session": session.id,
+                                    "artifacts": status["artifacts"]})
 
             try:
                 result = run_swarm(
@@ -831,6 +974,9 @@ class GuiState:
                     # also writes under the session's workspace lock
                     worker_permissions=session.permissions,
                     worker_owner=session.lock_owner,
+                    team_mode=team_mode,
+                    objective=objective,
+                    developer_count=developer_count,
                 )
                 status["result"] = asdict(result)
                 self.broadcast({"type": "swarm_done", "session": session.id,
@@ -1336,12 +1482,19 @@ class GuiHandler(BaseHTTPRequestHandler):
         header = self.headers.get("Authorization", "")
         if header.startswith("Bearer "):
             return header[len("Bearer "):].strip()
+        # A pairing URL is an explicit attempt to authenticate this browser.
+        # Prefer it to an existing cookie so a token rotation (or a cookie
+        # left by another daemon on the same host) can establish a new
+        # session instead of being rejected because the stale cookie wins.
+        query_token = (parse_qs(urlparse(self.path).query).get("token") or [""])[0]
+        if query_token:
+            return query_token
         cookie = self.headers.get("Cookie", "")
         for part in cookie.split(";"):
             name, _, value = part.strip().partition("=")
             if name == "silk_token":
                 return value
-        return (parse_qs(urlparse(self.path).query).get("token") or [""])[0]
+        return ""
 
     def _same_origin(self) -> bool:
         """Reject requests a browser made on behalf of another site.
@@ -1517,6 +1670,24 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/file":
                 path = (params.get("path") or [""])[0]
                 self._json(st.read_file(path, sid))
+            elif route == "/api/image":
+                path = (params.get("path") or [""])[0]
+                image = st.get_session(sid).workspace.resolve(path)
+                if not image.is_file() or image.suffix.lower() not in IMAGE_SUFFIXES:
+                    return self._error("image not found", 404)
+                body = image.read_bytes()
+                if len(body) > 20 * 1024 * 1024:
+                    return self._error("image is too large", 413)
+                content_types = {".png": "image/png", ".jpg": "image/jpeg",
+                                 ".jpeg": "image/jpeg", ".gif": "image/gif",
+                                 ".webp": "image/webp"}
+                self.send_response(200)
+                self._security_headers()
+                self.send_header("Content-Type", content_types[image.suffix.lower()])
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif route == "/api/diff":
                 self._json(st.diff(sid))
             elif route == "/api/projects":
@@ -1636,8 +1807,20 @@ class GuiHandler(BaseHTTPRequestHandler):
                 if not target:
                     raise ToolError("no project given")
                 self._json(st.move_session(sid, target))
+            elif route == "/api/project/open":
+                target = str(body.get("project", "")).strip()
+                if not target:
+                    raise ToolError("no project given")
+                self._json(st.open_project(target))
+            elif route == "/api/project/create":
+                self._json(st.create_project(body))
             elif route == "/api/session/close":
                 self._json(st.close_session(sid))
+            elif route == "/api/project/close":
+                target = str(body.get("project", "")).strip()
+                if not target:
+                    raise ToolError("no project given")
+                self._json(st.close_project(target, sid))
             elif route == "/api/lock/takeover":
                 self._json(st.takeover_lock(sid))
             elif route == "/api/swarm/start":

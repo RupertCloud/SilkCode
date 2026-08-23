@@ -104,6 +104,90 @@ def test_gui_tree_file_and_diff(gui):
     assert escape.status_code == 400
 
 
+def test_project_picker_endpoint_returns_a_list(gui):
+    base, _state, _ws = gui
+    response = httpx.get(f"{base}/api/projects")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+
+def test_gui_creates_git_project_and_opens_it(gui, tmp_path):
+    base, state, _workspace = gui
+    response = httpx.post(f"{base}/api/project/create", json={
+        "name": "Fresh Product",
+        "parent": str(tmp_path),
+        "template": "blank",
+        "description": "A new product",
+        "start_swarm": False,
+    })
+    assert response.status_code == 200, response.text
+    data = response.json()
+    root = tmp_path / "fresh-product"
+    assert data["project"] == str(root)
+    assert data["git"] in {"initialized", "already a git repository"}
+    assert (root / ".git").is_dir()
+    assert (root / "README.md").is_file()
+    assert data["state"]["cwd"] == str(root)
+    assert state.project_root(data["state"]["session_id"]) == str(root)
+
+
+def test_gui_validates_swarm_objective_before_creating_project(gui, tmp_path):
+    base, _state, _workspace = gui
+    response = httpx.post(f"{base}/api/project/create", json={
+        "name": "Should Not Exist",
+        "parent": str(tmp_path),
+        "template": "blank",
+        "start_swarm": True,
+    })
+    assert response.status_code == 400
+    assert "describe" in response.json()["error"].lower()
+    assert not (tmp_path / "should-not-exist").exists()
+
+
+def test_gui_can_publish_new_project_as_public_or_private(gui, tmp_path, monkeypatch):
+    base, _state, _workspace = gui
+
+    class GitHub:
+        def whoami(self):
+            return "amon"
+
+        def create_repository(self, name, description="", private=True):
+            assert name == "published-product"
+            assert private is False
+            return {"full_name": f"amon/{name}", "html_url": f"https://github.com/amon/{name}",
+                    "clone_url": f"https://github.com/amon/{name}.git", "private": private}
+
+    monkeypatch.setattr("silkcode.github.cli_client_for_repos", lambda: GitHub())
+    monkeypatch.setattr("silkcode.tools.git.git_add_remote", lambda ws, name, url: "Added remote origin.")
+    monkeypatch.setattr("silkcode.tools.git.git_push", lambda ws: "Pushed main to origin.")
+    response = httpx.post(f"{base}/api/project/create", json={
+        "name": "Published Product",
+        "parent": str(tmp_path),
+        "template": "blank",
+        "description": "Public example",
+        "publish_github": True,
+        "github_visibility": "public",
+        "start_swarm": False,
+    })
+    assert response.status_code == 200, response.text
+    github = response.json()["github"]
+    assert github["full_name"] == "amon/published-product"
+    assert github["private"] is False
+    assert github["push"] == "Pushed main to origin."
+
+
+def test_gui_serves_workspace_images_but_not_other_files(gui):
+    base, _state, ws = gui
+    payload = b"\x89PNG\r\n\x1a\nimage"
+    (ws / "shot.png").write_bytes(payload)
+    image = httpx.get(f"{base}/api/image", params={"path": "shot.png"})
+    assert image.status_code == 200
+    assert image.headers["content-type"] == "image/png"
+    assert image.content == payload
+    assert httpx.get(f"{base}/api/image", params={"path": "README.md"}).status_code == 404
+    assert httpx.get(f"{base}/api/image", params={"path": "../shot.png"}).status_code == 400
+
+
 def test_gui_runs_a_turn_and_persists_session(gui):
     base, state, ws = gui
     resp = httpx.post(f"{base}/api/message", json={"text": "create hello.txt"})
@@ -775,6 +859,31 @@ def test_gui_close_session_refuses_running_swarm(gui):
     assert "swarm" in resp.json()["error"]
 
 
+def test_gui_close_project_releases_all_sessions_and_hides_card(gui, tmp_path):
+    base, state, _ws = gui
+    current = state.default_session_id
+    other = tmp_path / "other-project"
+    other.mkdir()
+    first = state.new_session(project=str(other))
+    second = state.new_session(project=str(other))
+    state.load_session(current)
+
+    resp = httpx.post(f"{base}/api/project/close", json={
+        "session_id": current, "project": str(other),
+    })
+    assert resp.status_code == 200
+    assert resp.json()["closed"] == 2
+    assert first.id not in state.sessions and second.id not in state.sessions
+    assert all(p["path"] != str(other) for p in resp.json()["projects"])
+    assert other.is_dir(), "closing a project deleted its repository"
+
+    refused = httpx.post(f"{base}/api/project/close", json={
+        "session_id": current, "project": str(state.get_session(current).workspace.root),
+    })
+    assert refused.status_code == 400
+    assert "switch" in refused.json()["error"]
+
+
 def test_gui_takeover_of_dead_owners_lock(gui, tmp_path):
     """When the lock's owner process is dead (liveness check), the GUI lets the
     session take the workspace over with one call instead of waiting for the
@@ -1113,6 +1222,26 @@ def test_gui_update_reinstalls_a_pip_install_instead_of_refusing(gui, monkeypatc
 
 
 # ---- switching project ------------------------------------------------------
+
+def test_opening_project_restores_its_conversation_without_moving_current(gui, tmp_path):
+    base, state, workspace = gui
+    original = state.get_session()
+    original.transcript.append({"kind": "user", "text": "stay with alpha"})
+    other = tmp_path / "other-project"
+    other.mkdir()
+    theirs = state.new_session(project=str(other))
+    theirs.data["title"] = "beta conversation"
+    state.load_session(original.id)
+
+    resp = httpx.post(f"{base}/api/project/open", json={"project": str(other)})
+    assert resp.status_code == 200
+    assert resp.json()["session_id"] == theirs.id
+    assert original.workspace.root == workspace.resolve()
+    assert any(t.get("text") == "stay with alpha" for t in original.transcript)
+
+    back = httpx.post(f"{base}/api/project/open", json={"project": str(workspace)})
+    assert back.json()["session_id"] == original.id
+
 
 def test_a_session_can_move_to_another_project_keeping_its_conversation(gui, tmp_path):
     """The REPL has done this since `/project` shipped. The GUI could only ever

@@ -134,6 +134,14 @@ def git_push(ws: Workspace, remote: str = "origin", branch: str | None = None,
     return f"Pushed {branch} to {remote}." + (f"\n{out.strip()}" if out.strip() else "")
 
 
+def git_add_remote(ws: Workspace, name: str, url: str) -> str:
+    """Add a named remote without putting credentials in repository config."""
+    if not name.strip() or not url.strip():
+        return "git error: remote name and URL are required"
+    out = _git(ws, "remote", "add", name, url)
+    return out if out.startswith("git error") else f"Added remote {name}."
+
+
 def push_if_needed(ws: Workspace) -> str | None:
     """Push the current branch if it has commits the remote doesn't.
     Returns a status message, or None when there is nothing to push

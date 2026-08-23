@@ -171,12 +171,9 @@ def test_composer_always_visible_and_sessions_switch(browser, gui_url):
         f"composer pushed out of the viewport: {box}"
     assert page.is_visible("#send")
 
-    # create a second session: the + button now asks for a project first;
-    # confirming with nothing selected reuses the current project
+    # create a second conversation directly inside the selected project
     first_label = page.input_value("#session-select")
     page.click("#new-session")
-    page.wait_for_selector("#project-modal.open")
-    page.click("#project-confirm")
     page.wait_for_function(
         "sel => document.querySelector('#session-select').value !== sel", arg=first_label)
     # the conversation is empty; a workspace-lock notice is expected because
@@ -613,29 +610,18 @@ def test_the_switcher_lists_only_the_open_projects_sessions(browser, two_project
         f"another project's sessions are in the switcher: {options}"
 
 
-def test_the_other_projects_are_one_click_away_not_gone(browser, two_project_gui):
-    """Scoping the list must not strand work: everything else is behind a
-    single entry that says how much is there."""
-    url, _alpha, _beta = two_project_gui
+def test_other_projects_are_reached_through_project_cards_not_conversations(browser, two_project_gui):
+    url, _alpha, beta = two_project_gui
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(url)
     wait_for_switcher(page)
 
-    reveal = page.locator("#session-select option[value='__all__']")
-    assert reveal.count() == 1, "no way to reach sessions in other projects"
-    assert "2 sessions" in reveal.text_content(), reveal.text_content()
-
-    page.select_option("#session-select", "__all__")
-    # optgroups inside a closed <select> are never "visible"; wait on the DOM
-    page.wait_for_function(
-        "document.querySelectorAll('#session-select optgroup').length >= 2")
-
-    groups = page.locator("#session-select optgroup").all_text_contents()
-    labels = page.eval_on_selector_all(
-        "#session-select optgroup", "els => els.map(e => e.label)")
-    assert any("this project" in label for label in labels), labels
-    assert any("beta" in label for label in labels), labels
-    assert any("beta work" in text for text in groups), groups
+    assert page.locator("#session-select option[value='__all__']").count() == 0
+    page.locator(f".project-card[data-path='{beta}']").click()
+    page.wait_for_function("() => [...document.querySelectorAll('#session-select option')].some(o => o.textContent.includes('beta work'))")
+    options = page.locator("#session-select option").all_text_contents()
+    assert any("beta work" in text for text in options)
+    assert not any("alpha work" in text for text in options)
 
 
 def test_a_daemon_with_one_project_shows_no_reveal(browser, gui_url):
@@ -645,6 +631,48 @@ def test_a_daemon_with_one_project_shows_no_reveal(browser, gui_url):
     page.goto(gui_url)
     wait_for_switcher(page)
     assert page.locator("#session-select option[value='__all__']").count() == 0
+
+
+def test_mobile_layout_has_compact_header_and_switchable_panes(browser, gui_url):
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    page.goto(gui_url)
+    wait_for_switcher(page)
+
+    assert page.locator("#mobile-menu").is_visible()
+    assert page.locator("#chat").is_visible()
+    assert not page.locator("#files").is_visible()
+    assert page.locator("body").evaluate("el => el.scrollWidth <= el.clientWidth")
+
+    page.click("#mobile-menu")
+    assert page.locator(".mobile-actions").is_visible()
+    assert page.locator("#session-select").is_visible()
+    page.keyboard.press("Escape")
+    assert not page.locator(".mobile-actions").is_visible()
+
+    page.click("#mobile-tabs button[data-pane='files']")
+    assert page.locator("#files").is_visible()
+    assert not page.locator("#chat").is_visible()
+
+
+def test_secondary_panels_live_in_a_collapsed_details_drawer(browser, gui_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    wait_for_switcher(page)
+
+    assert not page.locator("#details").is_visible()
+    assert page.locator("#chat").is_visible()
+    page.click("#details-toggle")
+    assert page.locator("#details").is_visible()
+    assert page.locator("#bottom").is_visible()
+
+    page.click("#details-head button[data-detail='files']")
+    assert page.locator("#file-details").is_visible()
+    assert not page.locator("#activity").is_visible()
+    page.click("#details-head button[data-detail='activity']")
+    assert page.locator("#activity").is_visible()
+    assert not page.locator("#bottom").is_visible()
+    page.click("#details-close")
+    assert not page.locator("#details").is_visible()
 
 
 # ---- project is a control, not a caption ------------------------------------
@@ -662,6 +690,40 @@ def test_the_project_is_a_switcher_beside_session_model_and_mode(browser, two_pr
     assert any(beta.name in o for o in options), \
         "a project with sessions was not offered in the switcher"
     assert any("Open another" in o for o in options)
+
+    cards = page.locator("#project-cards .project-card")
+    assert cards.count() >= 2
+    assert any(alpha.name in text for text in cards.all_text_contents())
+    assert any(beta.name in text for text in cards.all_text_contents())
+    assert page.locator("#project-cards .project-card.current").count() == 1
+
+
+def test_project_card_switches_repository_in_one_click(browser, two_project_gui):
+    url, _alpha, beta = two_project_gui
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    page.goto(url)
+    page.wait_for_function("document.querySelectorAll('#project-cards .project-card').length >= 2")
+
+    page.locator(f".project-card[data-path='{beta}']").click()
+    page.wait_for_function(
+        "t => document.querySelector('#project-select').title === t", arg=str(beta))
+    assert page.locator("#project-cards .project-card.current").get_attribute("data-path") == str(beta)
+
+
+def test_project_card_close_frees_non_current_project(browser, two_project_gui):
+    url, _alpha, beta = two_project_gui
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    page.goto(url)
+    page.wait_for_function("document.querySelectorAll('#project-cards .project-card').length >= 2")
+
+    page.on("dialog", lambda dialog: dialog.accept())
+    card = page.locator(f".project-card[data-path='{beta}']")
+    assert card.locator(".project-close").is_enabled()
+    card.locator(".project-close").click()
+    page.wait_for_function(
+        "p => !document.querySelector(`.project-card[data-path='${p}']`)", arg=str(beta))
+    assert page.locator(f".project-card[data-path='{beta}']").count() == 0
+    assert page.locator(".project-card.current .project-close").is_disabled()
 
 
 def test_switching_project_moves_the_session_and_rescopes_its_list(browser, two_project_gui):
@@ -707,23 +769,38 @@ def test_the_picker_opens_where_a_local_user_can_act(browser, two_project_gui):
     assert any(alpha.name in r for r in recents), recents
 
 
-def test_the_two_verbs_of_the_picker_are_not_confused(browser, two_project_gui):
-    """One modal serves 'start a new session on a project' and 'move this
-    session'. It used to be titled 'Open a project for this session' while only
-    ever doing the first."""
+def test_github_project_tab_can_be_selected_and_connects(browser, two_project_gui):
+    url, _alpha, _beta = two_project_gui
+    page = browser.new_page(viewport={"width": 1200, "height": 800})
+    page.goto(url)
+    wait_for_switcher(page)
+    page.click("#project-add")
+    page.wait_for_selector("#project-modal.open")
+
+    page.click("#project-tabs button[data-pgtab='github']")
+    assert page.locator("#project-tabs button[data-pgtab='github']").get_attribute("class") == "ptab active"
+    assert page.locator("[data-pgpane='github']").is_visible()
+    assert not page.locator("[data-pgpane='local']").is_visible()
+
+    page.click("#project-github-connect")
+    assert page.locator("#github-modal").evaluate("el => el.classList.contains('open')")
+
+
+def test_new_conversation_and_open_project_are_separate_actions(browser, two_project_gui):
     url, _alpha, _beta = two_project_gui
     page = browser.new_page(viewport={"width": 1400, "height": 900})
     page.goto(url)
     page.wait_for_function("document.querySelectorAll('#project-select option').length > 0")
 
+    old = page.locator("#session-select").input_value()
     page.click("#new-session")
-    page.wait_for_selector("#project-modal.open")
-    assert "new session" in page.locator("#project-modal h3").text_content()
-    page.click("#project-cancel")
+    page.wait_for_function("old => document.querySelector('#session-select').value !== old",
+                           arg=old)
+    assert not page.locator("#project-modal").evaluate("el => el.classList.contains('open')")
 
     page.select_option("#project-select", "__open__")
     page.wait_for_selector("#project-modal.open")
-    assert "Move this session" in page.locator("#project-modal h3").text_content()
+    assert page.locator("#project-modal h3").text_content() == "Open project"
 
     # cancelling must put the switcher back, not leave it claiming a move
     page.click("#project-cancel")

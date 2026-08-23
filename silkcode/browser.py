@@ -8,18 +8,17 @@ all invisible in the file and obvious the moment something renders it.
 This is the half `live_server` was missing. That tool serves the workspace so
 a *person* can watch the page reload; this one lets the agent look.
 
-What it returns is deliberately text. The provider layer carries strings —
-there is no image path into a conversation, and the default model has no
-vision anyway — so a screenshot handed to the model would be a file it cannot
-read. Everything below is what a browser knows *in words*: the status, the
-uncaught exceptions, the console errors, the requests that failed, and
-whether the page fits the viewport. That set is what actually finds bugs;
-the picture is for the human, saved beside the workspace and named in the
-report.
+What the agent gets back is deliberately text. The provider layer carries
+strings — there is no image path into a conversation, and the default model
+has no vision anyway — so a screenshot handed to the model would be a file it
+cannot read. Everything here is what a browser knows *in words*: the status,
+the title, the visible text, the uncaught exceptions, the console errors, the
+requests that failed, and whether the page fits the viewport. That set is what
+actually finds bugs. The picture is saved beside the workspace and shown
+inline in the GUI, which is where a person can use it.
 
-Playwright is not a dependency of Silk Code and will not become one — the
-runtime requirement is httpx and nothing else. This detects what is installed
-and says how to get it when it is not, the same way the Tailscale check does.
+This module is the engine. The agent-facing tool is `review_url` in
+`tools/images.py`, which adds the screenshot and the visible text on top.
 """
 
 from __future__ import annotations
@@ -33,10 +32,10 @@ from urllib.parse import urlparse
 # it is set; these are the ordinary locations otherwise.
 CHROMIUM_HINTS = ("/opt/pw-browsers/chromium",)
 
-INSTALL_HINT = (
-    "Install it with:  pip install playwright && playwright install chromium\n"
-    "(Playwright is optional — Silk Code's only runtime dependency is httpx.)"
-)
+# Playwright is a runtime dependency, so it is normally present. Its *browser*
+# is not: the wheel ships the driver and downloads Chromium separately, so a
+# fresh install has the import and no browser to launch until this is run.
+INSTALL_HINT = "Chromium is not installed here. Run:  playwright install chromium"
 
 
 def chromium_path() -> str | None:
@@ -54,7 +53,8 @@ def available() -> tuple[bool, str]:
     try:
         import playwright.sync_api  # noqa: F401
     except Exception:
-        return False, "Playwright is not installed, so no browser is available.\n" + INSTALL_HINT
+        return False, ("Playwright is missing, so no browser is available.\n"
+                       "Reinstall Silk Code, then run:  playwright install chromium")
     return True, ""
 
 
@@ -120,6 +120,7 @@ class PageReport:
     width: int = 1280
     height: int = 800
     problems: list[str] = field(default_factory=list)
+    text: str = ""
     screenshot: str | None = None
     error: str = ""
 
@@ -142,11 +143,16 @@ class PageReport:
             lines.append(f"screenshot saved: {self.screenshot}")
             lines.append("(an image, so it is for the person reading this — "
                          "the report above is what describes the page)")
+        if self.text:
+            lines.append("")
+            lines.append("visible text:")
+            lines.append(self.text)
         return "\n".join(lines)
 
 
 def check(url: str, width: int = 1280, height: int = 800,
-          timeout: float = 20.0, screenshot_to: Path | None = None) -> PageReport:
+          timeout: float = 20.0, screenshot_to: Path | None = None,
+          wait_ms: int = 0, text_limit: int = 0) -> PageReport:
     """Load `url` in a headless browser and report what a browser would see."""
     report = PageReport(url=url, width=width, height=height)
     ok, why = available()
@@ -175,6 +181,8 @@ def check(url: str, width: int = 1280, height: int = 800,
 
                 response = page.goto(url, wait_until="networkidle",
                                      timeout=timeout * 1000)
+                if wait_ms:
+                    page.wait_for_timeout(wait_ms)
                 report.status = response.status if response else None
                 report.title = page.title()
                 # A page wider than its viewport is the single most common way
@@ -186,6 +194,12 @@ def check(url: str, width: int = 1280, height: int = 800,
                 if isinstance(overflow, (int, float)) and overflow > 0:
                     problems.insert(0, f"page scrolls sideways by {int(overflow)}px "
                                        f"at {width}px wide")
+                if text_limit:
+                    try:
+                        report.text = page.locator("body").inner_text(
+                            timeout=5_000)[:text_limit]
+                    except Exception:
+                        report.text = ""      # a page with no body still reports
                 if screenshot_to is not None:
                     screenshot_to.parent.mkdir(parents=True, exist_ok=True)
                     page.screenshot(path=str(screenshot_to), full_page=True)
@@ -210,47 +224,6 @@ def check(url: str, width: int = 1280, height: int = 800,
     return report
 
 
-def browser_check(ws, url: str, width: int = 1280, height: int = 800,
-                  screenshot: bool = True) -> str:
-    """The agent-facing tool: render `url` and report what a browser sees."""
-    from .statedir import state_dir
-    from .workspace import ToolError
-
-    import re
-
-    url = (url or "").strip()
-    if not url:
-        raise ToolError("browser_check needs a url")
-    # A scheme, if there is one, must be http or https. Checking for "://"
-    # alone was not enough: `javascript:alert(1)` and `data:text/html,...`
-    # contain no "://", so they were quietly turned into
-    # `http://javascript:alert(1)` and allowed through. A browser will also
-    # read the filesystem given file://; reading files is what the file tools
-    # are for, and they are confined to the workspace.
-    scheme = re.match(r"^([A-Za-z][A-Za-z0-9+.\-]*):(.*)$", url)
-    if scheme and not scheme.group(2).split("/")[0].isdigit():
-        # a real scheme rather than `host:port`
-        if scheme.group(1).lower() not in ("http", "https"):
-            raise ToolError(
-                f"browser_check only opens http:// and https:// URLs, not "
-                f"{scheme.group(1)}:")
-    elif "://" not in url:
-        url = "http://" + url
-
-    target = None
-    if screenshot:
-        try:
-            import re
-            import time
-            stem = re.sub(r"[^A-Za-z0-9]+", "-", urlparse(url).netloc + urlparse(url).path)
-            stem = (stem.strip("-") or "page")[:60]
-            target = state_dir(ws.root) / "screenshots" / f"{stem}-{int(time.time())}.png"
-        except Exception:
-            target = None      # a read-only workspace still gets the report
-
-    return check(url, width=width, height=height, screenshot_to=target).render()
-
-
 def permission_command(args: dict, ws) -> str:
     """What the permission gate should judge this call as.
 
@@ -259,5 +232,23 @@ def permission_command(args: dict, ws) -> str:
     not get treated as one. Anything else leaves the machine and is classified
     like any other command that does.
     """
-    url = str(args.get("url") or "")
-    return "" if is_local(url) else f"browser_check {url}"
+    url = normalize_url(str(args.get("url") or ""))
+    return "" if is_local(url) else f"headless-browser {url}"
+
+
+def normalize_url(url: str) -> str:
+    """`127.0.0.1:8000/x` is a URL a person types. Anything with a real scheme
+    is left exactly as written, so the caller can reject the ones it will not
+    open."""
+    import re
+
+    url = (url or "").strip()
+    if not url:
+        return url
+    scheme = re.match(r"^([A-Za-z][A-Za-z0-9+.\-]*):(.*)$", url)
+    # `host:8000/…` looks like a scheme to a regex; a port is all digits.
+    if scheme and not scheme.group(2).split("/")[0].isdigit():
+        return url
+    if "://" not in url:
+        return "http://" + url
+    return url

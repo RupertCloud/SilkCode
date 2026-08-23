@@ -19,8 +19,16 @@ sections 67-68).
 ## Install
 
 ```bash
+# Recommended: installs Silk Code and its headless Chromium browser together
+curl -fsSLO https://raw.githubusercontent.com/RupertCloud/SilkCode/main/install.py
+python3 install.py
+
+# Windows PowerShell
+curl.exe -fsSLO https://raw.githubusercontent.com/RupertCloud/SilkCode/main/install.py
+py install.py
+
+# Package-only alternatives (run `playwright install chromium` afterwards)
 pip install git+https://github.com/RupertCloud/SilkCode
-# or isolated, with pipx:
 pipx install git+https://github.com/RupertCloud/SilkCode
 ```
 
@@ -28,13 +36,19 @@ Or from a clone, for working on Silk Code itself:
 
 ```bash
 pip install -e .
+# or install the clone plus Chromium into an isolated user environment
+python3 install.py --source .
 ```
 
 Once a tagged release is published, the wheel from the
 [latest release](https://github.com/RupertCloud/SilkCode/releases/latest) installs the
 same way — `pip install <url-of-the-.whl>` — without needing git on the machine.
 
-Requires Python 3.10+. The only runtime dependency is `httpx`.
+Requires Python 3.10+. The runtime dependencies are `httpx` and `playwright` — the
+latter so the agent can look at a page it just wrote (see
+[Seeing the page, not just the source](#seeing-the-page-not-just-the-source)). Its
+browser is a separate download, which is what `install.py` and the
+`playwright install chromium` line above take care of.
 
 ## Quick start
 
@@ -870,10 +884,11 @@ what was written, not what happens — a mistyped id, a stylesheet that 404s, a 
 pushes the layout sideways on a phone are all invisible in the file and obvious the
 moment something renders it.
 
-`live_server` serves the workspace so *you* can watch it reload. `browser_check` is the
+`live_server` serves the workspace so *you* can watch it reload. `review_url` is the
 other half: it opens a URL in headless Chromium and reports what a browser sees.
 
 ```text
+SILKCODE_IMAGE:.silkcode/reviews/page-1755912000.png
 GET http://127.0.0.1:8000/ -> 200
 title: 'Pricing'
 viewport: 390x844
@@ -882,21 +897,29 @@ problems (3):
   ! page scrolls sideways by 1210px at 390px wide
   ! 404: http://127.0.0.1:8000/styles/main.css
   ! uncaught Cannot read properties of null (reading 'addEventListener')
+
+screenshot saved: .silkcode/reviews/page-1755912000.png
+(an image, so it is for the person reading this — the report above is what describes the page)
+
+visible text:
+Pricing
+…
 ```
 
-Three real faults, none of them visible in the source, found in about a second. Set
-`width`/`height` to test a viewport — a phone is roughly 390×844.
+Three real faults, none of them visible in the source, found in about a second. Pass
+`mobile=true` for a phone viewport (390×844).
 
 The report is **text on purpose.** A screenshot cannot reach the model: the provider
-layer carries strings, and most coding models have no vision. One is still saved for you
-(into `.silkcode/screenshots/`, which is self-ignoring) and the report names the file and
-says plainly that it is for the reader, rather than implying the model looked at it.
+layer carries strings, and most coding models have no vision. One is still saved and
+shown inline in the GUI *for you* (into `.silkcode/reviews/`, which is self-ignoring),
+and the report names the file and says plainly that it is for the reader, rather than
+implying the model looked at it.
 
-**Playwright is optional and stays optional** — Silk Code's only runtime dependency is
-still `httpx`. When it is missing, `browser_check` says so and names the install command
-(`pip install playwright && playwright install chromium`) rather than failing.
+Playwright is a runtime dependency; its browser is a separate download, so if
+`playwright install chromium` has never been run, `review_url` says exactly that instead
+of failing obscurely.
 
-A page on this machine is checked without ceremony; a URL that leaves the machine goes
+A page on this machine is reviewed without ceremony; a URL that leaves the machine goes
 through the permission gate, classified like `curl`, and only `http`/`https` are opened —
 a browser will read the filesystem given `file://`, and reading files is what the
 workspace-confined file tools are for.
@@ -976,15 +999,14 @@ silkcode/
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox
 ├── sandbox_server.py  reference Silk Sandbox Protocol server (self-hosted)
-├── tools/           read/write/edit, glob/grep, run_command, run_tests, live_server, browser_check, git status/diff/log/commit
+├── tools/           read/write/edit, glob/grep, run_command, run_tests, live_server, review_url, git status/diff/log/commit
 ├── liveserver.py    built-in live preview server: serve the workspace + auto-reload pages on change
-├── browser.py       render a page and report what a browser sees (optional: Playwright)
+├── browser.py       render a page and report what a browser sees (headless Chromium)
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
 ├── swarm.py         multi-agent improvement loop (tester/critic/worker, 0-10 scoring)
 ├── update.py        self-update: pull from git, hot-apply via GUI daemon restart
 ├── permissions.py   risk classification + ask/edit/agent modes + "yes to all"
 ├── provenance.py    what a turn read, so a file cannot authorize a push
-├── browser.py       render a page and report what a browser sees (optional Playwright)
 ├── version.py       build identity: release + commit, for installs that track a branch
 ├── checkpoints.py   snapshot-before-modify, revert per turn
 ├── sessions.py      persistence shared by CLI and GUI

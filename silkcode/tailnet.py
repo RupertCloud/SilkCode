@@ -71,16 +71,18 @@ class Tailnet:
                     "into the same account, then run this again.")
         if self.state == "needs-login":
             return ("Tailscale is installed but not signed in. Run:  tailscale up\n"
-                    "Sign in with the same account on the phone.")
+                    "Sign in with the same account on the phone "
+                    "(https://tailscale.com/download).")
         if self.state == "stopped":
             return ("Tailscale is installed and signed in, but stopped. Run:  "
-                    "tailscale up")
+                    "tailscale up\nPhone app: https://tailscale.com/download")
         if self.state == "running":
             return ("On the same tailnet, this address works from anywhere — "
                     "cellular, another Wi-Fi. Make sure the phone is signed into "
                     "the same account.")
         return ("Could not read Tailscale's state here. If it is running, its "
-                "100.x address is listed above.")
+                "100.x address is listed above. Phone app: "
+                "https://tailscale.com/download")
 
 
 def _status_json(timeout: float = 5.0) -> dict | None:

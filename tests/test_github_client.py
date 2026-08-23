@@ -199,6 +199,22 @@ def test_an_unexpected_repositories_payload_is_not_fatal(client, api):
     assert client.list_repositories() == []
 
 
+def test_creates_private_repository_for_authenticated_user(client, api):
+    api.route("POST", "/user/repos", {
+        "full_name": "amon/new-app",
+        "html_url": "https://github.com/amon/new-app",
+        "clone_url": "https://github.com/amon/new-app.git",
+        "private": True,
+    }, status=201)
+    created = client.create_repository("new-app", "A useful app", private=True)
+    assert created["full_name"] == "amon/new-app"
+    assert created["private"] is True
+    assert api.requests[0]["body"] == {
+        "name": "new-app", "description": "A useful app",
+        "private": True, "auto_init": False,
+    }
+
+
 # --------------------------------------------------------------------------
 # pull requests
 # --------------------------------------------------------------------------

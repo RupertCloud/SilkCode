@@ -379,6 +379,30 @@ def test_non_loopback_daemon_requires_a_token(tmp_path, monkeypatch):
                      headers={"Cookie": f"silk_token={token}"}).status_code == 200
 
 
+def test_pairing_url_replaces_a_stale_browser_cookie(tmp_path, monkeypatch):
+    """A freshly printed URL must recover a browser paired to an old daemon.
+
+    Browsers send the old cookie alongside the new query token.  The explicit
+    pairing credential must win, then the response replaces the cookie so
+    later GUI and API requests work without keeping the token in their URLs.
+    """
+    url, _ = _start_gui(tmp_path, monkeypatch, "0.0.0.0",
+                        token="fresh-secret")
+    base = url.split("/?token=")[0]
+    client = httpx.Client()
+    # httpx normalizes host-only cookies for localhost to localhost.local.
+    # Match that scope so Set-Cookie replaces the stale value, as a browser
+    # does, rather than creating a second cookie with a different scope.
+    client.cookies.set("silk_token", "stale-secret",
+                       domain="localhost.local", path="/")
+
+    paired = client.get(url)
+    assert paired.status_code == 200
+    assert paired.cookies.get("silk_token") == "fresh-secret"
+    assert client.get(f"{base}/").status_code == 200
+    assert client.get(f"{base}/api/state").status_code == 200
+
+
 def test_explicit_token_is_honoured_on_loopback(tmp_path, monkeypatch):
     url, _ = _start_gui(tmp_path, monkeypatch, "127.0.0.1", token="chosen-secret")
     base = url.split("/?token=")[0]
