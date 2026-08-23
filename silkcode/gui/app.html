@@ -1642,7 +1642,10 @@ async function refreshGithubStatus() {
   if (s.error) bits.push(`error: ${s.error}`);
   $("gh-status").textContent = bits.join("\n");
   for (const g of GRANTS) $("grant-" + g).checked = s.grants.includes(g);
-  $("github-btn").textContent = s.connected ? `GitHub ✓ ${s.login}` : "GitHub";
+  $("github-btn").textContent = s.connected ? `GitHub-on · ${s.login}` : "GitHub";
+  $("github-btn").title = s.connected
+    ? `Connected to GitHub as ${s.login}`
+    : "Connect a GitHub account";
   $("gh-signin").style.display = s.connected ? "none" : "";
   $("gh-signin").disabled = !s.device_flow_available;
   $("gh-signin").textContent = s.device_flow_available

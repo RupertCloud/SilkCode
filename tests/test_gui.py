@@ -82,6 +82,7 @@ def test_gui_serves_page_and_state(gui):
     page = httpx.get(f"{base}/")
     assert page.status_code == 200
     assert "Silk Code" in page.text
+    assert "GitHub-on" in page.text
 
     resp = httpx.get(f"{base}/api/state").json()
     assert resp["model"] == "stub/stub-model"
