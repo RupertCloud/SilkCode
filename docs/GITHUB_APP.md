@@ -31,10 +31,10 @@ Client ids are public (they are not secrets in the device flow). Set it as
 the project default in `silkcode/github_oauth.py`:
 
 ```python
-DEFAULT_GITHUB_CLIENT_ID = "Iv23li..."   # the Silk Code app's client id
+DEFAULT_GITHUB_CLIENT_ID = "Iv23liIVrIULoOVsdX9b"   # public, not a secret
 ```
 
-Until that lands in a release, anyone can configure it locally instead:
+For a custom or GitHub Enterprise app, override it locally instead:
 
 ```bash
 silkcode connect github --client-id Iv23li...

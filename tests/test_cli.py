@@ -588,7 +588,10 @@ def test_sandbox_status_reports_a_reachable_server(home, capsys, tmp_path):
 # connect github
 # --------------------------------------------------------------------------
 
-def test_connect_github_explains_both_paths_when_unconfigured(home, capsys):
+def test_connect_github_explains_both_paths_when_unconfigured(home, capsys, monkeypatch):
+    # Exercise the fallback help independently of the client id shipped by
+    # release builds; never contact real GitHub from the test suite.
+    monkeypatch.setattr("silkcode.github_oauth.DEFAULT_GITHUB_CLIENT_ID", None)
     code, out, _ = run(["connect", "github"], capsys)
     assert code == 1
     assert "Sign in with GitHub" in out
@@ -597,12 +600,16 @@ def test_connect_github_explains_both_paths_when_unconfigured(home, capsys):
 
 def test_connect_github_saves_the_token_env(home, capsys, monkeypatch):
     monkeypatch.setenv("MY_GH_TOKEN", "")
+    monkeypatch.setattr("silkcode.github_oauth.DEFAULT_GITHUB_CLIENT_ID", None)
     code, out, _ = run(["connect", "github", "--token-env", "MY_GH_TOKEN"], capsys)
     assert "MY_GH_TOKEN" in out
     assert json.loads((home / "config.json").read_text())["github"]["token_env"] == "MY_GH_TOKEN"
 
 
-def test_connect_github_saves_the_client_id(home, capsys):
+def test_connect_github_saves_the_client_id(home, capsys, monkeypatch):
+    from silkcode.github_oauth import DeviceFlowError
+    monkeypatch.setattr("silkcode.github_oauth.DeviceFlow.start",
+                        lambda self: (_ for _ in ()).throw(DeviceFlowError("test stop")))
     run(["connect", "github", "--client-id", "Iv1.abc123"], capsys)
     assert json.loads((home / "config.json").read_text())["github"]["client_id"] == "Iv1.abc123"
 

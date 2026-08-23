@@ -398,14 +398,12 @@ def test_gui_device_flow_signin(gui, monkeypatch):
     base, state, _ws = gui
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
-    # not configured: endpoint explains, status reports unavailable
+    # The release ships the public Silk Code GitHub App client id, so sign-in
+    # is available without any local maintainer configuration.
     status = httpx.get(f"{base}/api/github/status").json()
-    assert status["device_flow_available"] is False
-    resp = httpx.post(f"{base}/api/github/device", json={})
-    assert resp.status_code == 400
-    assert "client id" in resp.json()["error"]
+    assert status["device_flow_available"] is True
 
-    # configure a client id and mock GitHub's device endpoints
+    # A configured client id still overrides the built-in one.
     state.config.data.setdefault("github", {})["client_id"] = "cid"
 
     import silkcode.github_oauth as gho

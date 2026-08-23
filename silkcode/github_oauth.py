@@ -19,10 +19,10 @@ import httpx
 
 GITHUB_BASE = "https://github.com"
 
-# Set after the maintainer registers the Silk Code GitHub App (see
-# docs/GITHUB_APP.md). Users can always override with `github.client_id`
-# in their config or `silkcode connect github --client-id <id>`.
-DEFAULT_GITHUB_CLIENT_ID: str | None = None
+# Public identifier for the registered Silk Code GitHub App. Users can still
+# override it with `github.client_id` in config or
+# `silkcode connect github --client-id <id>` (for enterprise/custom apps).
+DEFAULT_GITHUB_CLIENT_ID: str | None = "Iv23liIVrIULoOVsdX9b"
 
 # Test hook: replaced to inject a mock transport.
 _make_client = lambda: httpx.Client(timeout=30.0)  # noqa: E731
