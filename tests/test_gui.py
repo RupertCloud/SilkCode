@@ -1225,3 +1225,71 @@ def test_the_switcher_offers_current_open_and_recent_projects(gui, tmp_path):
     assert by_label[other.name]["current"] is True
     assert workspace.name in by_label, "the project we came from vanished from the switcher"
     assert len({p["path"] for p in projects}) == len(projects), "duplicate entries"
+
+
+# ---- the access token has to survive the daemon restarting itself -----------
+
+def test_a_token_is_reused_across_restarts(tmp_path, monkeypatch):
+    """A daemon reachable beyond this machine mints a token and prints it
+    inside the URL — then re-execs itself to hot-apply an update. The restart
+    argv reproduces the launch configuration except for the token, so every
+    self-update minted a new one and answered the tab you already had open
+    with "Unauthorized ... open the URL printed when it started". On a phone
+    driving a laptop, that URL is on the other device.
+    """
+    monkeypatch.setenv("SILKCODE_HOME", str(tmp_path / "home"))
+    from silkcode.gui.server import remember_token, remembered_token
+
+    assert remembered_token("0.0.0.0", 8377) is None
+    remember_token("0.0.0.0", 8377, "the-token")
+    assert remembered_token("0.0.0.0", 8377) == "the-token"
+
+
+def test_each_address_keeps_its_own_token(tmp_path, monkeypatch):
+    """Two daemons on one machine are two daemons; one must not answer to the
+    other's URL."""
+    monkeypatch.setenv("SILKCODE_HOME", str(tmp_path / "home"))
+    from silkcode.gui.server import remember_token, remembered_token
+
+    remember_token("0.0.0.0", 8377, "first")
+    remember_token("0.0.0.0", 8378, "second")
+    assert remembered_token("0.0.0.0", 8377) == "first"
+    assert remembered_token("0.0.0.0", 8378) == "second"
+
+
+def test_the_token_is_not_readable_by_anyone_else(tmp_path, monkeypatch):
+    """It is a credential for something that runs commands, so it is stored
+    the way this installation stores its API keys, not in argv where `ps`
+    shows it to every user on the machine."""
+    monkeypatch.setenv("SILKCODE_HOME", str(tmp_path / "home"))
+    from silkcode.gui.server import _token_path, remember_token
+
+    remember_token("0.0.0.0", 8377, "the-token")
+    path = _token_path("0.0.0.0", 8377)
+    assert oct(path.stat().st_mode)[-3:] == "600", oct(path.stat().st_mode)
+    assert oct(path.parent.stat().st_mode)[-3:] == "700"
+
+
+def test_an_unwritable_config_directory_does_not_stop_the_daemon(tmp_path, monkeypatch):
+    """Remembering is a convenience. Failing to remember costs a new token,
+    which is recoverable; refusing to start is not."""
+    monkeypatch.setenv("SILKCODE_HOME", str(tmp_path / "home"))
+    from silkcode.gui.server import remember_token, remembered_token
+
+    def deny(*_a, **_k):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(Path, "mkdir", deny)
+    remember_token("0.0.0.0", 8377, "the-token")   # must not raise
+    assert remembered_token("0.0.0.0", 8377) is None
+
+
+def test_a_corrupt_token_file_is_ignored_rather_than_trusted(tmp_path, monkeypatch):
+    monkeypatch.setenv("SILKCODE_HOME", str(tmp_path / "home"))
+    from silkcode.gui.server import _token_path, remembered_token
+
+    path = _token_path("0.0.0.0", 8377)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("   \n")
+    assert remembered_token("0.0.0.0", 8377) is None, \
+        "an empty file became an empty token, which would disable the check"
