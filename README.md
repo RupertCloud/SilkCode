@@ -319,7 +319,24 @@ devices are on the same router. Put both machines on a
 [Tailscale](https://tailscale.com) tailnet and the `100.x` address keeps working
 from cellular or someone else's Wi-Fi — Silk Code detects that address
 (Tailscale allocates from `100.64.0.0/10`), labels it, lists it first, and puts
-*it* in the QR. When you have no such address it says so and points you here.
+*it* in the QR. Where Tailscale offers a **MagicDNS name** the URL uses that
+instead — `http://laptop.tail1a2b3.ts.net:8377/…` survives the node being
+re-addressed and can be read off a screen; four octets cannot.
+
+Silk Code never installs, starts or manages Tailscale — `tailscale up` joins a
+network and changes how a machine is reachable, which is your decision. It does
+read the state, so the advice fits the situation rather than being the same
+sentence three times:
+
+| What it finds | What it says |
+| --- | --- |
+| no `tailscale` command | install it on both machines, sign into the same account |
+| installed, never signed in | `tailscale up`, then sign in on the phone too |
+| installed, signed in, stopped | `tailscale up` |
+| running | the address works from anywhere; check the phone is on the same account |
+
+Any WireGuard mesh handing out `100.64.0.0/10` addresses is treated the same
+way — the check is on the range, not on Tailscale.
 
 **The phone layout.** The desktop GUI is a three-column grid; below 820px it
 becomes one pane at a time with a switcher — Chat, Project, Activity, Diff —
