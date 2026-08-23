@@ -736,6 +736,40 @@ class GuiState:
             record_recent_project(choice.kind, project, choice.label)
         return self.state(session.id)
 
+    def create_project(self, params: dict) -> dict:
+        """Scaffold, git-initialize, and activate a brand-new local project."""
+        if self.remote_spec:
+            raise ToolError("this daemon runs against a remote workspace; projects cannot be created")
+        from ..scaffold import DEFAULT_TEMPLATE, create_project
+
+        name = str(params.get("name") or "").strip()
+        parent = str(params.get("parent") or "").strip()
+        template = str(params.get("template") or DEFAULT_TEMPLATE).strip()
+        description = str(params.get("description") or "").strip()
+        if not name:
+            raise ToolError("project name must not be empty")
+        if not parent:
+            parent = str(Path(self.project_root()).parent)
+        objective = str(params.get("objective") or description).strip()
+        if params.get("start_swarm") and not objective:
+            raise ToolError("describe what the Swarm should build")
+        result = create_project(name, template=template, parent=parent,
+                                description=description, git=True)
+        state = self.open_project(str(result.path))
+        swarm = None
+        if params.get("start_swarm"):
+            swarm = self.start_swarm({
+                "team_mode": True,
+                "objective": objective,
+                "developer_count": int(params.get("developer_count") or 0),
+                "max_iterations": int(params.get("max_iterations") or 0),
+                "max_tokens": int(params.get("max_tokens") or 0),
+                "target": float(params.get("target") or 10),
+            }, state["session_id"])
+        return {"state": state, "project": str(result.path), "git": result.git,
+                "commit": result.commit, "files": result.files,
+                "test_command": result.test_command, "swarm": swarm}
+
     def close_session(self, session_id: int | None = None) -> dict:
         """Stop and close a session: release its workspace lock and drop it from
         memory so another session can take over the project. The conversation
@@ -1753,6 +1787,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                 if not target:
                     raise ToolError("no project given")
                 self._json(st.open_project(target))
+            elif route == "/api/project/create":
+                self._json(st.create_project(body))
             elif route == "/api/session/close":
                 self._json(st.close_session(sid))
             elif route == "/api/project/close":

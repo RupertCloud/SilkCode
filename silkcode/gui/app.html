@@ -526,6 +526,7 @@
     <div id="project-tabs" style="display:flex;gap:8px;margin-bottom:10px">
       <button class="ptab active" data-pgtab="github" style="flex:1">GitHub repository</button>
       <button class="ptab" data-pgtab="local" style="flex:1">Local directory</button>
+      <button class="ptab" data-pgtab="new" style="flex:1">New project</button>
     </div>
     <div data-pgpane="github">
       <div class="prompt" id="project-github-status">checking your repositories…</div>
@@ -537,6 +538,21 @@
       <input id="project-path" placeholder="/path/to/your/project or ~/my-project">
       <div style="color:var(--dim);font-size:12px;margin-top:2px">
         Enter a repository directory already available on this machine.
+      </div>
+    </div>
+    <div data-pgpane="new" style="display:none">
+      <label>Project name</label><input id="project-new-name" placeholder="My new app">
+      <label>Parent directory (optional)</label><input id="project-new-parent" placeholder="Defaults beside the current project">
+      <label>Starting template</label><select id="project-new-template">
+        <option value="blank">Blank — let Swarm build it</option>
+        <option value="python">Python package</option>
+        <option value="node">Node.js package</option>
+        <option value="web">Static web app</option>
+      </select>
+      <label>What should the Swarm build?</label>
+      <textarea id="project-new-objective" rows="4" placeholder="Describe the product, users, and the first useful release."></textarea>
+      <div style="color:var(--dim);font-size:12px;margin-top:4px">
+        Silk Code creates a new folder, initializes Git, opens the project, and starts the Advanced Swarm.
       </div>
     </div>
     <div class="row">
@@ -1443,6 +1459,9 @@ function paintProjectTabs() {
     b.classList.toggle("active", on);
     document.querySelector(`[data-pgpane="${b.dataset.pgtab}"]`).style.display = on ? "" : "none";
   });
+  $("project-modal").querySelector("h3").textContent =
+    activeProjectTab === "new" ? "Create a project with Swarm" : "Open project";
+  $("project-confirm").textContent = activeProjectTab === "new" ? "Create & start Swarm" : "Open";
 }
 
 function projectRow(label, spec) {
@@ -1498,6 +1517,8 @@ function openProjectModal(opts) {
   selectedProject = null;
   activeProjectTab = defaultProjectTab;
   $("project-path").value = "";
+  $("project-new-name").value = "";
+  $("project-new-objective").value = "";
   $("project-error").textContent = "";
   $("project-modal").classList.add("open");
   paintProjectTabs();
@@ -1511,6 +1532,7 @@ document.querySelectorAll("#project-tabs .ptab").forEach(b => {
     selectedProject = null;
     paintProjectTabs();
     if (activeProjectTab === "local") $("project-path").focus();
+    if (activeProjectTab === "new") $("project-new-name").focus();
   };
 });
 $("project-github-connect").onclick = () => {
@@ -1556,9 +1578,29 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && $("projects-help-modal").classList.contains("open")) closeProjectsHelp();
 });
 $("project-confirm").onclick = async () => {
-  const path = $("project-path").value.trim();
   $("project-confirm").disabled = true;
   try {
+    if (activeProjectTab === "new") {
+      const objective = $("project-new-objective").value.trim();
+      const created = await api("/api/project/create", {
+        name: $("project-new-name").value.trim(),
+        parent: $("project-new-parent").value.trim(),
+        template: $("project-new-template").value,
+        objective,
+        start_swarm: true,
+        developer_count: 0,
+      });
+      $("project-modal").classList.remove("open");
+      currentSessionId = created.state.session_id;
+      await init();
+      $("sw-objective").value = objective;
+      $("sw-workflow").value = "team";
+      setTeamWorkflow();
+      $("swarm-modal").classList.add("open");
+      renderSwarmStatus(created.swarm || {running: true, log: [], artifacts: {}});
+      return;
+    }
+    const path = $("project-path").value.trim();
     const target = path || selectedProject;
     if (!target) throw new Error("Choose a recent project or enter a directory.");
     const state = await api("/api/project/open", {project: target, session_id: currentSessionId});

@@ -111,6 +111,39 @@ def test_project_picker_endpoint_returns_a_list(gui):
     assert isinstance(response.json(), list)
 
 
+def test_gui_creates_git_project_and_opens_it(gui, tmp_path):
+    base, state, _workspace = gui
+    response = httpx.post(f"{base}/api/project/create", json={
+        "name": "Fresh Product",
+        "parent": str(tmp_path),
+        "template": "blank",
+        "description": "A new product",
+        "start_swarm": False,
+    })
+    assert response.status_code == 200, response.text
+    data = response.json()
+    root = tmp_path / "fresh-product"
+    assert data["project"] == str(root)
+    assert data["git"] in {"initialized", "already a git repository"}
+    assert (root / ".git").is_dir()
+    assert (root / "README.md").is_file()
+    assert data["state"]["cwd"] == str(root)
+    assert state.project_root(data["state"]["session_id"]) == str(root)
+
+
+def test_gui_validates_swarm_objective_before_creating_project(gui, tmp_path):
+    base, _state, _workspace = gui
+    response = httpx.post(f"{base}/api/project/create", json={
+        "name": "Should Not Exist",
+        "parent": str(tmp_path),
+        "template": "blank",
+        "start_swarm": True,
+    })
+    assert response.status_code == 400
+    assert "describe" in response.json()["error"].lower()
+    assert not (tmp_path / "should-not-exist").exists()
+
+
 def test_gui_serves_workspace_images_but_not_other_files(gui):
     base, _state, ws = gui
     payload = b"\x89PNG\r\n\x1a\nimage"
