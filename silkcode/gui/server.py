@@ -35,7 +35,7 @@ from urllib.parse import parse_qs, urlparse
 from ..agent import Agent
 from ..agent.loop import DEFAULT_CONTEXT_TOKENS
 from ..config import Config, ConfigError
-from ..context import build_context
+from ..context import assemble
 from ..lock import LockError, acquire, lock_state, release
 from ..permissions import PermissionManager
 from ..providers import ProviderError, build_provider
@@ -137,14 +137,16 @@ class AgentSession:
         # and its file writes are refused until the lock goes stale.
         self.lock_owner = f"session-{self.id}"
         self.lock_conflict: str | None = None
+        # Emitted after the transcript is built, not before: resuming a
+        # session replaces self.transcript wholesale, which used to throw
+        # away any notice raised while the session was being constructed.
+        notices: list[str] = []
         try:
             acquire(self.workspace.root, self.lock_owner)
         except LockError as exc:
             self.lock_conflict = str(exc)
-            notice = (f"⚠ This project is already open in {exc.holder()} — "
-                      "edits are refused until that session closes or the lock goes stale.")
-            self.transcript.append({"kind": "notice", "text": notice})
-            state.broadcast({"type": "notice", "text": notice, "session": self.id})
+            notices.append(f"⚠ This project is already open in {exc.holder()} — "
+                           "edits are refused until that session closes or the lock goes stale.")
         except OSError:
             pass  # cannot create the lock file (e.g. read-only fs): locking is off
 
@@ -157,10 +159,13 @@ class AgentSession:
         permissions.grants = state.shared_grants  # one grant set for the whole app
         self.permissions = permissions
 
+        project = assemble(self.workspace)
+        notices.extend(project.warnings)
+
         self.agent = Agent(
             provider, model, self.workspace, permissions,
             on_event=lambda kind, payload: state._on_agent_event(self, kind, payload),
-            context=build_context(self.workspace), mcp=state.mcp,
+            context=project.text, mcp=state.mcp,
             max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS,
             session_id=self.id,
             attribution=state.config.data.get("attribution", True),
@@ -169,6 +174,9 @@ class AgentSession:
         if data.get("messages"):
             self.agent.messages = data["messages"]
             self.transcript = _transcript_from_messages(data["messages"])
+        for notice in notices:
+            self.transcript.append({"kind": "notice", "text": notice})
+            state.broadcast({"type": "notice", "text": notice, "session": self.id})
         usage = data.get("usage") or {}
         self.agent.usage.prompt_tokens = usage.get("prompt_tokens", 0)
         self.agent.usage.completion_tokens = usage.get("completion_tokens", 0)

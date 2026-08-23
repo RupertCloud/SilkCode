@@ -114,14 +114,36 @@ class Sighting:
         return f"{self.source} — {self.reason}: “{self.excerpt}”"
 
 
-def scan(text: str, source: str) -> list[Sighting]:
-    """Sightings of agent-directed instructions in `text`."""
+# The one pattern that means nothing in a file written to address an agent.
+_SALUTATION = "addresses the assistant directly"
+
+
+def scan(text: str, source: str, *, addressed_to_agent: bool = False) -> list[Sighting]:
+    """Sightings of agent-directed instructions in `text`.
+
+    `addressed_to_agent` is for content whose whole purpose is to address the
+    agent — SILKCODE.md, project memory. Asking "does this talk to an AI?"
+    about a file written to talk to an AI carries no information: measured on
+    realistic instruction files, the salutation pattern flagged "Claude: run
+    the tests before committing", "Assistant: do not commit generated files"
+    and "Agent: push only to feature branches", and caught exactly one
+    injection the other patterns did not already have. Three false alarms for
+    one catch is a detector that costs more than it earns, so in those files
+    it is not consulted.
+
+    What still applies there is everything about content claiming an
+    authority it does not have — overriding earlier instructions, asserting a
+    system prompt, hiding text from the reader. Those mean the same thing
+    wherever they appear.
+    """
     if not text:
         return []
     if len(text) > HEAD_SCAN_CHARS + TAIL_SCAN_CHARS:
         text = text[:HEAD_SCAN_CHARS] + "\n" + text[-TAIL_SCAN_CHARS:]
     found: list[Sighting] = []
     for reason, pattern in STEERING_PATTERNS:
+        if addressed_to_agent and reason == _SALUTATION:
+            continue
         match = pattern.search(text)
         if not match:
             continue
@@ -156,13 +178,14 @@ class TurnProvenance:
     def end(self) -> None:
         self.active = False
 
-    def record(self, source: str, output: str, kind: str = "tool") -> None:
+    def record(self, source: str, output: str, kind: str = "tool",
+               addressed_to_agent: bool = False) -> None:
         """Note that the turn consumed `output` from `source`."""
         if kind not in UNTRUSTED_KINDS:
             return
         if source not in self.sources:
             self.sources.append(source)
-        for sighting in scan(output, source):
+        for sighting in scan(output, source, addressed_to_agent=addressed_to_agent):
             # one per source is enough to raise the question
             if not any(s.source == sighting.source for s in self.sightings):
                 self.sightings.append(sighting)

@@ -83,9 +83,10 @@ def test_the_patterns_stay_quiet_on_this_repository():
     and an earlier draft flagged thirteen things — its own system prompt, its
     own command-line examples, a tuple unpack in a test.
 
-    tests/test_provenance.py is excluded because it is full of attack strings
-    on purpose; that it lights up is the suite working.
+    The suites that carry attack strings on purpose are excluded; that they
+    light up is this working.
     """
+    fixtures = {"test_provenance.py", "test_context_trust.py"}
     root = pathlib.Path(__file__).resolve().parent.parent
     noisy = []
     for path in root.rglob("*"):
@@ -94,7 +95,7 @@ def test_the_patterns_stay_quiet_on_this_repository():
         if path.suffix not in {".py", ".md", ".txt", ".yml", ".yaml", ".html",
                                ".js", ".toml"}:
             continue
-        if path.name == "test_provenance.py":
+        if path.name in fixtures:
             continue
         try:
             text = path.read_text(errors="ignore")
