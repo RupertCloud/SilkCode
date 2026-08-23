@@ -132,7 +132,7 @@ def test_the_page_reflows_for_phones():
     a media query a phone got a page wider than the screen, with the composer
     off the right-hand edge."""
     text = APP.read_text(encoding="utf-8")
-    assert "@media (max-width: 820px)" in text
+    assert "@media (max-width: 768px), (max-height: 480px)" in text
     assert "grid-template-columns: 1fr" in text
 
 
@@ -141,7 +141,7 @@ def test_the_phone_layout_overrides_come_after_the_rules_they_override():
     Placed earlier in the sheet it silently lost, and the panes stayed in
     their desktop columns."""
     text = APP.read_text(encoding="utf-8")
-    media = text.index("@media (max-width: 820px)")
+    media = text.index("@media (max-width: 768px)")
     assert media > text.index("#composer { grid-column: 2")
     assert media > text.index("#bottom { grid-column: 2")
     assert media < text.index("</style>")
@@ -169,5 +169,13 @@ def test_the_input_is_large_enough_that_ios_does_not_zoom():
     """Safari zooms the page when a focused input is under 16px, which leaves
     the layout scrolled sideways with no way back."""
     text = APP.read_text(encoding="utf-8")
-    block = text[text.index("@media (max-width: 820px)"):]
+    block = text[text.index("@media (max-width: 768px)"):]
     assert "font-size: 16px" in block
+
+
+def test_a_phone_in_landscape_also_gets_the_phone_layout():
+    """A phone on its side is 844px wide and ~390px tall. Width alone reads
+    that as a desktop, and the three-column grid overflows sideways there —
+    so the short viewport is the second way in."""
+    text = APP.read_text(encoding="utf-8")
+    assert "(max-height: 480px)" in text

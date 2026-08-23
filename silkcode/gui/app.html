@@ -187,7 +187,13 @@
      the composer sat off-screen. One pane at a time instead, chosen by the
      tab bar, with the composer pinned where a thumb can reach it. */
   #mobile-tabs { display: none; }
-  @media (max-width: 820px) {
+  /* Two ways to be a phone. 768px is the conventional tablet boundary, and
+     covers portrait (390-430px); a narrow desktop window keeps the three
+     columns, which need 500px of sidebar and still fit. Landscape is the
+     other way in: a phone on its side is wide (844px) but only ~390px tall,
+     which no desktop window is, and at that width the three-column grid
+     overflows sideways. */
+  @media (max-width: 768px), (max-height: 480px) {
     /* The header is a single row of controls on a desktop. Wrapped onto a
        phone it took most of the screen before any content showed, so it is
        shrunk here rather than reflowed at desktop sizes. */
