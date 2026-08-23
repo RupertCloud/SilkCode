@@ -11,7 +11,7 @@
     --ok: #7ad48a; --warn: #e6c07b; --err: #e06c75; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; margin: 0; }
-  body { background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
   header { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--border); flex: 0 0 auto; flex-wrap: wrap; }
   header .logo { font-weight: 700; color: var(--accent); }
   header .path { color: var(--dim); font-family: var(--mono); font-size: 12px; }
@@ -30,6 +30,8 @@
   header button.outward:hover { background: var(--warn); color: #241d0c; border-color: var(--warn); }
   header .spacer { flex: 1; }
   header .usage { color: var(--dim); font-size: 12px; }
+  .mobile-actions { display: contents; }
+  #mobile-menu { display: none; }
   #status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); display: inline-block; }
   #status-dot.running { background: var(--warn); animation: pulse 1s infinite alternate; }
   @keyframes pulse { to { opacity: .35; } }
@@ -209,17 +211,28 @@
     /* The header is a single row of controls on a desktop. Wrapped onto a
        phone it took most of the screen before any content showed, so it is
        shrunk here rather than reflowed at desktop sizes. */
-    header { padding: 5px 8px; gap: 4px; row-gap: 4px; font-size: 12px; }
-    header select, header button, header input { padding: 3px 6px; font-size: 12px; }
+    header { min-height: 52px; padding: calc(5px + env(safe-area-inset-top, 0px)) 10px 5px;
+             gap: 8px; flex-wrap: nowrap; font-size: 12px; position: relative; z-index: 8; }
+    header select, header button, header input { min-height: 40px; padding: 6px 8px; font-size: 13px; }
+    header > label:first-of-type { flex: 1; min-width: 0; }
+    header > label:first-of-type select { width: 100%; min-width: 0; }
+    #mobile-menu { display: inline-flex; align-items: center; justify-content: center;
+                   width: 42px; flex: 0 0 42px; font-size: 20px; }
+    .mobile-actions { display: none; position: fixed; inset: auto 8px 8px;
+                      max-height: calc(100dvh - 70px); overflow-y: auto;
+                      padding: 14px; background: var(--panel); border: 1px solid var(--border);
+                      border-radius: 14px; box-shadow: 0 12px 40px rgba(0,0,0,.55);
+                      grid-template-columns: 1fr 1fr; gap: 10px; z-index: 20; }
+    header.mobile-open .mobile-actions { display: grid; }
+    .mobile-actions .spacer { display: none; }
+    .mobile-actions label, .mobile-actions .hgroup { display: flex; min-width: 0; }
+    .mobile-actions label { flex-direction: column; align-items: stretch; font-size: 11px; color: var(--dim); }
+    .mobile-actions label select { width: 100%; }
+    .mobile-actions .hgroup { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .mobile-actions .hgroup button { width: 100%; }
+    .mobile-actions .usage { display: block; }
     header .hgroup + .hgroup { border-left: 0; padding-left: 0; }
-    header .spacer { display: none; }
-    header label { display: inline-flex; align-items: center; gap: 3px; }
-    /* The words are desktop affordances; on a phone the control itself says
-       what it is, and the space it costs is content the user came for. */
-    header label { font-size: 0; }
-    header label select { font-size: 12px; }
-    header #usage, header #session { font-size: 11px; }
-    .path { max-width: 18ch; }
+    .path { display: none; }
 
     #mobile-tabs { display: flex; border-bottom: 1px solid var(--border);
                    background: var(--panel); flex-shrink: 0; }
@@ -246,8 +259,19 @@
                 padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
     #composer textarea { height: 44px; font-size: 16px; }  /* 16px: iOS zooms below it */
     #composer button { height: 44px; padding: 0 16px; }
+    #composer-hint { display: none; }
     #messages { padding: 10px 12px; }
     .msg-wrap, .code-bubble { max-width: 100%; }
+    .msg { padding: 9px 11px; }
+    .msg-copy { display: inline-flex; width: 32px; height: 32px; }
+    .chat-image { width: 100%; max-height: 55dvh; }
+    .modal-bg { align-items: flex-end; }
+    .modal { width: 100%; max-width: 100vw; max-height: 88dvh; overflow-y: auto;
+             border-radius: 16px 16px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px)); }
+    .modal .row { flex-wrap: wrap; }
+    .modal .row button { min-height: 44px; flex: 1; }
+    table.envtable { min-width: 680px; }
+    #tabs { overflow-x: auto; }
   }
 
 </style>
@@ -257,6 +281,8 @@
   <span class="logo">Silk Code</span>
   <label>Project <select id="project-select" title="The tree this session's file tools, git commands and tests are confined to"></select></label>
   <span id="status-dot" title="agent status"></span>
+  <button id="mobile-menu" aria-label="More controls" aria-expanded="false">⋯</button>
+  <span class="mobile-actions">
   <span class="spacer"></span>
   <label>Session <select id="session-select"></select></label>
   <button id="new-session" aria-label="New session" title="Start a new conversation">＋</button>
@@ -283,6 +309,7 @@
 
   <span class="usage" id="usage"></span>
   <span class="usage" id="session"></span>
+  </span>
 </header>
 
 <div id="version-banner">⚠ The Silk Code server is running an older version. Stop it (Ctrl+C in its terminal) and run <b>silkcode gui</b> again, then reload this page.</div>
@@ -610,6 +637,29 @@
     bar.querySelectorAll("button").forEach(function (b) {
       b.classList.toggle("active", b === btn);
     });
+  });
+})();
+
+// The desktop header has many useful controls; on a phone they live in one
+// thumb-friendly sheet instead of wrapping into several cramped rows.
+(function () {
+  var header = document.querySelector("header");
+  var menu = document.getElementById("mobile-menu");
+  if (!header || !menu) return;
+  function close() {
+    header.classList.remove("mobile-open");
+    menu.setAttribute("aria-expanded", "false");
+  }
+  menu.addEventListener("click", function (ev) {
+    ev.stopPropagation();
+    var open = header.classList.toggle("mobile-open");
+    menu.setAttribute("aria-expanded", String(open));
+  });
+  document.addEventListener("click", function (ev) {
+    if (!header.contains(ev.target)) close();
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") close();
   });
 })();
 

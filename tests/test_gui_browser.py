@@ -647,6 +647,27 @@ def test_a_daemon_with_one_project_shows_no_reveal(browser, gui_url):
     assert page.locator("#session-select option[value='__all__']").count() == 0
 
 
+def test_mobile_layout_has_compact_header_and_switchable_panes(browser, gui_url):
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    page.goto(gui_url)
+    wait_for_switcher(page)
+
+    assert page.locator("#mobile-menu").is_visible()
+    assert page.locator("#chat").is_visible()
+    assert not page.locator("#files").is_visible()
+    assert page.locator("body").evaluate("el => el.scrollWidth <= el.clientWidth")
+
+    page.click("#mobile-menu")
+    assert page.locator(".mobile-actions").is_visible()
+    assert page.locator("#session-select").is_visible()
+    page.keyboard.press("Escape")
+    assert not page.locator(".mobile-actions").is_visible()
+
+    page.click("#mobile-tabs button[data-pane='files']")
+    assert page.locator("#files").is_visible()
+    assert not page.locator("#chat").is_visible()
+
+
 # ---- project is a control, not a caption ------------------------------------
 
 def test_the_project_is_a_switcher_beside_session_model_and_mode(browser, two_project_gui):

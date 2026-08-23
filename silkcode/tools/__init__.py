@@ -147,6 +147,22 @@ _register(Tool(
 ))
 
 _register(Tool(
+    name="review_url",
+    description=("Open an HTTP(S) link in a headless Chromium browser, inspect its rendered title "
+                 "and visible text, and show a full-page screenshot inline. Use mobile=true to "
+                 "review the phone layout."),
+    parameters=_params({
+        "url": {"type": "string", "description": "HTTP(S) link to review"},
+        "path": {"type": "string", "description": "Optional screenshot .png path in the workspace"},
+        "mobile": {"type": "boolean", "description": "Use a 390x844 phone viewport"},
+        "wait_ms": {"type": "integer", "description": "Extra rendering wait, up to 10000 ms"},
+    }, ["url"]),
+    func=images.review_url,
+    kind="command",
+    command_of=lambda args, ws: "headless-browser " + str(args.get("url", "")),
+))
+
+_register(Tool(
     name="live_server",
     description=("Start (or stop/check) a live preview server for the workspace. It serves the "
                  "project over HTTP and reloads the open page automatically whenever a file "

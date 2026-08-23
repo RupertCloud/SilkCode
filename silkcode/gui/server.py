@@ -106,7 +106,8 @@ def _transcript_from_messages(messages: list[dict]) -> list[dict]:
                     "args": args if len(args) <= 200 else args[:200] + "...",
                 })
         elif m.get("role") == "tool" and str(m.get("content", "")).startswith(IMAGE_MARKER):
-            out.append({"kind": "image", "path": str(m["content"])[len(IMAGE_MARKER):]})
+            path = str(m["content"]).splitlines()[0][len(IMAGE_MARKER):]
+            out.append({"kind": "image", "path": path})
     return out
 
 
@@ -516,7 +517,7 @@ class GuiState:
         elif kind == "tool_result":
             output = str(data["output"])
             if output.startswith(IMAGE_MARKER):
-                entry = {"kind": "image", "path": output[len(IMAGE_MARKER):]}
+                entry = {"kind": "image", "path": output.splitlines()[0][len(IMAGE_MARKER):]}
                 session.transcript.append(entry)
                 self.broadcast({"type": "image", "session": session.id, **entry})
             first = str(data["output"]).splitlines()[0] if str(data["output"]) else ""

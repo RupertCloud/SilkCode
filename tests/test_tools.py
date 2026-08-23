@@ -3,7 +3,7 @@ import pytest
 from silkcode.tools.files import edit_file, read_file, write_file
 from silkcode.tools.search import glob_files, grep
 from silkcode.tools.shell import run_command
-from silkcode.tools.images import IMAGE_MARKER, show_image
+from silkcode.tools.images import IMAGE_MARKER, _web_url, show_image
 from silkcode.workspace import ToolError, Workspace
 
 
@@ -173,6 +173,14 @@ def test_show_image_validates_workspace_image(ws):
     (ws.root / "notes.txt").write_text("not an image")
     with pytest.raises(ToolError, match="Only PNG"):
         show_image(ws, "notes.txt")
+
+
+def test_web_review_accepts_links_but_not_files_or_credentials():
+    assert _web_url("https://example.com/page") == "https://example.com/page"
+    assert _web_url("http://localhost:3000") == "http://localhost:3000"
+    for url in ("file:///etc/passwd", "data:text/html,hi", "https://user:pass@example.com"):
+        with pytest.raises(ToolError):
+            _web_url(url)
 
 
 # ---- live preview server (the Python-native live-server) ---------------------

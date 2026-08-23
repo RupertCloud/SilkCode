@@ -23,6 +23,7 @@ Issues = "https://github.com/RupertCloud/SilkCode/issues"
 # setuptools_scm is a *build* requirement; it is here as well so the test
 # that asks the backend what version it will stamp can actually run.
 dev = ["pytest>=8", "setuptools_scm>=8"]
+browser = ["playwright>=1.40"]
 
 [project.scripts]
 silkcode = "silkcode.cli.main:main"
