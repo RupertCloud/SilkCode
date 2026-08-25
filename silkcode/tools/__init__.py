@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import files, git, images, search, shell, symbols, testing
+from ..browser import permission_command as _browser_permission
 from ..liveserver import live_server
 from ..github import (
     github_agent_task_get,
@@ -148,18 +149,25 @@ _register(Tool(
 
 _register(Tool(
     name="review_url",
-    description=("Open an HTTP(S) link in a headless Chromium browser, inspect its rendered title "
-                 "and visible text, and show a full-page screenshot inline. Use mobile=true to "
-                 "review the phone layout."),
+    description=(
+        "Open an HTTP(S) link in a headless Chromium browser and report what a "
+        "browser actually sees: the HTTP status, the rendered title, the visible "
+        "text, uncaught JavaScript exceptions, console errors, requests that "
+        "failed, and whether the page scrolls sideways. Use it after changing a "
+        "page - a mistyped id, a stylesheet that 404s and a layout that overflows "
+        "on a phone are all invisible in the source. Pair it with live_server: "
+        "start the preview, then review its URL. Set mobile=true for a phone "
+        "viewport. A full-page screenshot is saved and shown inline for the "
+        "person reading."),
     parameters=_params({
-        "url": {"type": "string", "description": "HTTP(S) link to review"},
+        "url": {"type": "string", "description": "HTTP(S) link to review, e.g. http://127.0.0.1:8000/"},
         "path": {"type": "string", "description": "Optional screenshot .png path in the workspace"},
         "mobile": {"type": "boolean", "description": "Use a 390x844 phone viewport"},
         "wait_ms": {"type": "integer", "description": "Extra rendering wait, up to 10000 ms"},
     }, ["url"]),
     func=images.review_url,
     kind="command",
-    command_of=lambda args, ws: "headless-browser " + str(args.get("url", "")),
+    command_of=_browser_permission,
 ))
 
 _register(Tool(

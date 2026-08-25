@@ -68,7 +68,11 @@
   .project-close:disabled { opacity: .25; cursor: default; background: transparent; }
   @media (min-width: 769px) and (min-height: 481px) { .project-header-switch { display: none; } }
 
-  #chat { display: flex; flex-direction: column; min-height: 0; }
+  /* min-width: 0 because #chat is a grid item: its default `auto` minimum is
+     its content's min-content width, so on a phone the conversation bar
+     widened the 1fr track past the viewport and the whole page scrolled
+     sideways. */
+  #chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
   #conversation-bar { display: flex; align-items: center; gap: 7px; padding: 7px 12px; background: var(--panel); border-bottom: 1px solid var(--border); flex: 0 0 auto; }
   #conversation-bar strong { color: var(--dim); font-size: 11px; letter-spacing: .08em; }
   #conversation-bar select { min-width: 180px; max-width: 52ch; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 5px 8px; }
@@ -372,7 +376,10 @@
   #details-head button { border: 0; border-radius: 6px; padding: 6px 9px; background: transparent; color: var(--dim); cursor: pointer; }
   #details-head button.active { background: var(--panel2); color: var(--accent); }
   #details-close { margin-left: auto; font-size: 17px; }
-  .details-panel { display: none; flex: 1; min-height: 0; overflow: auto; }
+  /* Scoped to #details on purpose. `.details-panel` alone loses to the plain
+     `#bottom` rule above, which sets display:flex — so Changes stayed stacked
+     under whichever tab you picked and the drawer showed two panels at once. */
+  #details .details-panel { display: none; flex: 1; min-height: 0; overflow: auto; }
   #details[data-detail="files"] #file-details,
   #details[data-detail="activity"] #activity,
   #details[data-detail="changes"] #bottom { display: flex; flex-direction: column; }

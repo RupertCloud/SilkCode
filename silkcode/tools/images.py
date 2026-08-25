@@ -59,6 +59,17 @@ def capture_screenshot(ws: Workspace, path: str | None = None,
 
 
 def _web_url(url: str) -> str:
+    """The link to open, or a refusal.
+
+    `127.0.0.1:8000/x` is a URL a person types, so it is read as http. A real
+    scheme is honoured as written and then checked: a browser will happily
+    read the filesystem given `file://`, and `javascript:` and `data:` URLs
+    execute whatever they carry. Reading files is what the file tools are for,
+    and they are confined to the workspace.
+    """
+    from ..browser import normalize_url
+
+    url = normalize_url(url)
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ToolError("Only http:// and https:// web links can be reviewed")
@@ -67,35 +78,38 @@ def _web_url(url: str) -> str:
     return url
 
 
+TEXT_LIMIT = 12_000
+
+
 def review_url(ws: Workspace, url: str, path: str | None = None,
                mobile: bool = False, wait_ms: int = 1000) -> str:
-    """Render a link headlessly, return visible text, and present a screenshot."""
+    """Render a link headlessly and report what a browser sees.
+
+    The screenshot is for the person — it is shown inline in the GUI. The
+    report is for the model, which cannot look at a picture: the status, the
+    title, the visible text, and anything a browser noticed going wrong.
+    """
+    from .. import browser
+
     url = _web_url(url)
     rel = path or f".silkcode/reviews/page-{int(time.time())}.png"
     target = ws.resolve(rel)
     if target.suffix.lower() != ".png":
         raise ToolError("Web review screenshots must use a .png path")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError as exc:
-        raise ToolError("Playwright is missing; reinstall Silk Code, then run: playwright install chromium") from exc
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            size = {"width": 390, "height": 844} if mobile else {"width": 1440, "height": 900}
-            page = browser.new_page(viewport=size)
-            response = page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-            page.wait_for_timeout(min(max(int(wait_ms), 0), 10_000))
-            title = page.title()
-            text = page.locator("body").inner_text(timeout=5_000)[:12_000]
-            page.screenshot(path=str(target), full_page=True)
-            status = response.status if response else "unknown"
-            browser.close()
-    except Exception as exc:
-        detail = str(exc)
-        if "Executable doesn't exist" in detail or "playwright install" in detail:
-            detail = "Chromium is not installed; run: playwright install chromium"
-        raise ToolError(f"Could not review {url}: {detail}") from exc
-    return (f"{IMAGE_MARKER}{ws.relative(target)}\n"
-            f"URL: {url}\nStatus: {status}\nTitle: {title}\nVisible text:\n{text}")
+
+    width, height = (390, 844) if mobile else (1440, 900)
+    report = browser.check(url, width=width, height=height,
+                           wait_ms=min(max(int(wait_ms), 0), 10_000),
+                           screenshot_to=target, text_limit=TEXT_LIMIT)
+    if report.error:
+        raise ToolError(f"Could not review {url}: {report.error}")
+
+    # The marker has to be the first line: that is how the GUI finds the
+    # picture. Everything after it is the part the model reads.
+    body = report.render()
+    if report.screenshot:
+        # `render` names an absolute path; the GUI wants one inside the tree.
+        body = body.replace(f"screenshot saved: {report.screenshot}",
+                            f"screenshot saved: {ws.relative(target)}")
+        return f"{IMAGE_MARKER}{ws.relative(target)}\n{body}"
+    return body

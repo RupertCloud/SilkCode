@@ -84,6 +84,24 @@ def gui_url(tmp_path, stub_server, monkeypatch):
     server.httpd.server_close()
 
 
+def open_details(page, panel="changes"):
+    """Reveal one of the secondary panels.
+
+    Changes, Files and Activity used to be permanently on screen. They live in
+    a collapsed right-hand drawer now, so a test that wants to click inside one
+    has to open it - and wait out the width transition, or the panel is a
+    zero-width box that Playwright rightly refuses to click.
+    """
+    if not page.locator("#details").is_visible():
+        page.click("#details-toggle")
+    page.click(f"#details-head button[data-detail='{panel}']")
+    page.wait_for_function(
+        "sel => { const el = document.querySelector(sel);"
+        "         return el && el.getBoundingClientRect().width > 1; }",
+        arg={"changes": "#bottom", "files": "#file-details",
+             "activity": "#activity"}[panel])
+
+
 def send_and_wait(page, text, expected_reply):
     page.fill("#input", text)
     page.click("#send")
@@ -218,7 +236,9 @@ def test_code_blocks_render_with_copy_and_run_buttons(browser, gui_url):
     # booted. Boot ends by clearing #messages and re-rendering the transcript,
     # which would wipe anything injected before it - the file tree is loaded
     # after that clear, so tree content means the clear has already happened.
-    page.wait_for_selector("#tree div", timeout=15000)
+    # `attached`, not visible: the tree lives in the details drawer now, and
+    # the drawer starts collapsed. It still renders; it is just off screen.
+    page.wait_for_selector("#tree div", state="attached", timeout=15000)
 
     # inject a message that mixes prose with shell and non-shell code fences
     page.evaluate("""() => {
@@ -276,7 +296,7 @@ def test_code_bubbles_are_not_squashed_by_the_message_column(browser, gui_url):
     page = browser.new_page(viewport={"width": 820, "height": 640})
     page.goto(gui_url)
     page.wait_for_selector("#input")
-    page.wait_for_selector("#tree div", timeout=15000)
+    page.wait_for_selector("#tree div", state="attached", timeout=15000)
 
     page.evaluate("""() => {
         const raw = "Change:\\n\\n```python\\ndef fmt(n):\\n    for u in ['B','KB','MB']:\\n"
@@ -306,7 +326,7 @@ def test_prose_between_fences_carries_no_blank_lines(browser, gui_url):
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(gui_url)
     page.wait_for_selector("#input")
-    page.wait_for_selector("#tree div", timeout=15000)
+    page.wait_for_selector("#tree div", state="attached", timeout=15000)
 
     page.evaluate("""() => {
         const raw = "First line:\\n\\n```bash\\nls\\n```\\n\\nSecond line:\\n\\n```bash\\npwd\\n```";
@@ -335,7 +355,7 @@ def test_the_interface_is_navigable_without_sight_or_a_mouse(browser, gui_url):
     and silence while the agent works."""
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(gui_url)
-    page.wait_for_selector("#tree div", timeout=15000)
+    page.wait_for_selector("#tree div", state="attached", timeout=15000)
 
     # the transcript announces itself as it grows
     messages = page.locator("#messages")
@@ -362,7 +382,8 @@ def test_the_interface_is_navigable_without_sight_or_a_mouse(browser, gui_url):
 def test_the_activity_rail_explains_itself_when_empty(browser, gui_url):
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(gui_url)
-    page.wait_for_selector("#tree div", timeout=15000)
+    page.wait_for_selector("#tree div", state="attached", timeout=15000)
+    open_details(page, "activity")
     assert page.is_visible("#timeline-empty")
 
     page.evaluate("() => addToolMsg('read_file', '{\"path\": \"app.py\"}')")
@@ -381,7 +402,7 @@ def test_the_workspace_path_is_shortened_but_recoverable(browser, gui_url):
     read at a glance, and the full path still recoverable on hover."""
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(gui_url)
-    page.wait_for_selector("#tree div", timeout=15000)
+    page.wait_for_selector("#tree div", state="attached", timeout=15000)
     page.wait_for_function(
         "() => document.querySelectorAll('#project-select option').length > 0")
 
@@ -492,6 +513,7 @@ def test_the_diff_panel_does_not_print_raw_porcelain(browser, gui_url):
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(gui_url)
     page.wait_for_selector("#input")
+    open_details(page, "changes")
     page.click("#tabs button[data-tab='diff']")
     page.wait_for_function(
         "() => document.getElementById('viewer-pre').textContent.trim().length > 0")
@@ -516,6 +538,7 @@ def test_the_diff_panel_lists_what_changed(browser, gui_url, tmp_path):
             "status": "## main...origin/main [ahead 1]\n M src/app.py\n?? extra.txt",
             "diff": "diff --git a/src/app.py b/src/app.py\n@@ -1 +1 @@\n-old\n+new\n",
         })))
+    open_details(page, "changes")
     page.click("#tabs button[data-tab='diff']")
     page.wait_for_function(
         "() => document.getElementById('viewer-pre').textContent.includes('changed file')")
@@ -534,6 +557,7 @@ def test_the_diff_panel_says_plainly_when_there_is_nothing(browser, gui_url):
     page.route("**/api/diff*", lambda route: route.fulfill(
         status=200, content_type="application/json",
         body=json.dumps({"status": "## main...origin/main", "diff": "(no changes)"})))
+    open_details(page, "changes")
     page.click("#tabs button[data-tab='diff']")
     page.wait_for_function(
         "() => document.getElementById('viewer-pre').textContent.includes('No uncommitted')")
@@ -549,7 +573,7 @@ def test_the_projects_howto_opens_and_hands_off_to_the_picker(browser, gui_url):
     straight to the project picker."""
     page = browser.new_page(viewport={"width": 1280, "height": 800})
     page.goto(gui_url)
-    page.wait_for_selector("#tree div", timeout=15000)
+    page.wait_for_selector("#tree div", state="attached", timeout=15000)
 
     page.click("#projects-help-btn")
     page.wait_for_selector("#projects-help-modal.open")
@@ -693,14 +717,14 @@ def test_secondary_panels_live_in_a_collapsed_details_drawer(browser, gui_url):
 
     assert not page.locator("#details").is_visible()
     assert page.locator("#chat").is_visible()
-    page.click("#details-toggle")
+    open_details(page, "changes")
     assert page.locator("#details").is_visible()
     assert page.locator("#bottom").is_visible()
 
-    page.click("#details-head button[data-detail='files']")
+    open_details(page, "files")
     assert page.locator("#file-details").is_visible()
     assert not page.locator("#activity").is_visible()
-    page.click("#details-head button[data-detail='activity']")
+    open_details(page, "activity")
     assert page.locator("#activity").is_visible()
     assert not page.locator("#bottom").is_visible()
     page.click("#details-close")
@@ -813,7 +837,9 @@ def test_switching_project_moves_the_session_and_rescopes_its_list(browser, two_
     page.goto(url)
     page.wait_for_function("document.querySelectorAll('#project-select option').length > 0")
 
-    page.select_option("#project-select", str(beta))
+    # The card is the desktop control - the header dropdown is the phone's
+    # copy of it and is hidden above 768px.
+    page.locator(f".project-card[data-path='{beta}']").click()
     # Two waits, because init() renders these at different times: the header
     # first, then the session list after an await. Waiting on a bare option
     # count matched the pre-move render, which is how this test first "passed".
@@ -838,7 +864,7 @@ def test_the_picker_opens_where_a_local_user_can_act(browser, two_project_gui):
     page.goto(url)
     page.wait_for_function("document.querySelectorAll('#project-select option').length > 0")
 
-    page.click("#new-session")
+    page.click("#project-add")
     page.wait_for_selector("#project-modal.open")
     page.wait_for_function(
         "document.querySelectorAll('#project-recent-list button').length > 0")
@@ -943,17 +969,20 @@ def test_new_conversation_and_open_project_are_separate_actions(browser, two_pro
     page.goto(url)
     page.wait_for_function("document.querySelectorAll('#project-select option').length > 0")
 
+    current = page.locator(".project-card.current").get_attribute("data-path")
     old = page.locator("#session-select").input_value()
     page.click("#new-session")
     page.wait_for_function("old => document.querySelector('#session-select').value !== old",
                            arg=old)
-    assert not page.locator("#project-modal").evaluate("el => el.classList.contains('open')")
+    assert not page.locator("#project-modal").evaluate("el => el.classList.contains('open')"), \
+        "starting a conversation should not ask which project to open"
 
-    page.select_option("#project-select", "__open__")
+    page.click("#project-add")
     page.wait_for_selector("#project-modal.open")
     assert page.locator("#project-modal h3").text_content() == "Open project"
 
-    # cancelling must put the switcher back, not leave it claiming a move
+    # cancelling must leave the workspace where it was, not half-moved
     page.click("#project-cancel")
-    assert page.locator("#project-select").input_value() != "__all__"
-    assert page.locator("#project-select").input_value() != "__open__"
+    assert not page.locator("#project-modal").evaluate("el => el.classList.contains('open')")
+    assert page.locator(".project-card.current").get_attribute("data-path") == current
+    assert page.locator("#project-select").input_value() not in ("__all__", "__open__")
