@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 from ..version import build_id
 from ..agent import Agent
@@ -31,7 +32,7 @@ HELP = """Commands:
   /help              show this help
   /model [spec]      show or switch the model (e.g. /model ollama/qwen2.5-coder)
   /models            list configured providers
-  /mode [m]          show or set permission mode: ask | edit | agent
+  /mode [m]          show or set permission mode: plan | ask | edit | agent
   /new [name] [tpl]  create a new project from a template and switch to it
                      (e.g. /new todo-cli python-cli; no arguments prompts)
   /project [spec]    open another project (GitHub repo or local path) for this session
@@ -44,6 +45,8 @@ HELP = """Commands:
   /revert            revert the files changed in the last turn (checkpoint restore)
   /skills            list installed skills
   /memory            show the project memory
+  /plan              show the current plan and its progress
+  /agents            list swarm role definitions (built-in overrides and custom specialists)
   /mcp               list connected MCP servers and their tools
   /clear             clear the conversation (keeps the session file)
   /sessions          list saved sessions
@@ -87,7 +90,9 @@ def _on_event(kind: str, data) -> None:
 def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None = None,
              prompt: str | None = None, grants: list[str] | None = None,
              use_sandbox: bool = False, auto_push: bool = False,
-             remote: str | None = None) -> int:
+             remote: str | None = None, trace_path: str | None = None,
+             final_answer_path: str | None = None,
+             check_command: str | None = None) -> int:
     config = Config.load()
     if remote:
         from ..remotews import RemoteWorkspace
@@ -177,14 +182,46 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         agent.session_id = session["id"]
 
     if prompt is not None:
-        # one-shot mode: run a single turn and exit
+        # One-shot mode: run a single turn and exit. With --trace,
+        # --final-answer or --check this is adapter mode - a harness is
+        # driving, so the exit code is a contract: 0 the run completed (and
+        # the check passed), 1 the check failed, 2 the harness's fault
+        # domain (provider down, bad config). Without them the plain
+        # behavior is unchanged.
+        adapter = bool(trace_path or final_answer_path or check_command)
+        trace = None
+        if trace_path:
+            from ..trace import TraceWriter
+            trace = TraceWriter(trace_path)
+            inner = agent.on_event
+            agent.on_event = lambda kind, data: (trace.event(kind, data), inner(kind, data))[-1]
         session["title"] = prompt[:60]
         try:
-            agent.run_turn(prompt)
+            answer = agent.run_turn(prompt)
             print()
         except ProviderError as exc:
             print(f"\n{RED}provider error: {exc}{RESET}", file=sys.stderr)
-            return 1
+            if trace:
+                trace.done(status="harness_error", detail=str(exc),
+                           prompt_tokens=agent.usage.prompt_tokens,
+                           completion_tokens=agent.usage.completion_tokens)
+            return 2 if adapter else 1
+        if final_answer_path:
+            Path(final_answer_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(final_answer_path).write_text(answer or "")
+        check_out = ""
+        check_passed = True
+        if check_command:
+            from ..tools.shell import run_command
+            check_out = run_command(agent.workspace, check_command, timeout=600)
+            check_passed = check_out.startswith("exit code: 0")
+            first = check_out.splitlines()[0] if check_out else ""
+            print(f"{DIM}check: {check_command} -> {first}{RESET}", file=sys.stderr)
+        if trace:
+            trace.done(status="success" if check_passed else "task_failure",
+                       detail="" if check_passed else check_out[:2000],
+                       prompt_tokens=agent.usage.prompt_tokens,
+                       completion_tokens=agent.usage.completion_tokens)
         if autopush_state["on"]:
             # --auto-push means "after each turn", and a one-shot run is a
             # turn. It is also the case that most needs it: nobody is at a
@@ -199,7 +236,7 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
             "completion_tokens": agent.usage.completion_tokens,
         }
         store.save(session)
-        return 0
+        return 0 if check_passed else 1
 
     print(f"{BOLD}Silk Code{RESET} v{build_id()}  {DIM}|{RESET}  model: {CYAN}{provider_name}/{model}{RESET}  "
           f"{DIM}|{RESET}  mode: {permissions.mode}  {DIM}|{RESET}  {workspace.root}")
@@ -284,7 +321,7 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
             session["mode"] = arg
             print(f"mode set to {arg}")
         else:
-            print(f"{RED}unknown mode '{arg}'; expected ask, edit, or agent{RESET}")
+            print(f"{RED}unknown mode '{arg}'; expected plan, ask, edit, or agent{RESET}")
     elif cmd == "/diff":
         print(git_diff(agent.workspace))
     elif cmd == "/push":
@@ -327,6 +364,23 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
         content = load_memory(agent.workspace)
         print(content if content else f"No project memory yet ({memory_path(agent.workspace)}). "
               "The agent adds notes with the remember tool.")
+    elif cmd == "/plan":
+        from ..plan import progress, read_plan
+        print(read_plan(agent.workspace))
+        print(progress(agent.workspace))
+    elif cmd == "/agents":
+        from ..roles import load_roles, role_dirs, withheld
+        definitions = load_roles(agent.workspace)
+        for warning in withheld(agent.workspace):
+            print(warning)
+        if definitions:
+            for d in definitions.values():
+                kind = "custom specialist" if d.custom else "overrides built-in"
+                pin = f", model {d.model}" if d.model else ""
+                print(f"  {d.name}: {d.description} ({kind}{pin})")
+        else:
+            dirs = " or ".join(str(d) for d in role_dirs(agent.workspace))
+            print(f"No agent definitions. Add markdown files to {dirs}")
     elif cmd == "/mcp":
         if agent.mcp is None:
             print("No MCP servers configured. Add one with: silkcode mcp add <name> --command '...'")

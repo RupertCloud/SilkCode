@@ -310,6 +310,10 @@ class Agent:
                 raw_path = str(args.get("path", ""))
             resolved = self.workspace.resolve(raw_path)
             if not self.permissions.check_write(self.workspace.relative(resolved)):
+                if self.permissions.mode == "plan":
+                    return ("Plan mode is read-only: investigate and propose, "
+                            "do not modify. Write the steps with propose_plan "
+                            "and ask the user to approve by switching mode.")
                 return "User denied permission to modify this file."
             self.checkpoints.snapshot(resolved)
         elif tool.kind == "command":
@@ -318,6 +322,10 @@ class Agent:
             else:
                 command = str(args.get("command") or "")
             if command and not self.permissions.check_command(command):
+                if self.permissions.mode == "plan":
+                    return ("Plan mode runs read-only commands only. Note the "
+                            "step in your plan instead; it runs once the user "
+                            "approves and switches mode.")
                 return "User denied permission to run this command."
         if getattr(tool, "owner_aware", False):
             return tool.func(self.workspace, _registry=self._fp_registry,

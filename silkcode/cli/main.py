@@ -112,7 +112,8 @@ def _repl_parser(prog: str) -> argparse.ArgumentParser:
                              "('silkcode version' for the full report)")
     parser.add_argument("path", nargs="?", default=".", help="workspace directory (default: current)")
     parser.add_argument("--model", "-m", help="model spec, e.g. 'deepseek' or 'ollama/qwen2.5-coder'")
-    parser.add_argument("--mode", choices=("ask", "edit", "agent"), default="ask", help="permission mode")
+    parser.add_argument("--mode", choices=("plan", "ask", "edit", "agent"), default="ask",
+                        help="permission mode (plan = read-only: investigate and propose)")
     parser.add_argument("--allow", help="pre-authorize git operations without prompts, "
                         "comma-separated from: pull,commit,push,merge")
     parser.add_argument("--sandbox", action="store_true",
@@ -143,11 +144,23 @@ def _parse_grants(allow: str | None) -> list[str]:
 def cmd_repl(argv: list[str]) -> int:
     parser = _repl_parser("silkcode")
     parser.add_argument("--prompt", "-p", help="run a single request non-interactively and exit")
+    parser.add_argument("--trace", metavar="FILE",
+                        help="with -p: write a JSONL event trace of the run to FILE")
+    parser.add_argument("--final-answer", metavar="FILE",
+                        help="with -p: write the final assistant message to FILE, "
+                             "separate from the streamed output")
+    parser.add_argument("--check", metavar="CMD",
+                        help="with -p: run CMD in the workspace after the turn; "
+                             "exit 1 if it fails")
     args = parser.parse_args(argv)
+    if (args.trace or args.final_answer or args.check) and not args.prompt:
+        parser.error("--trace/--final-answer/--check require --prompt")
     from .repl import run_repl
     return run_repl(args.path, args.model, args.mode, prompt=args.prompt,
                     grants=_parse_grants(args.allow), use_sandbox=args.sandbox,
-                    auto_push=args.auto_push, remote=args.remote)
+                    auto_push=args.auto_push, remote=args.remote,
+                    trace_path=args.trace, final_answer_path=args.final_answer,
+                    check_command=args.check)
 
 
 def cmd_new(argv: list[str]) -> int:
@@ -183,7 +196,7 @@ def cmd_new(argv: list[str]) -> int:
                         help="after creating it, run one agent turn in the new project "
                              "(e.g. 'add a --json flag to the CLI')")
     parser.add_argument("--model", "-m", help="model spec for --prompt / --open")
-    parser.add_argument("--mode", choices=("ask", "edit", "agent"), default="ask",
+    parser.add_argument("--mode", choices=("plan", "ask", "edit", "agent"), default="ask",
                         help="permission mode for --prompt / --open (default: ask)")
     args = parser.parse_args(argv)
 

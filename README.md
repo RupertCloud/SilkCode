@@ -556,6 +556,32 @@ suite is already green, the read-only tester is skipped (2 agents per round
 instead of 3) unless you pass `--no-skip-tester`. Scores and per-iteration
 traces are saved under `~/.silkcode/swarm/`.
 
+### Define your own roles
+
+The role prompts are defaults, not law. A markdown file in
+`~/.silkcode/agents/` (user) or `<project>/.silkcode/agents/` (project wins)
+redefines a role, using the same frontmatter convention as skills:
+
+```markdown
+---
+name: critic
+description: Reviews with our house style in mind
+model: deepseek        # optional: pin this role to a model
+---
+You are the CRITIC. Weigh maintainability above all...
+```
+
+A file named for a built-in role (`tester`, `critic`, `worker`, `business`,
+`user`, `designer`, `head`, `developer`) replaces that role's prompt. A file
+with a *new* name adds a read-only specialist to the team's discovery phase —
+a `security.md` reviewer, a `perf.md` analyst. List them with `/agents`.
+
+Two limits are deliberate. A custom-named role is always read-only — a
+repository file cannot introduce a new writer into the swarm. And every
+definition body goes through the same scan as any other repository text
+(*Who asked for this?* below): one that reads as prompt injection is not
+loaded, and you are told.
+
 In the GUI, the **🐝 Swarm** button runs the same loop with live progress, a
 score-history chart, a pipeline phase indicator, and per-role token stats. The
 worker asks you before modifying files or running commands — pick **Yes to all**
@@ -696,9 +722,13 @@ says so instead of quietly running against newer server code.
 - **`SILKCODE.md`** at the repository root is loaded automatically into the agent's
   context — put your project rules there ("Use TypeScript", "run tests after auth
   changes", ...).
-- **Project memory** lives in `.silkcode/memory.md`: the agent records durable notes
-  with its `remember` tool (checkpointed and revertable like any write); inspect it
-  with `/memory` or edit the file directly.
+- **Project memory** is a typed store in `.silkcode/memory.db`: the agent records
+  durable notes with its `remember` tool as *preferences*, *facts*, *procedures* or
+  *failures*. Repeating a note refreshes it, restating one replaces it (the old record
+  is kept, marked superseded), and writes are checkpointed and revertable like any
+  other. `.silkcode/memory.md` is a generated, human-readable rendering of the store —
+  inspect it there or with `/memory`; a hand-written `memory.md` from an older Silk
+  Code is imported automatically.
 - **Skills** are markdown files in `~/.silkcode/skills/` (user) or
   `<project>/.silkcode/skills/` (project overrides user). Optional frontmatter gives a
   `name:` and `description:`; the agent sees the list and loads one with `use_skill`
@@ -833,6 +863,30 @@ mode follows the paired-comparison design used by harness-evaluation protocols
 (e.g. Nimbalyst's): same task, model, prompts, and permissions in both conditions, so
 the delta isolates the harness's contribution.
 
+### Driving Silk Code from an external harness
+
+The built-in benchmark measures models; an external harness (Terminal-Bench,
+SWE-bench, a CI job comparing two agents) measures *the whole run*, and it needs
+three things from the agent it drives — a structured trace, the final answer
+separated from streamed noise, and an exit code it can branch on without parsing
+anything. One-shot mode provides all three:
+
+```bash
+silkcode . --mode agent -p "fix the failing test" \
+    --trace run.jsonl \
+    --final-answer answer.txt \
+    --check "pytest -q"
+```
+
+- `--trace` writes JSONL, one event per line (`tool_start`, `tool_result`,
+  folded `text`, and a final `done` with token totals and wall time), flushed
+  as written so a killed run still leaves its events.
+- `--check` runs a verification command in the workspace after the turn.
+- The exit code is the contract: **0** the run completed and the check passed,
+  **1** the check failed, **2** the harness's fault domain (provider down, bad
+  config). The distinction between 1 and 2 matters: a benchmark that counts
+  provider outages as failed tasks is measuring its network, not its model.
+
 ### Benchmarks from your own history
 
 Public benchmarks are contaminated — every model has trained on them — and generic.
@@ -940,8 +994,24 @@ medium-risk commands (installs, branch switches) need approval unless you are in
 `agent` mode; high-risk commands (`rm -rf`, `git push`, destructive checkouts,
 `sudo`, ...) always require explicit approval, in every mode.
 
-Modes (SRS section 31): `ask` (approve everything), `edit` (file edits are free,
-commands ask), `agent` (autonomous except high-risk).
+Modes (SRS section 31): `plan` (read-only — see below), `ask` (approve everything),
+`edit` (file edits are free, commands ask), `agent` (autonomous except high-risk).
+
+### Plan first, build second
+
+For work with enough steps to lose track of, the plan is a file, not a message:
+the agent writes it to `.silkcode/plan.md` with `propose_plan` and checks steps
+off with `update_plan` as it executes, so progress survives new turns and context
+compaction — and you can open the file, reorder steps, or add a note by hand.
+
+`plan` mode makes the proposal phase safe to leave unattended: writes and non-read
+commands are **refused outright rather than prompted for** — the mode exists so
+you are not fielding approval prompts for actions you have not decided to take.
+The one write allowed is into `.silkcode/` state, which is where the plan itself
+(and memory) live: proposing is the point. Approving is a human act — read the
+plan, switch to `edit` or `agent`, and the agent works through the checklist.
+"Yes to all" does not override plan mode's refusals: they are not prompts, and
+leaving plan mode is a decision, not an answer.
 
 The GUI's permission prompt also offers **Always** (approve this kind of request
 for the session — all writes, or one command) and **Yes to all** (approve every
@@ -994,7 +1064,10 @@ silkcode/
 ├── repomap.py       compact repository map injected into the model's context
 ├── context.py       context assembly: repo map + SILKCODE.md + memory + skills
 ├── skills.py        reusable skills loaded from markdown files
-├── memory.py        project memory (.silkcode/memory.md)
+├── memory.py        typed project memory (SQLite store + readable markdown mirror)
+├── plan.py          the plan as a file: propose in read-only plan mode, execute by checkbox
+├── roles.py         swarm roles as files: override tester/critic/worker, add read-only specialists
+├── trace.py         JSONL run trace for external harnesses (with --final-answer and exit-code contract)
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox
