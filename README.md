@@ -931,6 +931,39 @@ silkcode env --set deepseek      # store a key (read from $SILKCODE_KEY or promp
 silkcode env --clear deepseek    # remove a stored key
 ```
 
+## Fresh documentation, replaceable vendor
+
+A model's knowledge of a library ends at its training cutoff; after that it
+hallucinates the API from stale weights. The `search_docs` tool fixes that with
+retrieval: it queries an index of current developer artifacts — READMEs, docs
+sites, GitHub issues, API specs — and hands the model ranked passages.
+
+The first backend is [Firecrawl's developer index](https://firecrawl.dev); setting
+`FIRECRAWL_API_KEY` is all it takes. But the vendor is replaceable, the same way
+the model is — any endpoint speaking a two-line contract is a backend:
+
+```json
+"doc_search": {"type": "firecrawl", "api_key_env": "FIRECRAWL_API_KEY"}
+"doc_search": {"type": "http", "base_url": "https://your-index/search"}
+```
+
+(The `http` backend POSTs `{"query", "limit"}` and expects
+`{"results": [{"title", "url", "snippet"}]}` — a self-hosted index or an internal
+wiki fits in an afternoon.)
+
+Three properties are deliberate:
+
+- **Private by default.** Configure nothing and export nothing, and no query
+  ever leaves the machine — the tool explains what to set instead of failing.
+- **A search is an outward act.** The query is derived from your private work,
+  so it goes through the permission gate classified like `curl`: prompted in
+  `ask`/`edit`, unprompted in `agent`, refused in `plan` mode — plan mode's
+  promise is that nothing leaves the machine without a decision.
+- **Results are data, never instructions.** What comes back is text other
+  people wrote — GitHub issues are a classic injection vector — and it re-enters
+  the conversation as a tool result, which the provenance boundary already
+  records and scans (*Who asked for this?* below).
+
 ## Seeing the page, not just the source
 
 An agent that writes a web page cannot tell whether it works. Reading the source shows
@@ -1068,11 +1101,12 @@ silkcode/
 ├── plan.py          the plan as a file: propose in read-only plan mode, execute by checkbox
 ├── roles.py         swarm roles as files: override tester/critic/worker, add read-only specialists
 ├── trace.py         JSONL run trace for external harnesses (with --final-answer and exit-code contract)
+├── docsearch.py     current-docs retrieval with swappable backends (Firecrawl first, any endpoint next)
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox
 ├── sandbox_server.py  reference Silk Sandbox Protocol server (self-hosted)
-├── tools/           read/write/edit, glob/grep, run_command, run_tests, live_server, review_url, git status/diff/log/commit
+├── tools/           read/write/edit, glob/grep, run_command, run_tests, live_server, review_url, search_docs, git status/diff/log/commit
 ├── liveserver.py    built-in live preview server: serve the workspace + auto-reload pages on change
 ├── browser.py       render a page and report what a browser sees (headless Chromium)
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
