@@ -696,9 +696,13 @@ says so instead of quietly running against newer server code.
 - **`SILKCODE.md`** at the repository root is loaded automatically into the agent's
   context — put your project rules there ("Use TypeScript", "run tests after auth
   changes", ...).
-- **Project memory** lives in `.silkcode/memory.md`: the agent records durable notes
-  with its `remember` tool (checkpointed and revertable like any write); inspect it
-  with `/memory` or edit the file directly.
+- **Project memory** is a typed store in `.silkcode/memory.db`: the agent records
+  durable notes with its `remember` tool as *preferences*, *facts*, *procedures* or
+  *failures*. Repeating a note refreshes it, restating one replaces it (the old record
+  is kept, marked superseded), and writes are checkpointed and revertable like any
+  other. `.silkcode/memory.md` is a generated, human-readable rendering of the store —
+  inspect it there or with `/memory`; a hand-written `memory.md` from an older Silk
+  Code is imported automatically.
 - **Skills** are markdown files in `~/.silkcode/skills/` (user) or
   `<project>/.silkcode/skills/` (project overrides user). Optional frontmatter gives a
   `name:` and `description:`; the agent sees the list and loads one with `use_skill`
@@ -994,7 +998,7 @@ silkcode/
 ├── repomap.py       compact repository map injected into the model's context
 ├── context.py       context assembly: repo map + SILKCODE.md + memory + skills
 ├── skills.py        reusable skills loaded from markdown files
-├── memory.py        project memory (.silkcode/memory.md)
+├── memory.py        typed project memory (SQLite store + readable markdown mirror)
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox

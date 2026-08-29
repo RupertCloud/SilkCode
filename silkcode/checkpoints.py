@@ -11,19 +11,22 @@ from pathlib import Path
 
 class Checkpoints:
     def __init__(self):
-        self._generations: list[list[tuple[Path, str | None]]] = []
-        self._current: list[tuple[Path, str | None]] | None = None
+        self._generations: list[list[tuple[Path, bytes | None]]] = []
+        self._current: list[tuple[Path, bytes | None]] | None = None
 
     def begin(self) -> None:
         self._current = []
         self._generations.append(self._current)
 
     def snapshot(self, path: Path) -> None:
+        # Bytes, not text: a snapshot taken through read_text(errors="replace")
+        # substitutes U+FFFD into anything that is not valid UTF-8 - an image,
+        # a database - and a revert would then write the mangled copy back.
         if self._current is None:
             self.begin()
         if any(existing == path for existing, _ in self._current):
             return
-        content = path.read_text(errors="replace") if path.exists() else None
+        content = path.read_bytes() if path.exists() else None
         self._current.append((path, content))
 
     def revert_last(self) -> list[str]:
@@ -41,6 +44,6 @@ class Checkpoints:
                 path.unlink(missing_ok=True)
             else:
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(content)
+                path.write_bytes(content)
             restored.append(str(path))
         return restored

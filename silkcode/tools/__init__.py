@@ -18,7 +18,7 @@ from ..github import (
     github_list_prs,
     github_merge_pr,
 )
-from ..memory import MEMORY_RELPATH, remember
+from ..memory import DB_RELPATH, remember
 from ..skills import use_skill
 
 
@@ -229,13 +229,22 @@ _register(Tool(
 
 _register(Tool(
     name="remember",
-    description="Append a note to the project memory (.silkcode/memory.md): architecture decisions, conventions, important commands, known limitations.",
+    description=(
+        "Save a note to the durable project memory: architecture decisions, "
+        "conventions, commands that work here, limitations. Choose the kind - "
+        "'preference' (how this user likes to work), 'fact' (true of the "
+        "project), 'procedure' (a command or workflow), 'failure' (what went "
+        "wrong and what fixed it). Restating an earlier note replaces it."),
     parameters=_params({
         "text": {"type": "string", "description": "The note to remember"},
+        "kind": {"type": "string", "enum": ["preference", "fact", "procedure", "failure"],
+                 "description": "What kind of knowledge this is (default fact)"},
     }, ["text"]),
     func=remember,
     kind="write",
-    path_of=lambda args, ws: MEMORY_RELPATH,
+    # The database is the store; the markdown file is a rendering of it.
+    # Checkpointing the store is what makes revert actually forget.
+    path_of=lambda args, ws: DB_RELPATH,
 ))
 
 _register(Tool(
