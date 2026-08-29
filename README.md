@@ -863,6 +863,30 @@ mode follows the paired-comparison design used by harness-evaluation protocols
 (e.g. Nimbalyst's): same task, model, prompts, and permissions in both conditions, so
 the delta isolates the harness's contribution.
 
+### Driving Silk Code from an external harness
+
+The built-in benchmark measures models; an external harness (Terminal-Bench,
+SWE-bench, a CI job comparing two agents) measures *the whole run*, and it needs
+three things from the agent it drives — a structured trace, the final answer
+separated from streamed noise, and an exit code it can branch on without parsing
+anything. One-shot mode provides all three:
+
+```bash
+silkcode . --mode agent -p "fix the failing test" \
+    --trace run.jsonl \
+    --final-answer answer.txt \
+    --check "pytest -q"
+```
+
+- `--trace` writes JSONL, one event per line (`tool_start`, `tool_result`,
+  folded `text`, and a final `done` with token totals and wall time), flushed
+  as written so a killed run still leaves its events.
+- `--check` runs a verification command in the workspace after the turn.
+- The exit code is the contract: **0** the run completed and the check passed,
+  **1** the check failed, **2** the harness's fault domain (provider down, bad
+  config). The distinction between 1 and 2 matters: a benchmark that counts
+  provider outages as failed tasks is measuring its network, not its model.
+
 ### Benchmarks from your own history
 
 Public benchmarks are contaminated — every model has trained on them — and generic.
@@ -1043,6 +1067,7 @@ silkcode/
 ├── memory.py        typed project memory (SQLite store + readable markdown mirror)
 ├── plan.py          the plan as a file: propose in read-only plan mode, execute by checkbox
 ├── roles.py         swarm roles as files: override tester/critic/worker, add read-only specialists
+├── trace.py         JSONL run trace for external harnesses (with --final-answer and exit-code contract)
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox
