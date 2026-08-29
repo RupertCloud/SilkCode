@@ -266,12 +266,15 @@ def test_code_blocks_render_with_copy_and_run_buttons(browser, gui_url):
 def test_assistant_markdown_renders_headings_lists_and_responsive_tables(browser, gui_url):
     page = browser.new_page(viewport={"width": 390, "height": 844})
     page.goto(gui_url)
-    page.wait_for_selector("#tree div", timeout=15000)
+    page.wait_for_selector("#tree div", state="attached", timeout=15000)
+    # \\n, not \n: Python resolves a bare \n into a real newline inside the
+    # single-quoted JS string, which is a JS syntax error - this evaluate
+    # never ran at all as first written.
     page.evaluate("""() => {
-        const raw = '## What this is\n\nAn **open-core** platform with `safe code`.\n\n'
-          + '| Component | Stack | Size |\n| --- | --- | --- |\n'
-          + '| Backend | Java | 2,158 files |\n| Frontend | React | 2,811 files |\n\n'
-          + '## Architecture\n\n- Backend modules\n- Frontend workspace\n\n'
+        const raw = '## What this is\\n\\nAn **open-core** platform with `safe code`.\\n\\n'
+          + '| Component | Stack | Size |\\n| --- | --- | --- |\\n'
+          + '| Backend | Java | 2,158 files |\\n| Frontend | React | 2,811 files |\\n\\n'
+          + '## Architecture\\n\\n- Backend modules\\n- Frontend workspace\\n\\n'
           + '[Task](https://taskfile.dev/) <script>window.pwned=true</script>';
         const el = addMsg('assistant', raw); el.__raw = raw; formatAllMessages();
     }""")
@@ -772,7 +775,7 @@ def test_project_switch_retries_one_transient_fetch_failure(browser, two_project
     attempts = []
 
     def briefly_disconnect(route):
-        attempts.append(route.request.post_data_json()["project"])
+        attempts.append(route.request.post_data_json["project"])
         if len(attempts) == 1:
             route.abort("connectionfailed")
         else:
@@ -781,6 +784,8 @@ def test_project_switch_retries_one_transient_fetch_failure(browser, two_project
     page.route("**/api/project/open", briefly_disconnect)
     page.goto(url)
     page.wait_for_function("document.querySelectorAll('#project-cards .project-card').length >= 2")
+    # a phone shows one pane at a time; the PROJECTS cards are on the Project tab
+    page.click("#mobile-tabs button[data-pane='files']")
     page.locator(f".project-card[data-path='{beta}']").click()
     page.wait_for_function(
         "t => document.querySelector('#project-select').title === t", arg=str(beta))
@@ -795,7 +800,7 @@ def test_add_project_retries_one_transient_fetch_failure(browser, two_project_gu
     attempts = []
 
     def briefly_disconnect(route):
-        attempts.append(route.request.post_data_json()["project"])
+        attempts.append(route.request.post_data_json["project"])
         if len(attempts) == 1:
             route.abort("connectionfailed")
         else:
@@ -804,6 +809,7 @@ def test_add_project_retries_one_transient_fetch_failure(browser, two_project_gu
     page.route("**/api/project/open", briefly_disconnect)
     page.goto(url)
     wait_for_switcher(page)
+    page.click("#mobile-tabs button[data-pane='files']")
     page.click("#project-add")
     page.fill("#project-path", str(beta))
     page.click("#project-confirm")
@@ -905,12 +911,18 @@ def test_github_repository_selection_is_visible_and_fetches(browser, two_project
         }])))
     opened = []
     page.route("**/api/project/open", lambda route: (
-        opened.append(route.request.post_data_json()["project"]),
+        opened.append(route.request.post_data_json["project"]),
         route.fulfill(status=200, content_type="application/json",
                       body=json.dumps({"session_id": 1}))))
     page.goto(url)
     wait_for_switcher(page)
+    # a phone shows one pane at a time; the PROJECTS drawer (and its + Add)
+    # lives behind the Project tab
+    page.click("#mobile-tabs button[data-pane='files']")
     page.click("#project-add")
+    # the picker opens on Local directory (its own test pins that); the
+    # repository list is behind the GitHub tab
+    page.click("#project-tabs button[data-pgtab='github']")
     page.wait_for_selector("#project-github-list .project-row")
 
     row = page.locator("#project-github-list .project-row")
@@ -951,6 +963,8 @@ def test_share_update_is_editable_and_platform_specific(browser, gui_url):
         })))
     page.goto(gui_url)
     page.wait_for_selector("#input")
+    # on a phone the header actions collapse behind the ... menu
+    page.click("#mobile-menu")
     page.click("#share-update-btn")
     page.wait_for_function("() => document.getElementById('share-draft').value === 'Short X update'")
 
