@@ -31,7 +31,7 @@ HELP = """Commands:
   /help              show this help
   /model [spec]      show or switch the model (e.g. /model ollama/qwen2.5-coder)
   /models            list configured providers
-  /mode [m]          show or set permission mode: ask | edit | agent
+  /mode [m]          show or set permission mode: plan | ask | edit | agent
   /new [name] [tpl]  create a new project from a template and switch to it
                      (e.g. /new todo-cli python-cli; no arguments prompts)
   /project [spec]    open another project (GitHub repo or local path) for this session
@@ -45,6 +45,7 @@ HELP = """Commands:
   /skills            list installed skills
   /memory            show the project memory
   /plan              show the current plan and its progress
+  /agents            list swarm role definitions (built-in overrides and custom specialists)
   /mcp               list connected MCP servers and their tools
   /clear             clear the conversation (keeps the session file)
   /sessions          list saved sessions
@@ -332,6 +333,19 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
         from ..plan import progress, read_plan
         print(read_plan(agent.workspace))
         print(progress(agent.workspace))
+    elif cmd == "/agents":
+        from ..roles import load_roles, role_dirs, withheld
+        definitions = load_roles(agent.workspace)
+        for warning in withheld(agent.workspace):
+            print(warning)
+        if definitions:
+            for d in definitions.values():
+                kind = "custom specialist" if d.custom else "overrides built-in"
+                pin = f", model {d.model}" if d.model else ""
+                print(f"  {d.name}: {d.description} ({kind}{pin})")
+        else:
+            dirs = " or ".join(str(d) for d in role_dirs(agent.workspace))
+            print(f"No agent definitions. Add markdown files to {dirs}")
     elif cmd == "/mcp":
         if agent.mcp is None:
             print("No MCP servers configured. Add one with: silkcode mcp add <name> --command '...'")

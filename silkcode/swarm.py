@@ -35,6 +35,8 @@ from .config import Config, config_dir
 from .permissions import PermissionManager
 from .providers import ProviderError, build_provider
 from .repomap import repo_map
+from .roles import custom_specialists, load_roles, role_model, role_prompt
+from .roles import withheld as withheld_roles
 from .tools.shell import run_command
 from .tools.testing import detect_test_command
 from .workspace import ToolError, Workspace
@@ -441,6 +443,15 @@ def run_swarm(
     tester_spec = tester_spec or worker_spec
     config = Config.load()
     cache: dict = {}
+    # Roles defined on disk override the built-in prompts and may pin a
+    # model; a definition that reads as prompt injection is not loaded, and
+    # the person is told (see roles.py).
+    definitions = load_roles(ws)
+    for warning in withheld_roles(ws):
+        on_progress(warning)
+    tester_spec = role_model(definitions, "tester", tester_spec)
+    critic_spec = role_model(definitions, "critic", critic_spec)
+    worker_spec = role_model(definitions, "worker", worker_spec)
     tester_provider, tester_model, tester_cfg = _provider_for(config, cache, tester_spec)
     critic_provider, critic_model, critic_cfg = _provider_for(config, cache, critic_spec)
     worker_provider, worker_model, worker_cfg = _provider_for(config, cache, worker_spec)
@@ -515,20 +526,28 @@ def run_swarm(
                 team_objective = (objective or
                                   "Improve this product into a coherent, useful, production-ready release.")
                 # Product specialists establish shared intent before anyone edits.
-                for role in ("business", "user", "designer"):
+                specialist_roles = [
+                    (role, role_prompt(definitions, role, TEAM_ROLE_PROMPTS[role]))
+                    for role in ("business", "user", "designer")
+                ] + [(d.name, d.prompt) for d in custom_specialists(definitions)]
+                for role, prompt_text in specialist_roles:
                     emit("phase", {"role": role})
-                    provider, model, cfg = _provider_for(config, cache, worker_spec)
+                    provider, model, cfg = _provider_for(
+                        config, cache, role_model(definitions, role, worker_spec))
                     specialist = _make_agent(ws, provider, model, cfg,
-                                             TEAM_ROLE_PROMPTS[role], read_only=True)
+                                             prompt_text, read_only=True)
                     report = specialist.run_turn(_team_discovery_prompt(role, team_objective, score))
                     artifacts[role] = report
                     emit("artifact", {"artifacts": artifacts})
+                    role_tokens.setdefault(role, 0)
                     role_tokens[role] += specialist.usage.total_tokens
                     total_tokens += specialist.usage.total_tokens
                     progress(f"{role}: {_summarize(report)}")
                 emit("phase", {"role": "head"})
                 provider, model, cfg = _provider_for(config, cache, critic_spec)
-                lead = _make_agent(ws, provider, model, cfg, TEAM_ROLE_PROMPTS["head"], read_only=True)
+                lead = _make_agent(ws, provider, model, cfg,
+                                   role_prompt(definitions, "head", TEAM_ROLE_PROMPTS["head"]),
+                                   read_only=True)
                 lead_out = lead.run_turn(
                     _team_head_prompt(team_objective, artifacts, score, developer_count))
                 role_tokens["head"] += lead.usage.total_tokens
@@ -546,9 +565,17 @@ def run_swarm(
                     role_tokens.setdefault(role, 0)
                     emit("phase", {"role": role})
                     provider, model, cfg = _provider_for(config, cache, worker_spec)
+                    # A custom developer prompt is used verbatim - .format on a
+                    # body with a brace in it (a JSON example, a dict literal)
+                    # would raise, and the file's author never asked for
+                    # placeholders. The role line is appended instead.
+                    dev_definition = definitions.get("developer")
+                    dev_prompt = (f"{dev_definition.prompt}\nYou are {role.upper()}."
+                                  if dev_definition else
+                                  TEAM_DEVELOPER_PROMPT.format(role=role.upper()))
                     developer = _make_agent(
                         ws, provider, model, cfg,
-                        TEAM_DEVELOPER_PROMPT.format(role=role.upper()),
+                        dev_prompt,
                                             read_only=False, on_event=on_worker_event,
                                             worker_permissions=worker_permissions, owner=worker_owner)
                     result = developer.run_turn(_developer_prompt(task, team_objective, plan))
@@ -572,7 +599,8 @@ def run_swarm(
             else:
                 emit("phase", {"role": "tester"})
                 tester = _make_agent(ws, tester_provider, tester_model, tester_cfg,
-                                     SWARM_TESTER_PROMPT, read_only=True)
+                                     role_prompt(definitions, "tester", SWARM_TESTER_PROMPT),
+                                     read_only=True)
                 tester_report = tester.run_turn(_tester_prompt(score))
                 role_tokens["tester"] += tester.usage.total_tokens
                 total_tokens += tester.usage.total_tokens
@@ -584,7 +612,8 @@ def run_swarm(
 
             emit("phase", {"role": "critic"})
             critic = _make_agent(ws, critic_provider, critic_model, critic_cfg,
-                                 SWARM_CRITIC_PROMPT, read_only=True)
+                                 role_prompt(definitions, "critic", SWARM_CRITIC_PROMPT),
+                                 read_only=True)
             critic_out = critic.run_turn(
                 _critic_prompt(score, tester_report, _diff_summary(ws), previous))
             role_tokens["critic"] += critic.usage.total_tokens
@@ -601,7 +630,8 @@ def run_swarm(
             if suggestions or not tests_pass:
                 emit("phase", {"role": "worker"})
                 worker = _make_agent(ws, worker_provider, worker_model, worker_cfg,
-                                     SWARM_WORKER_PROMPT, read_only=False,
+                                     role_prompt(definitions, "worker", SWARM_WORKER_PROMPT),
+                                     read_only=False,
                                      on_event=on_worker_event,
                                      worker_permissions=worker_permissions,
                                      owner=worker_owner)

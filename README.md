@@ -556,6 +556,32 @@ suite is already green, the read-only tester is skipped (2 agents per round
 instead of 3) unless you pass `--no-skip-tester`. Scores and per-iteration
 traces are saved under `~/.silkcode/swarm/`.
 
+### Define your own roles
+
+The role prompts are defaults, not law. A markdown file in
+`~/.silkcode/agents/` (user) or `<project>/.silkcode/agents/` (project wins)
+redefines a role, using the same frontmatter convention as skills:
+
+```markdown
+---
+name: critic
+description: Reviews with our house style in mind
+model: deepseek        # optional: pin this role to a model
+---
+You are the CRITIC. Weigh maintainability above all...
+```
+
+A file named for a built-in role (`tester`, `critic`, `worker`, `business`,
+`user`, `designer`, `head`, `developer`) replaces that role's prompt. A file
+with a *new* name adds a read-only specialist to the team's discovery phase —
+a `security.md` reviewer, a `perf.md` analyst. List them with `/agents`.
+
+Two limits are deliberate. A custom-named role is always read-only — a
+repository file cannot introduce a new writer into the swarm. And every
+definition body goes through the same scan as any other repository text
+(*Who asked for this?* below): one that reads as prompt injection is not
+loaded, and you are told.
+
 In the GUI, the **🐝 Swarm** button runs the same loop with live progress, a
 score-history chart, a pipeline phase indicator, and per-role token stats. The
 worker asks you before modifying files or running commands — pick **Yes to all**
@@ -1016,6 +1042,7 @@ silkcode/
 ├── skills.py        reusable skills loaded from markdown files
 ├── memory.py        typed project memory (SQLite store + readable markdown mirror)
 ├── plan.py          the plan as a file: propose in read-only plan mode, execute by checkbox
+├── roles.py         swarm roles as files: override tester/critic/worker, add read-only specialists
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox
