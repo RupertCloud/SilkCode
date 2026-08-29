@@ -188,6 +188,12 @@ def git_operation(command: str) -> str | None:
 class PermissionManager:
     """Permission modes per SRS section 31.
 
+    - plan:  read-only. Writes and non-LOW commands are refused outright,
+             not prompted for - the mode exists so the agent can investigate
+             and propose without the person fielding prompts for actions
+             they have not decided to take yet. The one write allowed is
+             into `.silkcode/` state, which is where a proposed plan and a
+             remembered note live: proposing is the point of the mode.
     - ask:   prompt for file writes and all non-LOW commands.
     - edit:  file writes allowed; prompt for non-LOW commands.
     - agent: file writes and MEDIUM commands allowed; HIGH commands prompt.
@@ -195,10 +201,16 @@ class PermissionManager:
     HIGH-risk commands always prompt, in every mode, and cannot be
     permanently allowed for the session - unless the user explicitly picks
     "yes to all" (see allow_all), which approves every request for the rest
-    of the session.
+    of the session. Plan mode's refusals are not prompts, so "yes to all"
+    does not override them: leaving plan mode is a decision, not an answer.
     """
 
-    MODES = ("ask", "edit", "agent")
+    MODES = ("plan", "ask", "edit", "agent")
+
+    # State the agent may write even in plan mode: the plan itself, memory.
+    # Nothing under .silkcode/ is part of the user's project - the directory
+    # ignores itself from git (see statedir.py).
+    STATE_PREFIX = ".silkcode/"
 
     def __init__(self, mode: str = "ask", asker: Asker | None = None,
                  grants: set[str] | list[str] | None = None,
@@ -227,6 +239,10 @@ class PermissionManager:
         self._always_all = True
 
     def check_write(self, path: str) -> bool:
+        if self.mode == "plan":
+            # Refused, not prompted: before allow_all and before any cached
+            # "always", because those answer prompts and this is not one.
+            return path.replace("\\", "/").startswith(self.STATE_PREFIX)
         if self._always_all or self.mode in ("edit", "agent") or self._always_write:
             return True
         decision = self.asker(f"Allow modifying file: {path}")
@@ -274,6 +290,8 @@ class PermissionManager:
 
     def check_command(self, command: str) -> bool:
         risk = classify_command(command)
+        if self.mode == "plan":
+            return risk == Risk.LOW
         # An action that reaches outside this machine is the one case where a
         # standing approval is not enough: if this turn read something that
         # tried to give the agent orders, the human sees it before it lands.
@@ -303,6 +321,8 @@ class PermissionManager:
 
     def check_mcp(self, qualified_name: str) -> bool:
         """External MCP tools are treated like medium-risk commands."""
+        if self.mode == "plan":
+            return False   # we cannot see whether an MCP tool writes
         if self._always_all or self.mode == "agent" or qualified_name in self._always_commands:
             return True
         decision = self.asker(f"Call MCP tool: {qualified_name}")

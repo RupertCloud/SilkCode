@@ -19,6 +19,7 @@ from ..github import (
     github_merge_pr,
 )
 from ..memory import DB_RELPATH, remember
+from ..plan import PLAN_RELPATH, propose_plan, read_plan, update_plan
 from ..skills import use_skill
 
 
@@ -245,6 +246,49 @@ _register(Tool(
     # The database is the store; the markdown file is a rendering of it.
     # Checkpointing the store is what makes revert actually forget.
     path_of=lambda args, ws: DB_RELPATH,
+))
+
+_register(Tool(
+    name="propose_plan",
+    description=(
+        "Write the plan for a multi-step task to .silkcode/plan.md, replacing "
+        "any previous plan. Use it when the work has enough steps to lose "
+        "track of, and always in plan mode - it is the deliverable there. "
+        "The user approves by switching to edit or agent mode; then work "
+        "through the steps, marking each with update_plan."),
+    parameters=_params({
+        "title": {"type": "string", "description": "What the plan achieves, in one line"},
+        "steps": {"type": "string", "description": "The steps, one per line, in order"},
+    }, ["title", "steps"]),
+    func=propose_plan,
+    kind="write",
+    path_of=lambda args, ws: PLAN_RELPATH,
+))
+
+_register(Tool(
+    name="read_plan",
+    description="Read the current plan and its progress from .silkcode/plan.md.",
+    parameters=_params({}, []),
+    func=read_plan,
+    kind="read",
+))
+
+_register(Tool(
+    name="update_plan",
+    description=(
+        "Mark a plan step (1-based) as in_progress, done, skipped or pending. "
+        "Mark a step in_progress when you start it and done when it is "
+        "verified; give a note when skipping, so the reason is not a mystery "
+        "later."),
+    parameters=_params({
+        "step": {"type": "integer", "description": "The step number, counting from 1"},
+        "status": {"type": "string", "enum": ["pending", "in_progress", "done", "skipped"],
+                   "description": "The step's new state"},
+        "note": {"type": "string", "description": "Why, for a skipped step"},
+    }, ["step", "status"]),
+    func=update_plan,
+    kind="write",
+    path_of=lambda args, ws: PLAN_RELPATH,
 ))
 
 _register(Tool(

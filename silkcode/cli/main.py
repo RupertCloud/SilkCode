@@ -112,7 +112,8 @@ def _repl_parser(prog: str) -> argparse.ArgumentParser:
                              "('silkcode version' for the full report)")
     parser.add_argument("path", nargs="?", default=".", help="workspace directory (default: current)")
     parser.add_argument("--model", "-m", help="model spec, e.g. 'deepseek' or 'ollama/qwen2.5-coder'")
-    parser.add_argument("--mode", choices=("ask", "edit", "agent"), default="ask", help="permission mode")
+    parser.add_argument("--mode", choices=("plan", "ask", "edit", "agent"), default="ask",
+                        help="permission mode (plan = read-only: investigate and propose)")
     parser.add_argument("--allow", help="pre-authorize git operations without prompts, "
                         "comma-separated from: pull,commit,push,merge")
     parser.add_argument("--sandbox", action="store_true",
@@ -183,7 +184,7 @@ def cmd_new(argv: list[str]) -> int:
                         help="after creating it, run one agent turn in the new project "
                              "(e.g. 'add a --json flag to the CLI')")
     parser.add_argument("--model", "-m", help="model spec for --prompt / --open")
-    parser.add_argument("--mode", choices=("ask", "edit", "agent"), default="ask",
+    parser.add_argument("--mode", choices=("plan", "ask", "edit", "agent"), default="ask",
                         help="permission mode for --prompt / --open (default: ask)")
     args = parser.parse_args(argv)
 

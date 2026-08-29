@@ -44,6 +44,7 @@ HELP = """Commands:
   /revert            revert the files changed in the last turn (checkpoint restore)
   /skills            list installed skills
   /memory            show the project memory
+  /plan              show the current plan and its progress
   /mcp               list connected MCP servers and their tools
   /clear             clear the conversation (keeps the session file)
   /sessions          list saved sessions
@@ -284,7 +285,7 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
             session["mode"] = arg
             print(f"mode set to {arg}")
         else:
-            print(f"{RED}unknown mode '{arg}'; expected ask, edit, or agent{RESET}")
+            print(f"{RED}unknown mode '{arg}'; expected plan, ask, edit, or agent{RESET}")
     elif cmd == "/diff":
         print(git_diff(agent.workspace))
     elif cmd == "/push":
@@ -327,6 +328,10 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
         content = load_memory(agent.workspace)
         print(content if content else f"No project memory yet ({memory_path(agent.workspace)}). "
               "The agent adds notes with the remember tool.")
+    elif cmd == "/plan":
+        from ..plan import progress, read_plan
+        print(read_plan(agent.workspace))
+        print(progress(agent.workspace))
     elif cmd == "/mcp":
         if agent.mcp is None:
             print("No MCP servers configured. Add one with: silkcode mcp add <name> --command '...'")

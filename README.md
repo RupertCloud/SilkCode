@@ -944,8 +944,24 @@ medium-risk commands (installs, branch switches) need approval unless you are in
 `agent` mode; high-risk commands (`rm -rf`, `git push`, destructive checkouts,
 `sudo`, ...) always require explicit approval, in every mode.
 
-Modes (SRS section 31): `ask` (approve everything), `edit` (file edits are free,
-commands ask), `agent` (autonomous except high-risk).
+Modes (SRS section 31): `plan` (read-only — see below), `ask` (approve everything),
+`edit` (file edits are free, commands ask), `agent` (autonomous except high-risk).
+
+### Plan first, build second
+
+For work with enough steps to lose track of, the plan is a file, not a message:
+the agent writes it to `.silkcode/plan.md` with `propose_plan` and checks steps
+off with `update_plan` as it executes, so progress survives new turns and context
+compaction — and you can open the file, reorder steps, or add a note by hand.
+
+`plan` mode makes the proposal phase safe to leave unattended: writes and non-read
+commands are **refused outright rather than prompted for** — the mode exists so
+you are not fielding approval prompts for actions you have not decided to take.
+The one write allowed is into `.silkcode/` state, which is where the plan itself
+(and memory) live: proposing is the point. Approving is a human act — read the
+plan, switch to `edit` or `agent`, and the agent works through the checklist.
+"Yes to all" does not override plan mode's refusals: they are not prompts, and
+leaving plan mode is a decision, not an answer.
 
 The GUI's permission prompt also offers **Always** (approve this kind of request
 for the session — all writes, or one command) and **Yes to all** (approve every
@@ -999,6 +1015,7 @@ silkcode/
 ├── context.py       context assembly: repo map + SILKCODE.md + memory + skills
 ├── skills.py        reusable skills loaded from markdown files
 ├── memory.py        typed project memory (SQLite store + readable markdown mirror)
+├── plan.py          the plan as a file: propose in read-only plan mode, execute by checkbox
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox
