@@ -39,7 +39,12 @@ class OpenAICompatProvider(ModelProvider):
         self.default_model = default_model
         self.retries = max(0, int(retries))
         self.retry_delay = float(retry_delay)
-        self._client = client or httpx.Client(timeout=timeout)
+        # follow_redirects stays off, explicitly: this client carries the API
+        # key and the full conversation in every POST body, and following a
+        # redirect replays both to whatever address the response names. A
+        # provider that "moves" mid-request is an error to show the user,
+        # not a destination.
+        self._client = client or httpx.Client(timeout=timeout, follow_redirects=False)
 
     def _sleep_before_retry(self, attempt: int) -> None:
         # exponential backoff: delay * 2**attempt (attempt is 0-based)

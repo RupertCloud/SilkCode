@@ -51,8 +51,12 @@ def _steps(text: str) -> list[tuple[str, str]]:
     return found
 
 
-def propose_plan(ws: Workspace, title: str, steps: str) -> str:
-    """Write a fresh plan: a title and one step per line.
+def propose_plan(ws: Workspace, title: str, steps: str, verify: str = "") -> str:
+    """Write a fresh plan: a title, one step per line, optional acceptance.
+
+    A step may carry its own acceptance criterion after " => " - how anyone
+    will know that step is done, which is the half a checklist usually
+    forgets. `verify` is the end-to-end check for the whole plan.
 
     Replaces any previous plan - a new proposal supersedes the old one, and
     the old one is in git-less state, not anyone's work.
@@ -60,21 +64,29 @@ def propose_plan(ws: Workspace, title: str, steps: str) -> str:
     from .statedir import state_dir
 
     title = " ".join(title.split())
-    lines = [" ".join(s.split()) for s in steps.splitlines()]
-    lines = [s.lstrip("-").strip().removeprefix("[ ]").strip() for s in lines if s.strip()]
+    raw = [" ".join(s.split()) for s in steps.splitlines()]
+    raw = [s.lstrip("-").strip().removeprefix("[ ]").strip() for s in raw if s.strip()]
     if not title:
         return "A plan needs a title."
-    if not lines:
+    if not raw:
         return "A plan needs at least one step (one per line)."
-    if len(lines) > MAX_STEPS:
-        return (f"That is {len(lines)} steps; a plan over {MAX_STEPS} is a "
+    if len(raw) > MAX_STEPS:
+        return (f"That is {len(raw)} steps; a plan over {MAX_STEPS} is a "
                 "task list nobody reads. Propose the phases instead.")
 
-    body = (f"# Plan: {title}\n\n"
-            + "\n".join(f"- [ ] {s}" for s in lines) + "\n")
+    lines = []
+    for step in raw:
+        text, _, acceptance = step.partition(" => ")
+        lines.append(f"- [ ] {text.strip()}")
+        if acceptance.strip():
+            lines.append(f"      (done when: {acceptance.strip()})")
+    body = f"# Plan: {title}\n\n" + "\n".join(lines) + "\n"
+    verify = " ".join(verify.split())
+    if verify:
+        body += f"\nVerify: {verify}\n"
     state_dir(ws.root)
     plan_path(ws).write_text(body)
-    return (f"Plan written to {PLAN_RELPATH} ({len(lines)} steps).\n\n{body}\n"
+    return (f"Plan written to {PLAN_RELPATH} ({len(raw)} steps).\n\n{body}\n"
             "When the user approves it, work through the steps and mark each "
             "with update_plan as you go.")
 
@@ -108,10 +120,39 @@ def update_plan(ws: Workspace, step: int, status: str, note: str = "") -> str:
                     text = f"{text} — {' '.join(note.split())}"
                 lines[i] = f"- [{MARKERS[status]}] {text}"
                 path.write_text("\n".join(lines) + "\n")
-                return f"Step {step} marked {status}.\n\n" + progress(ws)
+                message = f"Step {step} marked {status}."
+                acceptance = _acceptance_after(lines, i)
+                if status == "done" and acceptance:
+                    message += (f"\nIts acceptance criterion: {acceptance} - "
+                                "confirm this actually holds.")
+                trailer = _verify_line(lines)
+                if status == "done" and trailer and _all_done(path):
+                    message += f"\nEvery step is done. End-to-end check: {trailer}"
+                return message + "\n\n" + progress(ws)
     if index == 0:
         return "The plan has no steps; propose a fresh one with propose_plan."
     return f"No step {step}; the plan has {index}."
+
+
+def _acceptance_after(lines: list[str], index: int) -> str:
+    """The "(done when: ...)" annotation for the step at `lines[index]`."""
+    if index + 1 < len(lines):
+        match = re.match(r"^\s*\(done when: (.*)\)\s*$", lines[index + 1])
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _verify_line(lines: list[str]) -> str:
+    for line in lines:
+        if line.strip().startswith("Verify: "):
+            return line.strip().removeprefix("Verify: ")
+    return ""
+
+
+def _all_done(path: Path) -> bool:
+    steps = _steps(path.read_text(errors="replace"))
+    return bool(steps) and all(marker in ("x", "-") for marker, _ in steps)
 
 
 def progress(ws: Workspace) -> str:

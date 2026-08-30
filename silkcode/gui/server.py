@@ -42,6 +42,7 @@ from ..context import assemble
 from ..lock import LockError, acquire, lock_state, release
 from ..permissions import PermissionManager
 from ..providers import ProviderError, build_provider
+from ..lightmodel import checkpoint_summarizer as _checkpoint_summarizer
 from ..project import record_recent_project, remember_workspace, resolve_project
 from ..repomap import IGNORED_DIRS
 from ..sessions import SessionStore, new_session
@@ -182,6 +183,7 @@ class AgentSession:
             session_id=self.id,
             attribution=state.config.data.get("attribution", True),
             lock_owner=self.lock_owner,
+            summarizer=_checkpoint_summarizer(state.config),
         )
         if data.get("messages"):
             self.agent.messages = data["messages"]

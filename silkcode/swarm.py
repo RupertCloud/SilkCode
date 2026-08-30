@@ -24,6 +24,7 @@ from typing import Callable
 
 from .agent import Agent
 from .agent.prompts import (
+    EPISODE_CONTRACT,
     SWARM_CRITIC_PROMPT,
     SWARM_TESTER_PROMPT,
     SWARM_WORKER_PROMPT,
@@ -58,6 +59,10 @@ TODO_RE = re.compile(rf"\b({_TODO}|{_FIXME}|{_XXX}|{_HACK})\b")
 DEBUG_MARKERS = ("break" + "point(", "pdb.set" + "_trace(", "debug" + "ger;")
 
 MAX_CRITIC_SUGGESTIONS = 5
+# What one retained episode may occupy in the next dispatch's prompt. Long
+# enough for commands and file paths, short enough that three of them do not
+# crowd out the actual task.
+EPISODE_CHARS = 2_000
 MAX_TEAM_DEVELOPERS = 12
 CLIP_CHARS = 4_000
 
@@ -293,14 +298,39 @@ def _developer_prompt(task: dict, objective: str, plan: dict) -> str:
             f"Acceptance criteria:\n{acceptance}\n\nImplement this task now. Run focused tests and report the result.")
 
 
-def _tester_prompt(score: Score) -> str:
+def _episode_of(report: str) -> str:
+    """The retained episode from a role's final message.
+
+    The contract asks for an EPISODE block at the end; when a model ignores
+    that (small ones do), the tail of the report is the closest thing to a
+    work record, so keep that instead of nothing.
+    """
+    text = (report or "").strip()
+    if not text:
+        return ""
+    marker = text.rfind("EPISODE")
+    episode = text[marker:] if marker != -1 else text
+    return episode[-EPISODE_CHARS:]
+
+
+def _episodes_section(episodes: dict, *roles: str) -> str:
+    """Retained episodes as prompt text, or "" when there are none yet."""
+    parts = [f"[{role}]\n{episodes[role]}" for role in roles if episodes.get(role)]
+    if not parts:
+        return ""
+    return ("\nRetained episodes from the previous iteration (work already "
+            "done - build on it, do not rediscover it):\n" + "\n\n".join(parts) + "\n")
+
+
+def _tester_prompt(score: Score, episodes: dict | None = None) -> str:
     command = score.test_command or "(none detected)"
     return (
         f"The workspace scores {score.score:.1f}/10 "
         f"(tests {score.tests:.1f}/8, hygiene {score.hygiene:.1f}/2). Target: 10/10.\n\n"
         f"Test command: {command}\n\n"
         f"Test output:\n{_clip(score.test_output)}\n\n"
-        "Investigate the failures (read files, run read-only commands) and report:\n"
+        + _episodes_section(episodes or {}, "worker", "tester")
+        + "Investigate the failures (read files, run read-only commands) and report:\n"
         "1. What is broken and why.\n"
         "2. Concrete fixes that would make the tests pass.\n"
         "Do not modify any files - the worker implements changes."
@@ -308,7 +338,7 @@ def _tester_prompt(score: Score) -> str:
 
 
 def _critic_prompt(score: Score, tester_report: str, diff: str,
-                   previous: list[str]) -> str:
+                   previous: list[str], episodes: dict | None = None) -> str:
     lines = [
         f"The workspace scores {score.score:.1f}/10 "
         f"(tests {score.tests:.1f}/8, hygiene {score.hygiene:.1f}/2). Target: 10/10.",
@@ -317,6 +347,9 @@ def _critic_prompt(score: Score, tester_report: str, diff: str,
         f"\nTester report:\n{_clip(tester_report)}",
         f"\nCurrent diff:\n{_clip(diff) if diff else '(not a git repository)'}",
     ]
+    section = _episodes_section(episodes or {}, "worker")
+    if section:
+        lines.append(section)
     if previous:
         lines.append("\nPreviously suggested (do not repeat unless still unfixed):\n"
                      + "\n".join(f"- {s}" for s in previous[-5:]))
@@ -329,11 +362,14 @@ def _critic_prompt(score: Score, tester_report: str, diff: str,
     return "\n".join(lines)
 
 
-def _worker_prompt(parsed: dict, score: Score) -> str:
+def _worker_prompt(parsed: dict, score: Score, episodes: dict | None = None) -> str:
     lines = [
         f"The workspace scores {score.score:.1f}/10. Target: 10/10.",
         f"Test command: {score.test_command or '(none detected)'}",
     ]
+    section = _episodes_section(episodes or {}, "worker")
+    if section:
+        lines.append(section)
     critique = (parsed.get("critique") or "").strip()
     if critique:
         lines.append(f"\nCritique:\n{critique}")
@@ -459,6 +495,10 @@ def run_swarm(
     started = time.monotonic()
     scores: list[float] = []
     previous: list[str] = []
+    # Retained episodes, by role, across iterations - the compressed record
+    # of the last dispatch, fed forward so iteration N+1 does not rediscover
+    # what N established (nac's thread/episode idea, one thread per role).
+    episodes: dict[str, str] = {}
     traces: list[dict] = []
     total_tokens = 0
     role_tokens = {"tester": 0, "critic": 0, "worker": 0}
@@ -572,7 +612,8 @@ def run_swarm(
                     dev_definition = definitions.get("developer")
                     dev_prompt = (f"{dev_definition.prompt}\nYou are {role.upper()}."
                                   if dev_definition else
-                                  TEAM_DEVELOPER_PROMPT.format(role=role.upper()))
+                                  TEAM_DEVELOPER_PROMPT.format(role=role.upper())) \
+                        + EPISODE_CONTRACT
                     developer = _make_agent(
                         ws, provider, model, cfg,
                         dev_prompt,
@@ -599,9 +640,11 @@ def run_swarm(
             else:
                 emit("phase", {"role": "tester"})
                 tester = _make_agent(ws, tester_provider, tester_model, tester_cfg,
-                                     role_prompt(definitions, "tester", SWARM_TESTER_PROMPT),
+                                     role_prompt(definitions, "tester", SWARM_TESTER_PROMPT)
+                                     + EPISODE_CONTRACT,
                                      read_only=True)
-                tester_report = tester.run_turn(_tester_prompt(score))
+                tester_report = tester.run_turn(_tester_prompt(score, episodes))
+                episodes["tester"] = _episode_of(tester_report)
                 role_tokens["tester"] += tester.usage.total_tokens
                 total_tokens += tester.usage.total_tokens
                 progress(f"tester: {_summarize(tester_report)}")
@@ -615,7 +658,8 @@ def run_swarm(
                                  role_prompt(definitions, "critic", SWARM_CRITIC_PROMPT),
                                  read_only=True)
             critic_out = critic.run_turn(
-                _critic_prompt(score, tester_report, _diff_summary(ws), previous))
+                _critic_prompt(score, tester_report, _diff_summary(ws), previous,
+                               episodes))
             role_tokens["critic"] += critic.usage.total_tokens
             total_tokens += critic.usage.total_tokens
             parsed = _parse_critic(critic_out)
@@ -630,12 +674,14 @@ def run_swarm(
             if suggestions or not tests_pass:
                 emit("phase", {"role": "worker"})
                 worker = _make_agent(ws, worker_provider, worker_model, worker_cfg,
-                                     role_prompt(definitions, "worker", SWARM_WORKER_PROMPT),
+                                     role_prompt(definitions, "worker", SWARM_WORKER_PROMPT)
+                                     + EPISODE_CONTRACT,
                                      read_only=False,
                                      on_event=on_worker_event,
                                      worker_permissions=worker_permissions,
                                      owner=worker_owner)
-                worker_out = worker.run_turn(_worker_prompt(parsed, score))
+                worker_out = worker.run_turn(_worker_prompt(parsed, score, episodes))
+                episodes["worker"] = _episode_of(worker_out)
                 role_tokens["worker"] += worker.usage.total_tokens
                 total_tokens += worker.usage.total_tokens
                 progress(f"worker: {_summarize(worker_out)}")
@@ -653,6 +699,7 @@ def run_swarm(
         traces.append({
             "iteration": iteration,
             "score": score.score,
+            "episodes": dict(episodes),
             "tester": tester.messages if tester is not None else [],
             "critic": critic.messages if critic is not None else [],
             "worker": worker.messages if worker is not None else [],

@@ -72,7 +72,8 @@ class RemoteBackend:
         self.url = url.rstrip("/")
         self.name = f"remote({self.url})"
         self._headers = {"Authorization": f"Bearer {token}"}
-        self._client = client or httpx.Client(timeout=630.0)
+        # No redirects: every request carries the sandbox's Bearer token.
+        self._client = client or httpx.Client(timeout=630.0, follow_redirects=False)
         self._last_manifest: tuple | None = None
 
     def _workspace_id(self, ws: Workspace) -> str:

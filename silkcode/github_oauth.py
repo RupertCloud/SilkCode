@@ -25,7 +25,9 @@ GITHUB_BASE = "https://github.com"
 DEFAULT_GITHUB_CLIENT_ID: str | None = "Iv23liIVrIULoOVsdX9b"
 
 # Test hook: replaced to inject a mock transport.
-_make_client = lambda: httpx.Client(timeout=30.0)  # noqa: E731
+# No redirects: every call carries the GitHub token, and the REST API
+# has no redirect this code needs to follow.
+_make_client = lambda: httpx.Client(timeout=30.0, follow_redirects=False)  # noqa: E731
 
 
 class DeviceFlowError(RuntimeError):

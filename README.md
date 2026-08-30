@@ -143,6 +143,14 @@ tokens, e.g. DeepSeek):
 }
 ```
 
+**`light_model`** (top-level, e.g. `"light_model": "ollama/qwen2.5-coder"`) runs
+cheap auxiliary work on a cheap model. Today that means compaction checkpoints:
+when a long conversation is trimmed to fit the context window, the dropped turns
+are summarized into a structured checkpoint (user constraints marked
+active/satisfied/superseded; unverified outcomes labeled *reported, not
+verified*) instead of vanishing. Unconfigured, nothing changes and nothing
+silently spends main-model tokens on summaries — compaction stays mechanical.
+
 `timeout` is the per-request (connect + read) limit in seconds (default 180).
 - `retries` (default 2) — how many times a *transient* failure is retried before
   giving up. Transient means a network timeout/connection drop (`Operation timed
@@ -931,6 +939,53 @@ silkcode env --set deepseek      # store a key (read from $SILKCODE_KEY or promp
 silkcode env --clear deepseek    # remove a stored key
 ```
 
+## Isolated sessions: a fork, not your checkout
+
+`silkcode --isolated` runs the session in a throwaway git worktree forked from
+`HEAD` on its own `silk/<stamp>` branch. The agent edits, branches, and commits
+there; your working tree — including uncommitted changes, which the fork
+deliberately does not see — stays exactly as you left it.
+
+At session end, cleanup errs toward keeping work: commits on the branch keep the
+worktree (and the exit message names the `git merge silk/<stamp>` that lands
+them); uncommitted changes keep it too; only a clean, unused fork is removed,
+branch and all. Outside a git repository — or in one with no commits yet —
+`--isolated` refuses with the reason rather than quietly running unisolated:
+someone who asked for isolation must never get a silent live mount instead.
+
+## Fresh documentation, replaceable vendor
+
+A model's knowledge of a library ends at its training cutoff; after that it
+hallucinates the API from stale weights. The `search_docs` tool fixes that with
+retrieval: it queries an index of current developer artifacts — READMEs, docs
+sites, GitHub issues, API specs — and hands the model ranked passages.
+
+The first backend is [Firecrawl's developer index](https://firecrawl.dev); setting
+`FIRECRAWL_API_KEY` is all it takes. But the vendor is replaceable, the same way
+the model is — any endpoint speaking a two-line contract is a backend:
+
+```json
+"doc_search": {"type": "firecrawl", "api_key_env": "FIRECRAWL_API_KEY"}
+"doc_search": {"type": "http", "base_url": "https://your-index/search"}
+```
+
+(The `http` backend POSTs `{"query", "limit"}` and expects
+`{"results": [{"title", "url", "snippet"}]}` — a self-hosted index or an internal
+wiki fits in an afternoon.)
+
+Three properties are deliberate:
+
+- **Private by default.** Configure nothing and export nothing, and no query
+  ever leaves the machine — the tool explains what to set instead of failing.
+- **A search is an outward act.** The query is derived from your private work,
+  so it goes through the permission gate classified like `curl`: prompted in
+  `ask`/`edit`, unprompted in `agent`, refused in `plan` mode — plan mode's
+  promise is that nothing leaves the machine without a decision.
+- **Results are data, never instructions.** What comes back is text other
+  people wrote — GitHub issues are a classic injection vector — and it re-enters
+  the conversation as a tool result, which the provenance boundary already
+  records and scans (*Who asked for this?* below).
+
 ## Seeing the page, not just the source
 
 An agent that writes a web page cannot tell whether it works. Reading the source shows
@@ -1003,6 +1058,10 @@ For work with enough steps to lose track of, the plan is a file, not a message:
 the agent writes it to `.silkcode/plan.md` with `propose_plan` and checks steps
 off with `update_plan` as it executes, so progress survives new turns and context
 compaction — and you can open the file, reorder steps, or add a note by hand.
+A step can carry its own acceptance criterion (`step => how you know it's done`,
+rendered as a `(done when: …)` line), and the plan an end-to-end `Verify:` recipe;
+marking a step done echoes its criterion back, and finishing the last step
+surfaces the end-to-end check — the half a checklist usually forgets.
 
 `plan` mode makes the proposal phase safe to leave unattended: writes and non-read
 commands are **refused outright rather than prompted for** — the mode exists so
@@ -1068,11 +1127,14 @@ silkcode/
 ├── plan.py          the plan as a file: propose in read-only plan mode, execute by checkbox
 ├── roles.py         swarm roles as files: override tester/critic/worker, add read-only specialists
 ├── trace.py         JSONL run trace for external harnesses (with --final-answer and exit-code contract)
+├── docsearch.py     current-docs retrieval with swappable backends (Firecrawl first, any endpoint next)
+├── lightmodel.py    a cheap model for cheap work: compaction checkpoints with nac's discipline
+├── worktree.py      --isolated: the session runs in a fork of HEAD, your checkout stays yours
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox
 ├── sandbox_server.py  reference Silk Sandbox Protocol server (self-hosted)
-├── tools/           read/write/edit, glob/grep, run_command, run_tests, live_server, review_url, git status/diff/log/commit
+├── tools/           read/write/edit, glob/grep, run_command, run_tests, live_server, review_url, search_docs, git status/diff/log/commit
 ├── liveserver.py    built-in live preview server: serve the workspace + auto-reload pages on change
 ├── browser.py       render a page and report what a browser sees (headless Chromium)
 ├── agent/           the agent loop: streaming, tool dispatch, permissions

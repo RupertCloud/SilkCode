@@ -257,7 +257,10 @@ def probe(url: str, token: str | None = None, timeout: float = PROBE_TIMEOUT,
     result = Probe(url=root)
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     owned = client is None
-    client = client or httpx.Client(timeout=timeout, follow_redirects=True)
+    # No redirects: these requests can carry the server's Bearer token, and
+    # the probe already tries every plausible path itself - a redirect has
+    # nothing to add that is worth replaying a credential for.
+    client = client or httpx.Client(timeout=timeout, follow_redirects=False)
     try:
         for path, kind, base in (
             ("/api/tags", "ollama", root),
