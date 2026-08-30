@@ -143,6 +143,14 @@ tokens, e.g. DeepSeek):
 }
 ```
 
+**`light_model`** (top-level, e.g. `"light_model": "ollama/qwen2.5-coder"`) runs
+cheap auxiliary work on a cheap model. Today that means compaction checkpoints:
+when a long conversation is trimmed to fit the context window, the dropped turns
+are summarized into a structured checkpoint (user constraints marked
+active/satisfied/superseded; unverified outcomes labeled *reported, not
+verified*) instead of vanishing. Unconfigured, nothing changes and nothing
+silently spends main-model tokens on summaries — compaction stays mechanical.
+
 `timeout` is the per-request (connect + read) limit in seconds (default 180).
 - `retries` (default 2) — how many times a *transient* failure is retried before
   giving up. Transient means a network timeout/connection drop (`Operation timed
@@ -1106,6 +1114,7 @@ silkcode/
 ├── roles.py         swarm roles as files: override tester/critic/worker, add read-only specialists
 ├── trace.py         JSONL run trace for external harnesses (with --final-answer and exit-code contract)
 ├── docsearch.py     current-docs retrieval with swappable backends (Firecrawl first, any endpoint next)
+├── lightmodel.py    a cheap model for cheap work: compaction checkpoints with nac's discipline
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox

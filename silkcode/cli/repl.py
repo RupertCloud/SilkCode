@@ -164,11 +164,13 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
     # be skipped just because this run is non-interactive.
     for warning in project.warnings:
         print(f"{YELLOW}{warning}{RESET}\n", file=sys.stderr)
+    from ..lightmodel import checkpoint_summarizer
     agent = Agent(provider, model, workspace, permissions, on_event=_on_event,
                   context=project.text, mcp=mcp,
                   max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS,
                   session_id=(resume or {}).get("id"),
-                  attribution=config.data.get("attribution", True))
+                  attribution=config.data.get("attribution", True),
+                  summarizer=checkpoint_summarizer(config))
 
     if resume:
         session = resume
