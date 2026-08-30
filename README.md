@@ -1036,6 +1036,10 @@ For work with enough steps to lose track of, the plan is a file, not a message:
 the agent writes it to `.silkcode/plan.md` with `propose_plan` and checks steps
 off with `update_plan` as it executes, so progress survives new turns and context
 compaction — and you can open the file, reorder steps, or add a note by hand.
+A step can carry its own acceptance criterion (`step => how you know it's done`,
+rendered as a `(done when: …)` line), and the plan an end-to-end `Verify:` recipe;
+marking a step done echoes its criterion back, and finishing the last step
+surfaces the end-to-end check — the half a checklist usually forgets.
 
 `plan` mode makes the proposal phase safe to leave unattended: writes and non-read
 commands are **refused outright rather than prompted for** — the mode exists so

@@ -279,7 +279,13 @@ _register(Tool(
         "through the steps, marking each with update_plan."),
     parameters=_params({
         "title": {"type": "string", "description": "What the plan achieves, in one line"},
-        "steps": {"type": "string", "description": "The steps, one per line, in order"},
+        "steps": {"type": "string",
+                  "description": "The steps, one per line, in order. A step may carry "
+                                 "its acceptance criterion after ' => ', e.g. "
+                                 "'add the flag => silkcode --json emits valid JSON'"},
+        "verify": {"type": "string",
+                   "description": "The end-to-end check for the whole plan, e.g. "
+                                  "'pytest -q passes and the demo script runs'"},
     }, ["title", "steps"]),
     func=propose_plan,
     kind="write",
