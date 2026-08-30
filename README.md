@@ -939,6 +939,20 @@ silkcode env --set deepseek      # store a key (read from $SILKCODE_KEY or promp
 silkcode env --clear deepseek    # remove a stored key
 ```
 
+## Isolated sessions: a fork, not your checkout
+
+`silkcode --isolated` runs the session in a throwaway git worktree forked from
+`HEAD` on its own `silk/<stamp>` branch. The agent edits, branches, and commits
+there; your working tree — including uncommitted changes, which the fork
+deliberately does not see — stays exactly as you left it.
+
+At session end, cleanup errs toward keeping work: commits on the branch keep the
+worktree (and the exit message names the `git merge silk/<stamp>` that lands
+them); uncommitted changes keep it too; only a clean, unused fork is removed,
+branch and all. Outside a git repository — or in one with no commits yet —
+`--isolated` refuses with the reason rather than quietly running unisolated:
+someone who asked for isolation must never get a silent live mount instead.
+
 ## Fresh documentation, replaceable vendor
 
 A model's knowledge of a library ends at its training cutoff; after that it
@@ -1115,6 +1129,7 @@ silkcode/
 ├── trace.py         JSONL run trace for external harnesses (with --final-answer and exit-code contract)
 ├── docsearch.py     current-docs retrieval with swappable backends (Firecrawl first, any endpoint next)
 ├── lightmodel.py    a cheap model for cheap work: compaction checkpoints with nac's discipline
+├── worktree.py      --isolated: the session runs in a fork of HEAD, your checkout stays yours
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox

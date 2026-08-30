@@ -92,8 +92,37 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
              use_sandbox: bool = False, auto_push: bool = False,
              remote: str | None = None, trace_path: str | None = None,
              final_answer_path: str | None = None,
-             check_command: str | None = None) -> int:
+             check_command: str | None = None, isolated: bool = False) -> int:
     config = Config.load()
+    worktree = None
+    if isolated:
+        if remote:
+            print("error: --isolated is for local checkouts; a remote workspace "
+                  "already lives in the sandbox", file=sys.stderr)
+            return 1
+        from ..worktree import create as create_worktree
+        try:
+            worktree = create_worktree(path)
+        except ToolError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        path = str(worktree.root)
+        print(f"{CYAN}isolated{RESET} {worktree.root}  "
+              f"{DIM}(branch {worktree.branch}, forked from "
+              f"{worktree.base[:10]}; your checkout is untouched){RESET}")
+    try:
+        return _run_repl(path, model_spec, mode, resume, prompt, grants,
+                         use_sandbox, auto_push, remote, trace_path,
+                         final_answer_path, check_command, config)
+    finally:
+        if worktree is not None:
+            from ..worktree import cleanup as cleanup_worktree
+            print(cleanup_worktree(worktree))
+
+
+def _run_repl(path, model_spec, mode, resume, prompt, grants, use_sandbox,
+              auto_push, remote, trace_path, final_answer_path, check_command,
+              config) -> int:
     if remote:
         from ..remotews import RemoteWorkspace
         from ..execbackend import remote_backend_from_config
