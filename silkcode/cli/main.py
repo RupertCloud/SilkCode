@@ -51,7 +51,7 @@ from ..sessions import SessionStore
 # `--version` printing the one-line build id rather than the full report.
 REPL_FLAGS = frozenset({
     "-h", "--help", "-V", "--version", "-m", "--model", "--mode", "--allow",
-    "--sandbox", "--remote", "--auto-push", "-p", "--prompt",
+    "--sandbox", "--isolated", "--remote", "--auto-push", "-p", "--prompt",
 })
 
 
