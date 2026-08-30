@@ -88,10 +88,15 @@ def test_the_patterns_stay_quiet_on_this_repository():
     """
     fixtures = {"test_provenance.py", "test_context_trust.py"}
     root = pathlib.Path(__file__).resolve().parent.parent
+    # Only the files git tracks are "this repository". Walking the tree would
+    # also read whatever the environment has dropped in — a .venv's vendored
+    # libraries, node_modules — and cry wolf on third-party strings.
+    import subprocess
+    tracked = subprocess.run(["git", "-C", str(root), "ls-files"],
+                             capture_output=True, text=True, check=True)
     noisy = []
-    for path in root.rglob("*"):
-        if not path.is_file() or ".git/" in str(path):
-            continue
+    for rel in tracked.stdout.splitlines():
+        path = root / rel
         if path.suffix not in {".py", ".md", ".txt", ".yml", ".yaml", ".html",
                                ".js", ".toml"}:
             continue
@@ -101,8 +106,8 @@ def test_the_patterns_stay_quiet_on_this_repository():
             text = path.read_text(errors="ignore")
         except OSError:
             continue
-        for sighting in scan(text, str(path.relative_to(root))):
-            noisy.append(f"{path.relative_to(root)} — {sighting.reason}: "
+        for sighting in scan(text, rel):
+            noisy.append(f"{rel} — {sighting.reason}: "
                          f"{sighting.excerpt[:70]}")
     assert noisy == [], "the detector cries wolf on its own repository:\n" + \
         "\n".join(noisy)

@@ -160,10 +160,10 @@ def check(url: str, width: int = 1280, height: int = 800,
         report.error = why
         return report
 
-    from playwright.sync_api import sync_playwright
-
     problems: list[str] = []
     try:
+        from playwright.sync_api import sync_playwright
+
         with sync_playwright() as pw:
             launch: dict = {}
             executable = chromium_path()
