@@ -92,8 +92,11 @@ def render(results: list[DocResult], query: str) -> str:
 def _post(url: str, payload: dict, headers: dict) -> dict:
     import httpx
     try:
+        # follow_redirects off, explicitly: the body carries a query derived
+        # from private work and the header may carry a key, and a redirect
+        # would replay both to whatever address the response names.
         response = httpx.post(url, json=payload, headers=headers,
-                              timeout=TIMEOUT_SECONDS)
+                              timeout=TIMEOUT_SECONDS, follow_redirects=False)
     except httpx.HTTPError as exc:
         # str(exc) on an auth failure can echo request details; keep it short
         raise ToolError(f"Documentation search failed: {type(exc).__name__} "

@@ -29,7 +29,9 @@ REMOTE_PATTERN = re.compile(
     r"(?:^|//|@)github\.com[:/](?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?/?$")
 
 # Test hook: replaced to inject a mock transport.
-_make_client = lambda: httpx.Client(timeout=30.0)  # noqa: E731
+# No redirects: every call carries the GitHub token, and the REST API
+# has no redirect this code needs to follow.
+_make_client = lambda: httpx.Client(timeout=30.0, follow_redirects=False)  # noqa: E731
 
 
 def token_from_env(config_data: dict | None = None) -> str | None:
@@ -129,7 +131,13 @@ class GitHubClient:
             resp = self._client.request(method, f"{self.api_url}{path}", headers=headers, **kwargs)
         except httpx.HTTPError as exc:
             raise ToolError(f"GitHub request failed: {exc}") from exc
-        if resp.status_code >= 400:
+        if resp.is_redirect:
+            # Redirects are not followed (the token must not be replayed to
+            # an address the server chose), and a 3xx treated as success
+            # would return {} and read as an empty result.
+            raise ToolError(f"GitHub API redirected ({resp.status_code}) - "
+                            "the repository may have moved; use its new name.")
+        if not resp.is_success:
             detail = ""
             try:
                 detail = resp.json().get("message", "")
