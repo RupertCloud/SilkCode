@@ -1430,6 +1430,38 @@ class GuiState:
         from ..share_update import build_share_update
         return build_share_update(self.get_session(session_id).workspace)
 
+    def graph_info(self, session_id: int | None = None) -> dict:
+        """The project's knowledge graph, as the Graph panel shows it: is
+        graphify installed, is a graph built, and what it says about the
+        platform the user built - size, hubs, extraction confidence."""
+        from .. import graph as graphmod
+        workspace = self.get_session(session_id).workspace
+        ok, hint = graphmod.available()
+        info: dict = {"available": ok}
+        if not ok:
+            info["hint"] = hint
+            return info
+        info.update(graphmod.stats(workspace))
+        return info
+
+    def graph_build(self, session_id: int | None = None) -> dict:
+        from .. import graph as graphmod
+        workspace = self.get_session(session_id).workspace
+        ok, hint = graphmod.available()
+        if not ok:
+            raise ToolError(hint)
+        graphmod.graph_build(workspace)
+        return self.graph_info(session_id)
+
+    def graph_page(self, session_id: int | None = None) -> bytes:
+        from ..graph import OUT_DIRNAME
+        workspace = self.get_session(session_id).workspace
+        page = workspace.root / OUT_DIRNAME / "graph.html"
+        if not page.is_file():
+            raise FileNotFoundError(
+                "graphify-out/graph.html is not built yet; build the graph first")
+        return page.read_bytes()
+
     def projects_info(self) -> list[dict]:
         from ..project import available_projects
         return available_projects()
@@ -1727,6 +1759,17 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json(st.diff(sid))
             elif route == "/api/share-update":
                 self._json(st.share_update(sid))
+            elif route == "/api/graph":
+                self._json(st.graph_info(sid))
+            elif route == "/graph-view":
+                body = st.graph_page(sid)
+                self.send_response(200)
+                self._security_headers()
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif route == "/api/projects":
                 self._json(st.projects_info())
             elif route == "/api/providers":
@@ -1814,6 +1857,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                     return self._error(f"unknown mode '{mode}'")
                 st.set_mode(mode)
                 self._json(st.state(sid))
+            elif route == "/api/graph/build":
+                self._json(st.graph_build(sid))
             elif route == "/api/revert":
                 session = st.get_session(sid)
                 if session.running:
