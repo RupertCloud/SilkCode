@@ -382,7 +382,20 @@
   #details .details-panel { display: none; flex: 1; min-height: 0; overflow: auto; }
   #details[data-detail="files"] #file-details,
   #details[data-detail="activity"] #activity,
+  #details[data-detail="graph"] #graph-details,
   #details[data-detail="changes"] #bottom { display: flex; flex-direction: column; }
+  #graph-details { padding: 12px; gap: 10px; overflow-y: auto; }
+  #graph-details h2 { margin: 0; font-size: 11px; letter-spacing: .08em; color: var(--dim); }
+  .graph-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .graph-stat { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  .graph-stat b { display: block; font-size: 18px; }
+  .graph-stat span { font-size: 11px; color: var(--dim); }
+  .graph-hub { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .graph-hub .bar { height: 6px; background: var(--accent); border-radius: 3px; min-width: 3px; opacity: .7; }
+  .graph-hub .deg { color: var(--dim); margin-left: auto; }
+  #graph-actions { display: flex; gap: 8px; }
+  #graph-actions button, #graph-actions a { border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; background: var(--panel2); color: var(--text); cursor: pointer; font-size: 12px; text-decoration: none; }
+  #graph-note { font-size: 11px; color: var(--dim); white-space: pre-wrap; }
   #activity, #bottom { grid-column: auto; grid-row: auto; border: 0; }
   #details-toggle { width: auto !important; padding: 0 10px; }
 
@@ -465,9 +478,14 @@
       <button data-detail="changes" class="active">Changes</button>
       <button data-detail="files">Files</button>
       <button data-detail="activity">Activity</button>
+      <button data-detail="graph">Graph</button>
       <button id="details-close" aria-label="Close details">×</button>
     </div>
     <section class="details-panel pane" id="file-details"><h2>FILES</h2><div id="tree"></div></section>
+    <section class="details-panel" id="graph-details" aria-label="Project knowledge graph">
+      <h2>PROJECT GRAPH</h2>
+      <div id="graph-body"><span id="graph-note">Loading…</span></div>
+    </section>
     <section class="details-panel pane" id="activity" aria-label="Agent activity">
       <h2>AGENT ACTIVITY</h2><div id="timeline"></div>
       <p id="timeline-empty" class="empty">Tool calls appear here as the agent works.</p>
@@ -848,6 +866,67 @@ function openDetails(detail = activeDetail) {
     b.classList.toggle("active", b.dataset.detail === detail));
   if (detail === "changes") loadDiff();
   if (detail === "files") loadTree();
+  if (detail === "graph") loadGraph();
+}
+
+// The Graph panel: what the knowledge graph says about the platform the user
+// built — size, the hubs everything flows through, and how much of the map
+// was read directly from source. Built locally by graphify (tree-sitter, no
+// model call); the interactive map opens in its own tab via /graph-view.
+async function loadGraph(afterBuild) {
+  const body = document.getElementById("graph-body");
+  let info;
+  try {
+    info = await api("/api/graph?session=" + encodeURIComponent(currentSessionId));
+  } catch (err) { body.textContent = err.message; return; }
+  if (!info.available) {
+    body.innerHTML = "<span id='graph-note'></span>";
+    body.firstChild.textContent = info.hint || "graphify is not installed.";
+    return;
+  }
+  if (!info.built) {
+    body.innerHTML = "<div id='graph-actions'><button id='graph-build-btn'>Build graph</button></div>" +
+      "<span id='graph-note'>No graph yet. Building parses the code locally with " +
+      "tree-sitter (no model call) and writes graphify-out/ into the project.</span>";
+    document.getElementById("graph-build-btn").onclick = buildGraph;
+    return;
+  }
+  const maxDeg = Math.max(1, ...(info.hubs || []).map(h => h.degree));
+  const hub = h => "<div class='graph-hub'><span class='bar' style='width:" +
+    Math.round(80 * h.degree / maxDeg) + "px'></span><span></span><span class='deg'>" +
+    h.degree + "</span></div>";
+  body.innerHTML =
+    "<div class='graph-stats'>" +
+      "<div class='graph-stat'><b>" + info.nodes + "</b><span>concepts</span></div>" +
+      "<div class='graph-stat'><b>" + info.edges + "</b><span>connections</span></div>" +
+      "<div class='graph-stat'><b>" + info.files + "</b><span>files mapped</span></div>" +
+      "<div class='graph-stat'><b>" + info.extracted_pct + "%</b><span>read directly from source</span></div>" +
+    "</div>" +
+    "<h2>WHAT EVERYTHING FLOWS THROUGH</h2>" +
+    (info.hubs || []).map(hub).join("") +
+    "<div id='graph-actions'>" +
+      (info.has_viz ? "<a href='/graph-view' target='_blank' rel='noopener'>Open interactive map</a>" : "") +
+      "<button id='graph-build-btn'>Rebuild</button>" +
+    "</div>" +
+    "<span id='graph-note'>" + (afterBuild ? "Graph rebuilt." : "") + "</span>";
+  // hub names as text, never HTML: they come from the user's source files
+  document.querySelectorAll("#graph-body .graph-hub").forEach((el, i) => {
+    el.children[1].textContent = (info.hubs[i] || {}).name || "";
+  });
+  document.getElementById("graph-build-btn").onclick = buildGraph;
+}
+async function buildGraph() {
+  const note = document.getElementById("graph-note");
+  const btn = document.getElementById("graph-build-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Building…"; }
+  if (note) note.textContent = "Parsing the project (local, no model call)…";
+  try {
+    await api("/api/graph/build", {session: currentSessionId});
+    await loadGraph(true);
+  } catch (err) {
+    if (note) note.textContent = "Build failed: " + err.message;
+    if (btn) { btn.disabled = false; btn.textContent = "Build graph"; }
+  }
 }
 function closeDetails() {
   document.querySelector("main").classList.remove("details-open");

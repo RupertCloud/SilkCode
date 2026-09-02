@@ -953,6 +953,33 @@ branch and all. Outside a git repository — or in one with no commits yet —
 `--isolated` refuses with the reason rather than quietly running unisolated:
 someone who asked for isolation must never get a silent live mount instead.
 
+## The project as a graph
+
+Silk Code adopts [graphify](https://github.com/Graphify-Labs/graphify): the
+project parsed into a knowledge graph with tree-sitter — deterministic, local,
+**no model call**, nothing leaves the machine. We verified it on this repository
+before adopting it (3,273 nodes in 6.5 seconds, with `affected` answers that
+matched our own tests' imports exactly).
+
+The agent gets four tools: `graph_build` parses the project (it writes
+`graphify-out/` into the tree, so it goes through the permission gate like any
+command), then `graph_query`, `graph_explain`, and — the one that earns its
+keep — **`graph_impact`**: the blast radius of changing something, every caller
+and importer with file:line anchors, checked *before* a refactor instead of
+discovered after. The query tools never auto-build: a read-only tool that
+quietly writes on first use has lied about what it is.
+
+The **Graph** tab in the GUI's details drawer is the user-facing half: how big
+the platform you built has grown (concepts, connections, files), what
+everything flows through (the hubs, ranked), and how much of the map was read
+directly from source versus inferred — plus the interactive clickable map
+(`graphify-out/graph.html`) served at `/graph-view`.
+
+Graphify is installed by `install.py` alongside Chromium, but is not a wheel
+dependency — fifteen tree-sitter grammars is a lot to charge a bare
+`pip install silkcode` for. Without it, every entry point explains the one
+command (`pip install graphifyy`) instead of failing.
+
 ## Fresh documentation, replaceable vendor
 
 A model's knowledge of a library ends at its training cutoff; after that it
@@ -1128,6 +1155,7 @@ silkcode/
 ├── roles.py         swarm roles as files: override tester/critic/worker, add read-only specialists
 ├── trace.py         JSONL run trace for external harnesses (with --final-answer and exit-code contract)
 ├── docsearch.py     current-docs retrieval with swappable backends (Firecrawl first, any endpoint next)
+├── graph.py         the project as a knowledge graph (graphify): build, query, explain, impact
 ├── lightmodel.py    a cheap model for cheap work: compaction checkpoints with nac's discipline
 ├── worktree.py      --isolated: the session runs in a fork of HEAD, your checkout stays yours
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
