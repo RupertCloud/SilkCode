@@ -48,7 +48,8 @@ jobs:
           # BROWSER=true: the daemon "opens" the GUI with /usr/bin/true
           # instead of a browser window nobody is watching
           SILKCODE_PORT=8399 BROWSER=true "$app/Contents/MacOS/SilkCode"
-          curl -fsS http://127.0.0.1:8399/ | grep -q "<title>Silk Code</title>"
+          curl -fsS -o /tmp/silkcode-index.html http://127.0.0.1:8399/
+          grep -q "<title>Silk Code</title>" /tmp/silkcode-index.html
           cat ~/Library/Logs/SilkCode/gui.log
           pkill -f "Resources/python/bin/python3" || true
           sleep 2
