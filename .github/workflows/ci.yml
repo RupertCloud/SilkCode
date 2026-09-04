@@ -23,3 +23,37 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
       - run: pytest -q
+
+  # The macOS app: build the .dmg, then open the app from it the way Finder
+  # would and check the GUI answers. Runs on the runner's own architecture;
+  # the release builds both.
+  macos-app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the bundle's version comes from git tags
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: packaging/macos/build-dmg.sh
+      - name: Open the app from the .dmg
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          hdiutil attach -nobrowse -mountpoint /tmp/silkcode-dmg dist/SilkCode-*.dmg
+          app="/tmp/silkcode-dmg/Silk Code.app"
+          "$app/Contents/Resources/bin/silkcode" --version
+          # BROWSER=true: the daemon "opens" the GUI with /usr/bin/true
+          # instead of a browser window nobody is watching
+          SILKCODE_PORT=8399 BROWSER=true "$app/Contents/MacOS/SilkCode"
+          curl -fsS http://127.0.0.1:8399/ | grep -q "<title>Silk Code</title>"
+          cat ~/Library/Logs/SilkCode/gui.log
+          pkill -f "Resources/python/bin/python3" || true
+          sleep 2
+          hdiutil detach -force /tmp/silkcode-dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist/*.dmg
