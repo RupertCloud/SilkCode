@@ -32,6 +32,19 @@ pip install git+https://github.com/RupertCloud/SilkCode
 pipx install git+https://github.com/RupertCloud/SilkCode
 ```
 
+**macOS, without a terminal:** each [release](https://github.com/RupertCloud/SilkCode/releases/latest)
+also carries a `.dmg` — `SilkCode-<version>-arm64.dmg` for Apple Silicon,
+`SilkCode-<version>-x86_64.dmg` for Intel Macs. Open it, drag **Silk Code** into
+Applications, and open the app: it starts the GUI daemon and opens the GUI in
+your browser; opening it again brings the GUI back. The app carries its own
+Python, so nothing needs installing first. It is not signed with an Apple
+developer certificate, so the first launch is right-click → **Open** (or
+System Settings → Privacy & Security → **Open Anyway**). API keys go in the
+GUI's Environment page rather than a shell profile, and
+`"/Applications/Silk Code.app/Contents/Resources/bin/silkcode"` is the CLI, for
+symlinking into your PATH. To build the `.dmg` yourself on a Mac:
+`packaging/macos/build-dmg.sh`.
+
 Or from a clone, for working on Silk Code itself:
 
 ```bash

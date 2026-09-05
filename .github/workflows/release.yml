@@ -115,4 +115,47 @@ jobs:
             pipx install https://github.com/RupertCloud/SilkCode/releases/download/${{ env.TAG }}/silkcode-${{ env.VERSION }}-py3-none-any.whl
             ```
 
+            macOS, without a terminal: download `SilkCode-${{ env.VERSION }}-arm64.dmg`
+            (Apple Silicon) or `SilkCode-${{ env.VERSION }}-x86_64.dmg` (Intel) below, drag
+            Silk Code into Applications, and open it (right-click → Open the first time:
+            the app is not signed with an Apple developer certificate).
+
             Homepage: https://silkcode.web.app
+
+  # The macOS app, one .dmg per architecture, attached to the release the
+  # job above created. Built at the release version the same way: the tag
+  # has to be visible to setuptools_scm when the wheel is built.
+  macos:
+    needs: release
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - name: Resolve tag and version
+        run: |
+          TAG="${{ github.event.inputs.version || github.ref_name }}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+      - name: Build the .dmg at the version being released
+        run: |
+          set -euo pipefail
+          git tag --force "$TAG"
+          packaging/macos/build-dmg.sh --arch "${{ matrix.arch }}"
+          test -f "dist/SilkCode-${VERSION}-${{ matrix.arch }}.dmg" || {
+            echo "::error::expected dist/SilkCode-${VERSION}-${{ matrix.arch }}.dmg, got:"
+            ls -1 dist/
+            exit 1
+          }
+      - name: Attach the .dmg to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: dist/*.dmg
