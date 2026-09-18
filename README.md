@@ -2,10 +2,10 @@
 
 **Homepage: [silkcode.web.app](https://silkcode.web.app)** · MIT licensed
 
-**An open, model-agnostic AI coding harness.** Use DeepSeek, Qwen, Kimi, OpenRouter, any
-OpenAI-compatible endpoint, or local models (Ollama, vLLM, LM Studio) to understand a
-repository, plan changes, write code, run commands and tests, and review diffs — from a
-CLI or a local GUI.
+**An open, model-agnostic AI coding harness.** Use Claude, DeepSeek, Qwen, Kimi,
+OpenRouter, any OpenAI-compatible endpoint, or local models (Ollama, vLLM, LM Studio) to
+understand a repository, plan changes, write code, run commands and tests, and review
+diffs — from a CLI or a local GUI.
 
 > **The coding environment belongs to the developer. The AI model is replaceable.**
 
@@ -74,10 +74,35 @@ and risky commands ask for your approval first (see *Permissions* below).
 
 ## Models: cloud, local, and onboarding your own
 
-Silk Code ships with built-in providers: `deepseek`, `qwen`, `kimi`, `glm`, `minimax`,
-`cloudflare` (Workers AI), `openrouter`, `ollama`, `vllm`, `lmstudio`. API keys are read
-from environment variables (`DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`,
-`GLM_API_KEY`, `MINIMAX_API_KEY`, `CLOUDFLARE_API_TOKEN`, `OPENROUTER_API_KEY`).
+Silk Code ships with built-in providers: `anthropic`, `deepseek`, `qwen`, `kimi`, `glm`,
+`minimax`, `cloudflare` (Workers AI), `openrouter`, `ollama`, `vllm`, `lmstudio`. API keys
+are read from environment variables (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`,
+`DASHSCOPE_API_KEY`, `MOONSHOT_API_KEY`, `GLM_API_KEY`, `MINIMAX_API_KEY`,
+`CLOUDFLARE_API_TOKEN`, `OPENROUTER_API_KEY`).
+
+Two request formats are spoken, so most providers need settings rather than code: the
+OpenAI chat-completions format (everything above except `anthropic` and `ollama`) and
+**Anthropic's Messages format**, which is a different shape entirely - system prompts are
+a top-level field, tool results are user turns, and tool arguments arrive as streamed
+fragments. `silkcode/providers/anthropic.py` does that translation.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+silkcode --model anthropic                     # claude-sonnet-5 by default
+silkcode --model anthropic/claude-opus-5       # or name one
+```
+
+The Messages API requires a `max_tokens` on every request. Silk Code sends 8192; raise it
+per provider in `config.json` if turns are being truncated:
+
+```json
+{ "providers": { "anthropic": { "max_tokens": 16000 } } }
+```
+
+Anthropic also reports cached prompt tokens separately, and Silk Code keeps them separate
+(`cache_write_tokens`, `cache_read_tokens`) rather than folding them into the input count -
+a cache read costs a fraction of an ordinary input token and a write costs more, so
+anything pricing a session needs to tell the three apart.
 
 **Cloudflare Workers AI** (models on Cloudflare's edge GPUs) needs your account id once:
 

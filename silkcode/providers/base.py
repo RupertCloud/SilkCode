@@ -22,15 +22,26 @@ class ToolCall:
 class Usage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    # Cached prompt tokens, kept apart from prompt_tokens because they are
+    # priced differently - a cache write costs more than an ordinary input
+    # token and a cache read costs a fraction of one. Anything metering spend
+    # has to know which of the three it is looking at, so summing them into
+    # prompt_tokens would quietly misprice every cached turn. Providers that
+    # do not report caching leave both at zero.
+    cache_write_tokens: int = 0
+    cache_read_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
-        return self.prompt_tokens + self.completion_tokens
+        return (self.prompt_tokens + self.completion_tokens
+                + self.cache_write_tokens + self.cache_read_tokens)
 
     def add(self, other: "Usage | None") -> None:
         if other is not None:
             self.prompt_tokens += other.prompt_tokens
             self.completion_tokens += other.completion_tokens
+            self.cache_write_tokens += other.cache_write_tokens
+            self.cache_read_tokens += other.cache_read_tokens
 
 
 @dataclass

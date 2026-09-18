@@ -30,6 +30,14 @@ def config_path() -> Path:
 
 
 BUILTIN_PROVIDERS: dict[str, dict] = {
+    "anthropic": {
+        # Messages API, not an OpenAI-compatible endpoint - see
+        # providers/anthropic.py for the translation it needs.
+        "type": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "default_model": "claude-sonnet-5",
+    },
     "deepseek": {
         "type": "openai_compat",
         "base_url": "https://api.deepseek.com/v1",
