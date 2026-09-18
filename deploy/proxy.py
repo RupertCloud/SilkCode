@@ -36,6 +36,13 @@ from pathlib import Path
 
 STATE = Path(os.environ.get("SILK_STATE", str(Path.home() / ".silkdeploy")))
 USER_COOKIE = "silk_user"
+# The daemon's own cookie. It hands its access token back in one so a
+# browser that opened /?token=... keeps it for the fetches that follow.
+# Through this proxy that would put the container's shell credential in the
+# browser - the single thing this arrangement exists to prevent - so it is
+# stripped on the way out. Nothing is lost: every request is authenticated
+# here, from state the browser never sees.
+DAEMON_COOKIE = "silk_token="
 
 # Headers that describe one hop and must not be relayed to the next.
 HOP_BY_HOP = {
@@ -191,8 +198,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
         declared = upstream.getheader("Content-Length")
         self.send_response(upstream.status)
         for name, value in upstream.getheaders():
-            if name.lower() in HOP_BY_HOP or name.lower() == "content-length":
+            lowered = name.lower()
+            if lowered in HOP_BY_HOP or lowered == "content-length":
                 continue
+            if lowered == "set-cookie" and value.lstrip().startswith(DAEMON_COOKIE):
+                continue  # never relay the daemon's token to the browser
             self.send_header(name, value)
 
         if declared is not None:

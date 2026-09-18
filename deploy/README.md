@@ -67,8 +67,16 @@ deploy/silkrun stop alice      # remove the container (the volume survives)
 
 **The user never holds the access token.** Each container gets a 192-bit token;
 `silkrun` records it in `$SILK_STATE/<user>.json` (mode 0600) and the proxy adds
-`Authorization: Bearer …` on the way through. Nothing sensitive reaches the
-browser, so there is no token in a URL, a bookmark or a cookie.
+`Authorization: Bearer …` on the way through.
+
+That takes one extra step to be true. The daemon hands its own token back as
+`Set-Cookie: silk_token=…` on `GET /`, so that a browser which opened
+`/?token=…` keeps it for the fetches that follow. Relayed as-is, that would put
+the container's shell credential in the browser — the one thing this
+arrangement exists to prevent — so the proxy strips that cookie from every
+response. Nothing is lost: each request is authenticated at the proxy from
+state the browser never sees, which is why the API still answers 200 with only
+the routing cookie present.
 
 **The original `Host` header is forwarded unchanged.** The daemon refuses any
 request whose `Origin` disagrees with the `Host` it was reached on
@@ -100,7 +108,10 @@ had no Docker daemon):
 | | Result |
 | --- | --- |
 | Daemon rejects a tokenless request | 401 |
-| Proxy injects the token; GUI loads | 200, 131 KB, token appears 0 times in the page |
+| Proxy injects the token; GUI loads | 200, 131 KB |
+| Token in the response **body** | 0 occurrences |
+| Token in the response **headers** | 0 occurrences — the daemon's `Set-Cookie: silk_token` is stripped |
+| API with only the routing cookie | 200 — so dropping that cookie costs nothing |
 | API through the proxy | 200, correct JSON |
 | Same-origin browser request | 200 |
 | Cross-site `Origin` | 403 — protection survives the proxy |
