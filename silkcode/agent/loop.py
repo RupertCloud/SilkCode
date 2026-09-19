@@ -23,8 +23,21 @@ KEEP_RECENT_TOOL_RESULTS = 6
 CHECKPOINT_MARKER = "[Checkpoint of earlier work, written after context trimming]\n"
 TRUNCATED_TOOL_CHARS = 500
 
-# on_event(kind, data): kind in {"text", "tool_start", "tool_result"}
+# on_event(kind, data): kind in {"text", "tool_start", "tool_result", "usage",
+# "stopped"}. "usage" fires once per model call with that call's tokens -
+# something metering spend needs per call, not per turn, because a turn can
+# make many calls and only the per-call figures reconcile against a provider's
+# own record. "stopped" fires when before_model_call halts the turn.
 EventHandler = Callable[[str, object], None]
+
+# before_model_call() -> None to proceed, or a reason to stop the turn.
+#
+# Checked immediately before each model call, which is the only point in a
+# turn where stopping is clean: the message history is complete (a user turn,
+# or an assistant turn with every tool result appended) and no edit is half
+# applied. Stopping after the model has answered would strand tool calls with
+# no results; stopping mid-tool would strand the file being written.
+PreCallCheck = Callable[[], "str | None"]
 
 
 class Agent:
@@ -44,6 +57,7 @@ class Agent:
         lock_owner: str | None = None,
         redact_output: bool = True,
         summarizer=None,
+        before_model_call: PreCallCheck | None = None,
     ):
         # `summarizer` (optional): transcript -> checkpoint text, run on a
         # configured light model (lightmodel.py). When present, turns that
@@ -56,6 +70,8 @@ class Agent:
         self.permissions = permissions
         self.checkpoints = checkpoints or Checkpoints()
         self.on_event: EventHandler = on_event or (lambda kind, data: None)
+        # None means no gate: the CLI and the local GUI run unmetered.
+        self.before_model_call = before_model_call
         self.mcp = mcp
         self.session_id = session_id
         self.attribution = attribution
@@ -119,8 +135,12 @@ class Agent:
         self.messages.append({"role": "user", "content": user_input})
         try:
             for _ in range(MAX_STEPS):
+                stop_reason = self._check_before_model_call()
+                if stop_reason is not None:
+                    return stop_reason
                 result = self._call_model()
                 self.usage.add(result.usage)
+                self._emit_usage(result)
                 self._append_assistant(result)
                 if not result.tool_calls:
                     return result.content
@@ -140,6 +160,42 @@ class Agent:
         finally:
             clear_attribution()  # attribution never outlives the turn
             self.provenance.end()  # nor does what this turn read
+
+    def _check_before_model_call(self) -> str | None:
+        """Ask the caller whether this turn may make another model call.
+
+        A raising check must not read as permission to spend, so a failure
+        stops the turn rather than being swallowed.
+        """
+        if self.before_model_call is None:
+            return None
+        try:
+            reason = self.before_model_call()
+        except Exception as exc:
+            reason = f"Stopped: the spend check failed ({type(exc).__name__}: {exc})."
+        if not reason:
+            return None
+        self.on_event("stopped", {"reason": reason})
+        return reason
+
+    def _emit_usage(self, result: ChatResult) -> None:
+        """One event per model call, carrying that call's tokens only.
+
+        Cost is deliberately absent: prices belong to whoever is billing, and
+        one baked in here would be wrong for every other caller.
+        """
+        usage = result.usage
+        if usage is None:
+            return
+        self.on_event("usage", {
+            "provider": self.provider.name,
+            "model": self.model,
+            "session_id": self.session_id,
+            "prompt_tokens": usage.prompt_tokens,
+            "completion_tokens": usage.completion_tokens,
+            "cache_write_tokens": usage.cache_write_tokens,
+            "cache_read_tokens": usage.cache_read_tokens,
+        })
 
     def _scrub(self, output: str) -> str:
         """Remove credentials from tool output before it joins the

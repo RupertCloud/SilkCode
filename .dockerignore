@@ -1,0 +1,20 @@
+# Build context for deploy/Dockerfile. Without this, `COPY . /src` ships the
+# whole history and every local artefact into the image layer.
+#
+# Two things must NOT be excluded, both load-bearing for the build:
+#   README.md      - pyproject.toml declares it as the package readme, so
+#                    `pip install /src` fails without it.
+#   deploy/        - the Dockerfile copies deploy/entrypoint.sh.
+.git
+.github
+*.egg-info
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+tests/
+docs/
+sandbox/

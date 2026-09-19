@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+"""Start, stop and inspect one Silk Code container per user.
+
+Slice 1 of the hosted product (docs/CLOUD.md M2). There is no authentication
+here - `silkrun` is an operator tool run on the host, and `proxy.py` in front
+of it has a placeholder login. Do not expose either to the internet until
+slice 2 replaces that with real sign-in.
+
+State lives in $SILK_STATE (default ~/.silkdeploy): one JSON file per running
+user recording the published port and the daemon's access token, which is what
+the proxy reads to route and authenticate.
+
+Each user's $SILKCODE_HOME is a named Docker volume, so config, API keys,
+sessions and cloned repositories survive restarts and are never shared.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import secrets
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+IMAGE = os.environ.get("SILK_IMAGE", "silkcode-runner:latest")
+STATE = Path(os.environ.get("SILK_STATE", str(Path.home() / ".silkdeploy")))
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Resource caps. A runaway agent - or a user mining crypto - is contained to
+# its own container rather than taking the host down with it. Tune to the
+# instance: these suit a small VM running a handful of users.
+MEMORY = os.environ.get("SILK_MEMORY", "2g")
+CPUS = os.environ.get("SILK_CPUS", "1.0")
+PIDS = os.environ.get("SILK_PIDS", "512")
+
+USER_RE = __import__("re").compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+
+def die(message: str, code: int = 1) -> "typing.NoReturn":  # noqa: F821
+    print(f"error: {message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def check_user(name: str) -> str:
+    if not USER_RE.match(name):
+        die(f"invalid user name {name!r}: use a-z, 0-9, '-' and '_', max 32 chars")
+    return name
+
+
+def container_of(user: str) -> str:
+    return f"silk-user-{user}"
+
+
+def volume_of(user: str) -> str:
+    return f"silk-data-{user}"
+
+
+def state_file(user: str) -> Path:
+    return STATE / f"{user}.json"
+
+
+def docker(*args: str, check: bool = True, capture: bool = True) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            ["docker", *args],
+            check=check,
+            capture_output=capture,
+            text=True,
+        )
+    except FileNotFoundError:
+        die("docker is not installed, or not on PATH")
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "").strip().splitlines()
+        die(f"docker {args[0]} failed: {detail[-1] if detail else exc}")
+
+
+def container_running(user: str) -> bool:
+    proc = docker("ps", "--quiet", "--filter", f"name=^{container_of(user)}$", check=False)
+    return bool(proc.stdout.strip())
+
+
+def container_exists(user: str) -> bool:
+    proc = docker("ps", "--all", "--quiet", "--filter",
+                  f"name=^{container_of(user)}$", check=False)
+    return bool(proc.stdout.strip())
+
+
+def free_port() -> int:
+    """A port the kernel says is free right now.
+
+    Racy in principle; in practice the container binds it moments later and a
+    collision surfaces immediately as a docker error rather than silently.
+    """
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+# ---- commands ---------------------------------------------------------------
+
+def cmd_build(args: argparse.Namespace) -> int:
+    print(f"building {IMAGE} from {REPO_ROOT} ...")
+    subprocess.run(
+        ["docker", "build", "-f", str(REPO_ROOT / "deploy" / "Dockerfile"),
+         "-t", IMAGE, str(REPO_ROOT)],
+        check=True,
+    )
+    print(f"built {IMAGE}")
+    return 0
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    user = check_user(args.user)
+    if container_running(user):
+        info = json.loads(state_file(user).read_text()) if state_file(user).exists() else {}
+        print(f"{user} is already running on port {info.get('port', '?')}")
+        return 0
+    if container_exists(user):
+        docker("rm", "-f", container_of(user))
+
+    port = free_port()
+    # 192 bits, the same shape the daemon mints for itself. The user never
+    # sees this: the proxy injects it server-side.
+    token = secrets.token_urlsafe(24)
+
+    docker("volume", "create", volume_of(user))
+    docker(
+        "run", "--detach",
+        "--name", container_of(user),
+        "--restart", "unless-stopped",
+        # Published to loopback ONLY: the proxy reaches it, the internet does not.
+        "--publish", f"127.0.0.1:{port}:8377",
+        "--volume", f"{volume_of(user)}:/data",
+        "--env", f"SILK_TOKEN={token}",
+        "--memory", MEMORY,
+        "--cpus", CPUS,
+        "--pids-limit", PIDS,
+        # The agent runs arbitrary commands by design; give it nothing extra.
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        IMAGE,
+    )
+
+    STATE.mkdir(parents=True, exist_ok=True)
+    path = state_file(user)
+    path.write_text(json.dumps({"user": user, "port": port, "token": token}, indent=2))
+    path.chmod(0o600)  # the token is a shell credential
+
+    print(f"started {user}: 127.0.0.1:{port} (container {container_of(user)})")
+    print(f"state: {path}")
+    return 0
+
+
+def cmd_stop(args: argparse.Namespace) -> int:
+    user = check_user(args.user)
+    if not container_exists(user):
+        print(f"{user} is not running")
+    else:
+        docker("rm", "-f", container_of(user))
+        print(f"stopped {user}")
+    state_file(user).unlink(missing_ok=True)
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    STATE.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for path in sorted(STATE.glob("*.json")):
+        try:
+            info = json.loads(path.read_text())
+        except ValueError:
+            continue
+        user = info.get("user", path.stem)
+        rows.append((user, str(info.get("port", "?")),
+                     "running" if container_running(user) else "stopped"))
+    if not rows:
+        print("no users started")
+        return 0
+    width = max(len(r[0]) for r in rows)
+    print(f"{'USER'.ljust(width)}  PORT   STATE")
+    for user, port, state in rows:
+        print(f"{user.ljust(width)}  {port:<5}  {state}")
+    return 0
+
+
+def cmd_key(args: argparse.Namespace) -> int:
+    """Store a provider API key in the user's own volume.
+
+    Written inside the volume rather than passed as a container environment
+    variable: an env var shows up in `docker inspect` and in the host's process
+    listing, which puts one user's key in reach of anyone with host access.
+    """
+    user = check_user(args.user)
+    key = args.key or os.environ.get("SILK_API_KEY") or ""
+    if not key:
+        die("no key given: pass it as an argument or set $SILK_API_KEY")
+
+    script = (
+        "import json,os,pathlib,sys\n"
+        "home=pathlib.Path(os.environ.get('SILKCODE_HOME','/data/.silkcode'))\n"
+        "home.mkdir(parents=True,exist_ok=True)\n"
+        "p=home/'config.json'\n"
+        "d=json.loads(p.read_text()) if p.exists() else {}\n"
+        "d.setdefault('providers',{}).setdefault(sys.argv[1],{})['api_key']=sys.argv[2]\n"
+        "d.setdefault('default_model',sys.argv[1])\n"
+        "p.write_text(json.dumps(d,indent=2)+chr(10))\n"
+        "p.chmod(0o600)\n"
+        "print('stored key for '+sys.argv[1])\n"
+    )
+    proc = docker(
+        "run", "--rm",
+        "--volume", f"{volume_of(user)}:/data",
+        "--env", "SILKCODE_HOME=/data/.silkcode",
+        "--entrypoint", "python",
+        IMAGE, "-c", script, args.provider, key,
+    )
+    print(proc.stdout.strip() or f"stored key for {args.provider}")
+    if container_running(user):
+        print(f"restarting {user} so the daemon picks it up ...")
+        docker("restart", container_of(user))
+    return 0
+
+
+def cmd_logs(args: argparse.Namespace) -> int:
+    user = check_user(args.user)
+    if not container_exists(user):
+        die(f"{user} has no container")
+    subprocess.run(["docker", "logs", "--tail", str(args.tail), container_of(user)], check=False)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="silkrun",
+        description="One Silk Code container per user (slice 1: no authentication).",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("build", help="build the runner image").set_defaults(func=cmd_build)
+
+    p = sub.add_parser("start", help="start a user's container")
+    p.add_argument("user")
+    p.set_defaults(func=cmd_start)
+
+    p = sub.add_parser("stop", help="stop and remove a user's container")
+    p.add_argument("user")
+    p.set_defaults(func=cmd_stop)
+
+    sub.add_parser("list", help="show started users").set_defaults(func=cmd_list)
+
+    p = sub.add_parser("key", help="store a provider API key in a user's volume")
+    p.add_argument("user")
+    p.add_argument("provider", help="e.g. deepseek, qwen, kimi, openrouter")
+    p.add_argument("key", nargs="?", help="the API key (or set $SILK_API_KEY)")
+    p.set_defaults(func=cmd_key)
+
+    p = sub.add_parser("logs", help="tail a user's daemon log")
+    p.add_argument("user")
+    p.add_argument("--tail", type=int, default=50)
+    p.set_defaults(func=cmd_logs)
+
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

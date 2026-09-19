@@ -11,6 +11,7 @@ from .base import ChatResult, ModelProvider, ProviderError, ToolCall, Usage
 # type -> "module:class", resolved on first use
 PROVIDER_TYPES = {
     "openai_compat": "openai_compat:OpenAICompatProvider",
+    "anthropic": "anthropic:AnthropicProvider",
     "ollama": "ollama:OllamaProvider",
 }
 
@@ -55,6 +56,15 @@ def build_provider(name: str, cfg: dict, api_key: str | None = None, client=None
         raise ProviderError(
             f"Provider '{name}' has invalid 'retries'/'retry_delay' values"
         )
+    # The Messages API requires max_tokens on every request, so it is a
+    # provider setting rather than something the caller remembers to pass.
+    if ptype == "anthropic" and cfg.get("max_tokens") is not None:
+        try:
+            kwargs["max_tokens"] = int(cfg["max_tokens"])
+        except (TypeError, ValueError):
+            raise ProviderError(
+                f"Provider '{name}' has an invalid 'max_tokens' value: {cfg['max_tokens']!r}"
+            )
     if client is not None:
         kwargs["client"] = client
     return cls(**kwargs)
