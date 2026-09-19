@@ -920,6 +920,54 @@ silkcode . --mode agent -p "fix the failing test" \
   config). The distinction between 1 and 2 matters: a benchmark that counts
   provider outages as failed tasks is measuring its network, not its model.
 
+### Embedding the agent: metering and a spend gate
+
+A harness that runs the agent for *someone else's* money needs two more things,
+and both are constructor arguments on `Agent` rather than global state, so one
+process can host several with different limits.
+
+**`before_model_call`** is asked, immediately before every model call, whether
+the turn may continue. Return `None` to proceed, or a reason to stop:
+
+```python
+def gate():
+    if ledger.spent(user) >= ledger.cap(user):
+        return "Stopped: monthly spend cap reached."
+    return None
+
+agent = Agent(provider, model, workspace, permissions, before_model_call=gate)
+```
+
+The timing is the point. Immediately before a model call is the only clean
+place to stop a turn: the message history is complete — a user turn, or an
+assistant turn with every tool result appended — and no edit is half applied.
+Stopping after the model answers strands tool calls with no results, which the
+next request rejects; stopping mid-tool strands the file being written. A gate
+that raises stops the turn too, because a failing ledger must not read as
+permission to spend.
+
+**The `usage` event** fires once per model call, not once per turn — a turn can
+make many calls, and only per-call figures reconcile against a provider's own
+record:
+
+```python
+def on_event(kind, data):
+    if kind == "usage":
+        ledger.record(user, **data)   # provider, model, session_id, and four
+                                      # token counts
+    elif kind == "stopped":
+        log.info("turn halted: %s", data["reason"])
+```
+
+Cost is deliberately absent: prices belong to whoever is billing. The four
+counts are `prompt_tokens`, `completion_tokens`, `cache_write_tokens` and
+`cache_read_tokens`, kept apart because they are priced differently — a cache
+read costs a fraction of an ordinary input token and a write costs more, so
+summing them would misprice every cached turn.
+
+Passing neither argument leaves the agent unmetered, which is what the CLI and
+the local GUI do.
+
 ### Benchmarks from your own history
 
 Public benchmarks are contaminated — every model has trained on them — and generic.
