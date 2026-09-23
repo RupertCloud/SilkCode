@@ -464,6 +464,7 @@
       <strong>CONVERSATION</strong>
       <select id="session-select" aria-label="Conversation"></select>
       <button id="new-session" aria-label="New conversation" title="Start a new conversation in this project">＋</button>
+      <button id="fork-session" aria-label="Fork conversation" title="Fork this conversation: a new session continues its history (in its own git worktree when possible) while this one stays as it is">⑂</button>
       <button id="close-session" aria-label="Close conversation" title="Close this conversation and release its workspace lock">×</button>
       <span class="conversation-spacer"></span>
       <span class="usage" id="project-load-status" role="status" aria-live="polite"></span>
@@ -1775,6 +1776,12 @@ $("session-select").onchange = async (e) => {
 
 $("new-session").onclick = () => {
   api("/api/session/new", {project: $("project-select").title})
+    .then(state => { currentSessionId = state.session_id; init(); })
+    .catch(err => alert(err.message));
+};
+
+$("fork-session").onclick = () => {
+  api("/api/session/fork", {session_id: currentSessionId})
     .then(state => { currentSessionId = state.session_id; init(); })
     .catch(err => alert(err.message));
 };

@@ -87,8 +87,14 @@ class SessionStore:
                 os.close(fd)
 
     def save(self, data: dict) -> None:
+        # Atomic: write beside, then replace. A crash mid-save must leave the
+        # previous version of the conversation intact, never a half-written
+        # JSON file - sessions are the state users would miss most.
         data["updated"] = time.time()
-        self._path(data["id"]).write_text(json.dumps(data, indent=2))
+        path = self._path(data["id"])
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        os.replace(tmp, path)
 
     def load(self, session_id: int) -> dict:
         path = self._path(session_id)
@@ -159,3 +165,55 @@ def new_session(session_id: int, title: str, model: str, cwd: str, mode: str,
         "created": time.time(),
         "updated": time.time(),
     }
+
+
+def _safe_cut(messages: list[dict]) -> list[dict]:
+    """Trim a message prefix back to a coherent conversation.
+
+    A cut can land inside a tool exchange: trailing tool results whose
+    assistant request was kept, or an assistant message whose tool calls
+    lost their results. Providers reject both, so strip back to the last
+    complete turn - first any trailing tool results, then the assistant
+    message left waiting for them.
+    """
+    end = len(messages)
+    tools = 0
+    while end and messages[end - 1].get("role") == "tool":
+        end -= 1
+        tools += 1
+    last = messages[end - 1] if end else None
+    calls = last.get("tool_calls") if last and last.get("role") == "assistant" else None
+    if calls and len(calls) == tools:
+        return messages[:end + tools]  # a complete exchange ends the cut fine
+    if calls:
+        return messages[:end - 1]  # requests missing (some of) their results
+    return messages[:end]  # stray results with no request above them
+
+
+def fork_session(parent: dict, new_id: int, at_message: int | None = None,
+                 instance: str | None = None) -> dict:
+    """A new session continuing `parent`'s conversation - unreal-agent's fork,
+    on our store: the child copies the parent's history up to a turn boundary
+    and records where it came from, and the two diverge freely from there.
+
+    `at_message` caps how much history is copied (the whole conversation when
+    None); the cut is pulled back to a complete turn either way. The copy is
+    deep: forking must never leave two live sessions sharing message dicts.
+    """
+    import copy
+
+    messages = parent.get("messages") or []
+    if at_message is not None:
+        messages = messages[:max(0, at_message)]
+    messages = copy.deepcopy(_safe_cut(list(messages)))
+    title = parent.get("title") or f"session #{parent.get('id')}"
+    data = new_session(new_id, title=f"⑂ {title}"[:60],
+                       model=parent.get("model", ""), cwd=parent.get("cwd", ""),
+                       mode=parent.get("mode", ""), instance=instance)
+    data["messages"] = messages
+    data["forked_from"] = {
+        "version": 1,
+        "id": parent.get("id"),
+        "at_message": len(messages),
+    }
+    return data
