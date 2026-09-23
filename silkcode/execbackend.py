@@ -51,6 +51,8 @@ class LocalBackend:
                 out_file = open(record.out_path, "w+", errors="replace")
                 err_file = open(record.err_path, "w+", errors="replace")
             except OSError:
+                if out_file is not None:
+                    out_file.close()
                 out_file = err_file = None
         try:
             proc = subprocess.Popen(
