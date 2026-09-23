@@ -10,29 +10,45 @@ CLI or a local GUI.
 > **The coding environment belongs to the developer. The AI model is replaceable.**
 
 The full specification is in [SRS.md](SRS.md). The prioritized roadmap — what
-to build next and why — is in [NEXT_STEPS.md](NEXT_STEPS.md). This implementation
+to build next and why — is in [NEXT_STEPS.md](NEXT_STEPS.md), and the design for
+a fully hosted Silk Code is in [docs/CLOUD.md](docs/CLOUD.md). This implementation
 is V0.1: the Python agent runtime, the CLI, and the GUI (a local web app served
 by the Silk Code daemon — designed to be wrapped in Tauri later, per SRS
 sections 67-68).
 
 ## Install
 
-Without building from source — grab the wheel from the
-[latest release](https://github.com/RupertCloud/SilkCode/releases/latest):
-
 ```bash
-pip install https://github.com/RupertCloud/SilkCode/releases/download/v0.1.0/silkcode-0.1.0-py3-none-any.whl
-# or isolated, with pipx:
-pipx install https://github.com/RupertCloud/SilkCode/releases/download/v0.1.0/silkcode-0.1.0-py3-none-any.whl
+# Recommended: installs Silk Code and its headless Chromium browser together
+curl -fsSLO https://raw.githubusercontent.com/RupertCloud/SilkCode/main/install.py
+python3 install.py
+
+# Windows PowerShell
+curl.exe -fsSLO https://raw.githubusercontent.com/RupertCloud/SilkCode/main/install.py
+py install.py
+
+# Package-only alternatives (run `playwright install chromium` afterwards)
+pip install git+https://github.com/RupertCloud/SilkCode
+pipx install git+https://github.com/RupertCloud/SilkCode
 ```
 
-Or from source:
+Or from a clone, for working on Silk Code itself:
 
 ```bash
-pip install -e .          # from a clone of this repository
+pip install -e .
+# or install the clone plus Chromium into an isolated user environment
+python3 install.py --source .
 ```
 
-Requires Python 3.10+. The only runtime dependency is `httpx`.
+Once a tagged release is published, the wheel from the
+[latest release](https://github.com/RupertCloud/SilkCode/releases/latest) installs the
+same way — `pip install <url-of-the-.whl>` — without needing git on the machine.
+
+Requires Python 3.10+. The runtime dependencies are `httpx` and `playwright` — the
+latter so the agent can look at a page it just wrote (see
+[Seeing the page, not just the source](#seeing-the-page-not-just-the-source)). Its
+browser is a separate download, which is what `install.py` and the
+`playwright install chromium` line above take care of.
 
 ## Quick start
 
@@ -101,31 +117,374 @@ Providers can also be onboarded from the GUI (**+ Add model**).
 
 `--model auto` picks the first available model: a running local server first
 (Ollama, preferring coder models), then cloud providers with an API key configured.
-The order is configurable via `auto_order` in the config file.
+A server linked with `silkcode inference link` goes to the front of that order, so
+`auto` reaches for your laptop when you are on its network and falls through to the
+cloud when you are not. The order is configurable via `auto_order` in the config file.
+
+To run the models on a *different* machine than the one you are typing on — a phone
+driving a laptop's GPU — see
+[Run the model on your laptop, drive it from your phone](#run-the-model-on-your-laptop-drive-it-from-your-phone).
 
 Configuration lives at `~/.silkcode/config.json` (override the directory with
 `$SILKCODE_HOME`).
+
+Per-provider network options in `config.json` (for flaky networks or slow first
+tokens, e.g. DeepSeek):
+
+```json
+{
+  "providers": {
+    "deepseek": {
+      "timeout": 600,
+      "retries": 3,
+      "retry_delay": 1.5
+    }
+  }
+}
+```
+
+**`light_model`** (top-level, e.g. `"light_model": "ollama/qwen2.5-coder"`) runs
+cheap auxiliary work on a cheap model. Today that means compaction checkpoints:
+when a long conversation is trimmed to fit the context window, the dropped turns
+are summarized into a structured checkpoint (user constraints marked
+active/satisfied/superseded; unverified outcomes labeled *reported, not
+verified*) instead of vanishing. Unconfigured, nothing changes and nothing
+silently spends main-model tokens on summaries — compaction stays mechanical.
+
+`timeout` is the per-request (connect + read) limit in seconds (default 180).
+- `retries` (default 2) — how many times a *transient* failure is retried before
+  giving up. Transient means a network timeout/connection drop (`Operation timed
+  out`, `Connection reset`) or a `429`/`5xx` provider response. A client `4xx`
+  (bad key, bad request) is a problem with the request and is never retried.
+- `retry_delay` (default 1.0s) — the base backoff between attempts; it doubles
+  each retry (1s, 2s, 4s, …). For streaming, a request is only re-sent while no
+  response has arrived yet — once tokens are streaming out, a mid-stream drop is
+  surfaced as an error rather than replaying duplicate output.
+
+## Run the model on your laptop, drive it from your phone
+
+The phone is a good place to *drive* a coding agent and a poor place to *run* the
+model: the laptop already has the RAM, the GPU and the weights on disk. Silk Code
+links the two, so the agent runs where you are typing and the tokens are generated
+where the hardware is.
+
+Both machines need to be on the same network — the same Wi-Fi, or a private mesh
+like Tailscale (that address works here too).
+
+**On the laptop** (the one with the model), start your server and ask Silk Code
+what the phone needs:
+
+```bash
+ollama serve                    # or LM Studio / vLLM / llama.cpp
+silkcode inference host
+```
+
+Local model servers ship bound to `127.0.0.1` — the right default, and the exact
+reason a phone on the same Wi-Fi gets *connection refused*. `inference host`
+checks whether each running server is actually reachable from the network, and
+prints the one command that opens it if not:
+
+```
+This machine is reachable at: 192.168.1.20
+
+  port 11434 (ollama) is running, but only on 127.0.0.1 - nothing else can reach it
+    restart it listening on every interface:  OLLAMA_HOST=0.0.0.0:11434 ollama serve
+```
+
+Run that, run `silkcode inference host` again, and it hands you the address:
+
+```
+  http://192.168.1.20:11434    ollama    4 models - reachable from the network
+
+On the phone, run:
+  silkcode inference link http://192.168.1.20:11434
+```
+
+**On the phone** (Termux, or any second machine), find it and link it:
+
+```bash
+silkcode inference discover                          # sweep this network
+silkcode inference link http://192.168.1.20:11434    # or just: 192.168.1.20
+silkcode                                             # that laptop now serves the session
+```
+
+`link` probes the address before saving it, picks a sensible default model (a coder
+model if there is one, never an embedding model), and stores it as an ordinary
+provider named `laptop` — so `--model laptop`, `/model laptop/<model>`, the GUI's
+model selector and `silkcode models` all pick it up with no further setup.
+
+It also puts the laptop at the front of the `auto` router, which means **you can
+leave the house without reconfiguring anything**: `--model auto` tries the laptop
+first and falls through to your cloud providers when it does not answer.
+
+**The direct-to-provider path is untouched.** Linking a laptop adds a provider, it
+does not replace any — Silk Code still talks straight to DeepSeek, Kimi, GLM,
+MiniMax, Qwen, OpenRouter and Cloudflare exactly as before, and every
+`inference` command prints which of them are ready to take over:
+
+```
+Direct to a cloud provider: deepseek
+  available at any time:  silkcode --model deepseek
+  not set up: qwen, kimi, glm, minimax, openrouter, cloudflare   (silkcode models shows what each needs)
+```
+
+So you can mix freely — a local model on the laptop for the fast, private,
+free-to-run turns, and a frontier cloud model for the hard ones:
+
+```bash
+silkcode --model laptop/qwen2.5-coder:7b    # the laptop's GPU
+silkcode --model deepseek                   # straight to DeepSeek, as always
+silkcode --model kimi                        # straight to Kimi
+silkcode --model auto                        # laptop if it answers, cloud if it does not
+```
+
+Or switch mid-session with `/model <spec>`, without restarting.
+
+```bash
+silkcode inference                 # what is linked, and is it up right now?
+silkcode inference ping            # round-trip latency to the server
+silkcode inference ping --chat     # ... and time a real turn through the model
+silkcode inference unlink          # go back to local/cloud models
+```
+
+`ping` and `ping --chat` answer two different questions, and the gap between them
+is where the surprises live: a laptop answers a model listing in a millisecond and
+can still take half a minute to produce a first token while it pages a 30B model in
+from disk. `--chat` sends a real prompt and times the whole round trip.
+
+Useful flags:
+
+| Flag | What it does |
+| --- | --- |
+| `link --name <n>` | save it as something other than `laptop` (link several machines) |
+| `link --model <m>` | choose the default model instead of letting Silk Code pick |
+| `link --token-env VAR` | send a bearer token, for a server behind an authenticating proxy |
+| `link --timeout 600` | raise the request timeout for a big model that loads cold |
+| `link --force` | save an address that is not answering yet (the laptop is asleep) |
+| `discover --host H` | check one host instead of sweeping the subnet |
+| `discover --port P` | try an extra port beyond the ones Silk Code knows |
+
+Discovery sweeps the current `/24` for the ports these servers use — 11434
+(Ollama), 1234 (LM Studio), 8000 (vLLM), 8080 (llama.cpp), 5001 (KoboldCpp) — and
+probes whatever answers.
+
+> Anything you expose this way is unauthenticated unless you put a proxy in front
+> of it. Keep it to networks you trust, or use a private mesh (Tailscale/WireGuard)
+> rather than forwarding a port on your router.
+
+If you would rather keep Silk Code itself on the laptop and just *drive* it from the
+phone, that is the mirror image of this section — see
+[Run the agent on your laptop, open it on your phone](#run-the-agent-on-your-laptop-open-it-on-your-phone).
+
+## Run the agent on your laptop, open it on your phone
+
+The mirror image of the section above, and worth keeping straight:
+
+| | Where Silk Code runs | Where the model runs | Where you type |
+| --- | --- | --- | --- |
+| [`silkcode inference`](#run-the-model-on-your-laptop-drive-it-from-your-phone) | phone | laptop | phone |
+| `silkcode gui --host 0.0.0.0` | laptop | laptop or cloud | phone browser |
+
+Here the agent runs on your laptop —
+where your files, credentials, build tools and environment variables already
+are — and you drive it from a phone browser. Nothing is uploaded anywhere and
+no third party sits in the path.
+
+```bash
+# on the laptop
+silkcode gui ~/my-project --host 0.0.0.0
+```
+
+Because that is reachable beyond the machine, Silk Code generates an access
+token and prints the addresses another device can open, plus a QR to point a
+camera at instead of retyping a 32-character token:
+
+```
+This daemon is reachable beyond this machine, so it requires an access token.
+
+Silk Code GUI: http://localhost:8377/?token=JkdF8ZOnXtACibWY83liacawnDmg3u3G
+
+Reachable from another device:
+  http://100.101.102.103:8377/?token=JkdF8ZOnXtACibWY83liacawnDmg3u3G
+      Tailscale - works from anywhere on your tailnet
+  http://192.168.1.20:8377/?token=JkdF8ZOnXtACibWY83liacawnDmg3u3G
+      LAN - same network only
+
+Point a phone camera at this to open it (Tailscale):
+
+    █████████████████████████
+    ██ ▄▄▄▄▄ █▄▀█▀▄█ ▄▄▄▄▄ ██
+    ██ █   █ █ ▄ █ █ █   █ ██
+    ██ █▄▄▄█ █ ▀▄▀▄█ █▄▄▄█ ██
+    ██▄▄▄▄▄▄▄█▄█ █▄█▄▄▄▄▄▄▄██
+    …
+```
+
+Scan it and the session opens on the phone: same conversation, same files,
+same git diff, with the agent still running on the laptop.
+
+**Pairing another device later.** That banner prints once, at startup. When the
+terminal has scrolled, or a second phone turns up, the **📱 Pair** button in the
+GUI shows the same QR and addresses on demand — no restart. If the daemon is on
+loopback it says so, and tells you to restart with `--host 0.0.0.0`, because
+there is nothing to pair with until then.
+
+**The token survives a restart.** It is remembered per address in
+`~/.silkcode/gui-tokens/` (owner-readable only), so a URL already open on a phone
+keeps working after the daemon re-execs itself to apply an update. It used to mint a
+fresh token on every restart and answer that tab with *"Unauthorized … open the URL
+printed when it started"* — a URL printed on the laptop you are not holding. Delete the
+file to rotate, or pass `--token` to pin one you choose.
+
+**Reaching it from anywhere.** A `192.168.x.y` address only resolves while both
+devices are on the same router. Put both machines on a
+[Tailscale](https://tailscale.com) tailnet and the `100.x` address keeps working
+from cellular or someone else's Wi-Fi — Silk Code detects that address
+(Tailscale allocates from `100.64.0.0/10`), labels it, lists it first, and puts
+*it* in the QR. Where Tailscale offers a **MagicDNS name** the URL uses that
+instead — `http://laptop.tail1a2b3.ts.net:8377/…` survives the node being
+re-addressed and can be read off a screen; four octets cannot.
+
+Silk Code never installs, starts or manages Tailscale — `tailscale up` joins a
+network and changes how a machine is reachable, which is your decision. It does
+read the state, so the advice fits the situation rather than being the same
+sentence three times:
+
+| What it finds | What it says |
+| --- | --- |
+| no `tailscale` command | install it on both machines, sign into the same account |
+| installed, never signed in | `tailscale up`, then sign in on the phone too |
+| installed, signed in, stopped | `tailscale up` |
+| running | the address works from anywhere; check the phone is on the same account |
+
+Any WireGuard mesh handing out `100.64.0.0/10` addresses is treated the same
+way — the check is on the range, not on Tailscale.
+
+**The phone layout.** The desktop GUI is a three-column grid; below 820px it
+becomes one pane at a time with a switcher — Chat, Project, Activity, Diff —
+and the composer pinned within thumb reach.
+
+### What guards it
+
+The token is the only thing between the network and an agent that runs commands
+on your machine, so treat that URL as a shell credential.
+
+| Control | What it does |
+| --- | --- |
+| Access token | 192 bits from `secrets.token_urlsafe`, required on every request once the daemon is off loopback. Compared in constant time. |
+| Same-origin check | A browser attaches `Origin` to cross-origin requests; one that disagrees with the `Host` we were reached on is refused, so another site cannot start an agent turn on your behalf. |
+| DNS-rebinding guard | Decided on the *parsed* address, not the spelling — a name like `127.0.0.1.evil.example` resolves to loopback and would fool a prefix match. |
+| Cookie flags | `HttpOnly`, `SameSite=Strict`, so script cannot read the token and another site cannot ride the cookie. |
+| `Referrer-Policy: no-referrer` | The page is opened as `/?token=…` and links out; this stops the query reaching a third party rather than relying on a browser default. |
+| `X-Frame-Options: DENY`, `nosniff` | Not framed, not sniffed into another content type. |
+| Path confinement | File reads resolve and must sit under the workspace root. |
+| No request logging | The HTTP access log is off, so a token in a query string never lands in a log file. |
+
+**Two things it does not do**, worth knowing before you expose it:
+
+- **Traffic is plain HTTP.** On a tailnet WireGuard encrypts it; on open Wi-Fi
+  the token crosses the air in the clear. Prefer the tailnet.
+- **There is no rate limit.** A 192-bit token is not brute-forceable, so the
+  answer to knocking is visibility rather than lockout — see below.
+
+### Watching who connects
+
+`⚙ Environment → Connections` shows who is reaching the daemon:
+
+```
+1 active · 1 live stream · 4 refused requests
+
+ADDRESS         REQUESTS  REFUSED  CLIENT                    LAST SEEN
+100.101.102.103 ●     128        0  Mozilla/5.0 (iPhone…)     0s ago
+192.168.1.44           4        4  curl/8.4.0                12s ago
+
+Most recent refusals
+  192.168.1.44  token did not match  /api/state
+  192.168.1.44  no token presented   /
+```
+
+The daemon also says something on its own terminal the first time an address is
+refused, and again at 5, 25 and 100 — enough to notice a scanner, not enough to
+let one fill your scrollback:
+
+```
+refused 192.168.1.44 (once): no token presented on / [curl/8.4.0]
+```
+
+Presented tokens are never recorded, right or wrong: a wrong one is usually a
+real credential with a typo, or the right credential for a different daemon, and
+the record is rendered in a web page. Client strings are attacker-chosen, so they
+are capped, flattened to one line, and escaped at render. Rows are keyed by
+address, so devices behind one NAT share a row.
+
 
 ## CLI
 
 ```bash
 silkcode [path] [--model M] [--mode ask|edit|agent]   # interactive REPL
 silkcode -p "add input validation to the API" .       # one-shot, non-interactive
+silkcode new [name] [--template T] [--dir D]          # create a new project
 silkcode gui [path] [--port N]                        # local GUI
 silkcode review [path]                                # AI review of uncommitted changes
 silkcode models [add|pull|default]                    # provider/model management
+silkcode inference [discover|link|ping|host]          # run the models on another machine
 silkcode swarm [path] [--model M] [...]               # multi-agent improvement loop
 silkcode update [--branch B]                          # pull updates, hot-apply them
+silkcode -update                                     # any verb also works as a flag
 silkcode sessions                                     # list saved sessions
 silkcode resume <id>                                  # continue a session (GUI or CLI)
 silkcode test [path] [--command CMD]                  # run the project's tests (auto-detected)
 silkcode mcp [add|remove]                             # manage MCP servers
 silkcode connect github                               # set up GitHub access
 silkcode config                                       # show configuration
+silkcode version [--json]                             # what this install is
 ```
 
-REPL commands: `/model`, `/models`, `/mode`, `/project`, `/diff`, `/usage`, `/revert`,
-`/clear`, `/sessions`, `/help`, `/exit`.
+REPL commands: `/model`, `/models`, `/mode`, `/new`, `/project`, `/diff`, `/usage`,
+`/revert`, `/clear`, `/sessions`, `/help`, `/exit`.
+
+### Starting a new project
+
+`silkcode new` scaffolds a project that runs and tests on the first try — source,
+a test suite the runner already recognizes, a README, a `.gitignore`, and a
+`SILKCODE.md` with project instructions the agent reads on every turn. It then
+runs `git init` and makes the initial commit.
+
+```bash
+silkcode new --list                                   # show the templates
+silkcode new todo-cli --template python-cli           # ~/…/todo-cli, git-initialized
+silkcode new site -t web --dir ~/code                 # choose where it lands
+silkcode new api --describe "Invoice API for freelancers"
+silkcode new api -p "add a health endpoint and a test for it"   # build it out
+silkcode new api --open                               # create, then open the REPL in it
+silkcode new                                          # prompts for name and template
+```
+
+| Template | What you get |
+| --- | --- |
+| `python` (default) | package + `pyproject.toml` + pytest suite |
+| `python-cli` | argparse entry point, `[project.scripts]`, pytest suite |
+| `node` | ES-module package with a `node:test` suite (`npm test`) |
+| `web` | static HTML + CSS + JS, no build step |
+| `blank` | README, `.gitignore`, `SILKCODE.md` only |
+
+Names are slugified (`"My New App"` → `my-new-app`) and the package identifier
+follows (`my_new_app`). An existing non-empty directory is refused unless you pass
+`--force`, and even then existing files are never overwritten. `--no-git` skips the
+repository, scaffolding inside an existing checkout does not bury a nested one, and
+a missing git or unset committer identity degrades to a warning rather than losing
+the files.
+
+In the REPL, `/new <name> [template]` does the same thing and switches the session
+to the new project (created next to the current one, not inside it); `/new` with no
+arguments prompts. Either way the project is added to your recent projects, so the
+GUI's ＋ modal and `/project` offer it later.
+
+**The full how-to** — creating, opening, switching, teaching the agent about a codebase,
+verifying and shipping it, remote/sandboxed projects, and troubleshooting — is at
+[silkcode.web.app/projects.html](https://silkcode.web.app/projects.html)
+([source](docs/projects.html)). The same guide is built into the GUI: the **? How-to**
+button in the PROJECT pane.
 
 **Open a different project mid-session:** `/project` prompts you to pick a project for
 the session — either a GitHub repository you have access to (cloned for you into
@@ -146,11 +505,24 @@ see below), and a **↻ Update** button (self-update, see below).
 switch between them with the session picker — each has its own agent, model choice,
 workspace (project), transcript, and checkpoints, and turns can run concurrently
 (⏳ marks a busy session; permission prompts from any session reach you wherever you
-are). The ＋ button first asks which **project** to run the new session on: pick a
-GitHub repository (cloned for you into `~/.silkcode/projects/`) or type a local
-directory, so different sessions can work on different codebases side by side.
+are). **Project** is a control in the header, beside Session, Model and Mode: it lists the
+project you are on, every project you have sessions in, and the ones you opened
+before. Choosing one **moves this session** — the conversation, checkpoints and usage
+come with you, and the workspace lock moves too. That is what `/project` has always
+done in the REPL. The ＋ button opens the same picker for a *new* session instead, so
+different sessions can work on different codebases side by side. Either way you can
+pick a GitHub repository (cloned for you into `~/.silkcode/projects/`) or type a local
+directory.
 Sessions are saved to the same store as the CLI — resume any of them from the picker
 or with `silkcode resume <id>` (SRS section 47).
+
+The picker lists the sessions of the project you have open, and follows you when you
+switch to a session on another project. Sessions are stored per machine rather than
+per project, so an unscoped list mixed every repository you had ever opened into
+every switcher. Nothing is hidden away, though: when other projects have sessions,
+the last entry says how many and where, and choosing it regroups the list by project
+so you can jump straight to one. `silkcode sessions` in the terminal is
+machine-wide and still lists all of them.
 
 **Multiple GUI instances on one machine:** run one daemon per project and address —
 each instance gets its own port (and optionally its own bind address):
@@ -192,12 +564,106 @@ suite is already green, the read-only tester is skipped (2 agents per round
 instead of 3) unless you pass `--no-skip-tester`. Scores and per-iteration
 traces are saved under `~/.silkcode/swarm/`.
 
+### Define your own roles
+
+The role prompts are defaults, not law. A markdown file in
+`~/.silkcode/agents/` (user) or `<project>/.silkcode/agents/` (project wins)
+redefines a role, using the same frontmatter convention as skills:
+
+```markdown
+---
+name: critic
+description: Reviews with our house style in mind
+model: deepseek        # optional: pin this role to a model
+---
+You are the CRITIC. Weigh maintainability above all...
+```
+
+A file named for a built-in role (`tester`, `critic`, `worker`, `business`,
+`user`, `designer`, `head`, `developer`) replaces that role's prompt. A file
+with a *new* name adds a read-only specialist to the team's discovery phase —
+a `security.md` reviewer, a `perf.md` analyst. List them with `/agents`.
+
+Two limits are deliberate. A custom-named role is always read-only — a
+repository file cannot introduce a new writer into the swarm. And every
+definition body goes through the same scan as any other repository text
+(*Who asked for this?* below): one that reads as prompt injection is not
+loaded, and you are told.
+
 In the GUI, the **🐝 Swarm** button runs the same loop with live progress, a
 score-history chart, a pipeline phase indicator, and per-role token stats. The
 worker asks you before modifying files or running commands — pick **Yes to all**
 on a permission prompt to let it run unattended for the rest of the session.
 
 ## Self-update
+
+```bash
+silkcode update              # pull the latest code into this install
+silkcode -update             # same thing; the verb also works as a flag
+silkcode update --branch main
+silkcode update --install    # also run `pip install -e .`, for new dependencies
+silkcode update --force      # update even with a dirty working tree
+```
+
+Every subcommand also answers to its flag form — `-update`, `--update`, `-models`,
+`--gui` — because plenty of tools take their verbs that way and typing
+`silkcode -update` used to produce `unrecognized arguments: -update` with no hint
+that `silkcode update` was the same command. The handful of flags the REPL itself
+defines keep their own meaning: `--sandbox` still runs the REPL against the
+configured sandbox rather than opening the `sandbox` command, and `--version`
+stays the one-line build id rather than the full `silkcode version` report.
+
+How the update happens depends on how Silk Code was installed, and it works out
+which on its own:
+
+| Install | What `silkcode update` does |
+| --- | --- |
+| a clone, or `pip install -e .` | fast-forwards the checkout to `origin/<branch>` |
+| `pip install git+https://…` | reinstalls from the same URL and revision pip recorded |
+
+The second case matters because it is the install the top of this README leads
+with, and it carries no git metadata. Silk Code reads pip's own
+[PEP 610](https://peps.python.org/pep-0610/) `direct_url.json` record to recover
+the URL and branch you installed from, then reinstalls from exactly that. (There
+is no `silkcode` package on PyPI, so `pip install -U silkcode` is not a fallback —
+it is a 404.)
+
+A git checkout only ever fast-forwards: a dirty tree or local-only commits are
+reported rather than overwritten, so nothing is lost and nothing is force-reset.
+A running GUI daemon watches the checkout's HEAD and re-execs itself once new
+code lands, so the update goes live without a manual restart — sessions are
+persisted on disk and survive it.
+
+### Resyncing a branch that moved
+
+A session can hold a workspace for hours while the branch changes underneath
+it — a teammate pushes, the base branch advances, a pull request is merged.
+
+```
+silkcode sync                # fetch and report; changes nothing
+silkcode sync --apply        # fast-forward, or merge if both sides moved
+```
+
+It exits non-zero when the branch needs attention, so it composes:
+`silkcode sync || silkcode sync --apply`.
+
+The case it exists for is the one `git status` describes misleadingly. After a
+squash merge your branch is "ahead" — those commits genuinely are not on the
+base — but the *work* is already there under the squashed commit. Merging
+produces a confusing duplicate; the branch should restart from the base. Sync
+tells the two apart by comparing trees rather than commits, and says so:
+
+```
+branch feature · tracking origin/feature · 8 ahead of origin/main
+· already merged into origin/main
+suggested: restart — this branch's work is already in origin/main under a
+different commit (a squash merge) …
+```
+
+Restarting moves the branch pointer, so it needs `--restart` explicitly.
+Nothing here discards work: uncommitted changes stop it, and a conflicted
+merge is reported rather than guessed at. The agent has the same thing as the
+`git_sync` tool, so it can check before committing on a stale base.
 
 `silkcode update` fast-forwards the installed checkout to the latest code from
 its git remote (refuses on a dirty tree or non-fast-forward; `--force` overrides
@@ -212,18 +678,65 @@ A running GUI daemon watches the checkout's HEAD and, once new code lands (and
 it is idle — no session or swarm running), re-execs itself with the same
 arguments so the update goes live without a manual restart. Sessions are
 persisted on disk and survive the restart; the browser reloads automatically.
-This works for git-checkout installs (a clone or `pip install -e .`); wheel
-installs carry no git metadata, so update those with `pip install -U silkcode`.
 The GUI's **↻ Update** header button does the same thing.
+
+For an install that is not a git checkout — `pip install git+…`, or a release wheel —
+one line updates it from anywhere:
+
+```bash
+pip install --upgrade --force-reinstall git+https://github.com/RupertCloud/SilkCode
+```
+
+`silkcode update` does this for you, reinstalling from wherever pip originally got it.
+Run it by hand if your copy predates that support: an install whose updater refuses to
+run cannot fetch the fix for its own updater.
+
+`--force-reinstall` is the belt-and-braces form and always works. Plain `--upgrade` is
+enough once you are on a build whose version moves with each commit (see below) —
+before that, pip sees the same version number and does nothing at all, reporting
+success.
+
+### Which version am I running?
+
+Because `silkcode update` pulls whatever is on the remote, the release number
+alone identifies nothing — everyone tracking `main` runs different code while
+`__version__` says the same thing. So a build id is the release plus, on a
+checkout, the commit it sits on:
+
+```bash
+silkcode --version          # Silk Code 0.2.1.dev7+g9ccde8e
+silkcode version            # + commit, branch, install path, Python, platform
+silkcode version --json     # the same, for a bug report or a script
+```
+
+| Build id | Means |
+| --- | --- |
+| `0.2.0` | a released wheel — exactly what was tagged |
+| `0.2.1.dev7+g9ccde8e` | seven commits past `v0.2.0`, on that commit |
+| `0.2.0+gd4e5f6a` | a checkout sitting on commit `d4e5f6a` |
+| `0.2.0+gd4e5f6a.dirty` | …with uncommitted changes on top |
+
+The number is derived from git tags, so it **moves on its own between releases**. That
+is not cosmetic: `pip install -U` reads the version to decide whether there is anything
+to fetch, so a version that never changes makes every upgrade a silent no-op.
+
+`silkcode version` also names the right way to upgrade *this* install, which
+differs between the two. The GUI page carries the build of the daemon that
+served it, so a tab left open across an update notices it has gone stale and
+says so instead of quietly running against newer server code.
 
 ## Project instructions, memory, and skills
 
 - **`SILKCODE.md`** at the repository root is loaded automatically into the agent's
   context — put your project rules there ("Use TypeScript", "run tests after auth
   changes", ...).
-- **Project memory** lives in `.silkcode/memory.md`: the agent records durable notes
-  with its `remember` tool (checkpointed and revertable like any write); inspect it
-  with `/memory` or edit the file directly.
+- **Project memory** is a typed store in `.silkcode/memory.db`: the agent records
+  durable notes with its `remember` tool as *preferences*, *facts*, *procedures* or
+  *failures*. Repeating a note refreshes it, restating one replaces it (the old record
+  is kept, marked superseded), and writes are checkpointed and revertable like any
+  other. `.silkcode/memory.md` is a generated, human-readable rendering of the store —
+  inspect it there or with `/memory`; a hand-written `memory.md` from an older Silk
+  Code is imported automatically.
 - **Skills** are markdown files in `~/.silkcode/skills/` (user) or
   `<project>/.silkcode/skills/` (project overrides user). Optional frontmatter gives a
   `name:` and `description:`; the agent sees the list and loads one with `use_skill`
@@ -358,6 +871,30 @@ mode follows the paired-comparison design used by harness-evaluation protocols
 (e.g. Nimbalyst's): same task, model, prompts, and permissions in both conditions, so
 the delta isolates the harness's contribution.
 
+### Driving Silk Code from an external harness
+
+The built-in benchmark measures models; an external harness (Terminal-Bench,
+SWE-bench, a CI job comparing two agents) measures *the whole run*, and it needs
+three things from the agent it drives — a structured trace, the final answer
+separated from streamed noise, and an exit code it can branch on without parsing
+anything. One-shot mode provides all three:
+
+```bash
+silkcode . --mode agent -p "fix the failing test" \
+    --trace run.jsonl \
+    --final-answer answer.txt \
+    --check "pytest -q"
+```
+
+- `--trace` writes JSONL, one event per line (`tool_start`, `tool_result`,
+  folded `text`, and a final `done` with token totals and wall time), flushed
+  as written so a killed run still leaves its events.
+- `--check` runs a verification command in the workspace after the turn.
+- The exit code is the contract: **0** the run completed and the check passed,
+  **1** the check failed, **2** the harness's fault domain (provider down, bad
+  config). The distinction between 1 and 2 matters: a benchmark that counts
+  provider outages as failed tasks is measuring its network, not its model.
+
 ### Benchmarks from your own history
 
 Public benchmarks are contaminated — every model has trained on them — and generic.
@@ -402,6 +939,148 @@ silkcode env --set deepseek      # store a key (read from $SILKCODE_KEY or promp
 silkcode env --clear deepseek    # remove a stored key
 ```
 
+## Isolated sessions: a fork, not your checkout
+
+`silkcode --isolated` runs the session in a throwaway git worktree forked from
+`HEAD` on its own `silk/<stamp>` branch. The agent edits, branches, and commits
+there; your working tree — including uncommitted changes, which the fork
+deliberately does not see — stays exactly as you left it.
+
+At session end, cleanup errs toward keeping work: commits on the branch keep the
+worktree (and the exit message names the `git merge silk/<stamp>` that lands
+them); uncommitted changes keep it too; only a clean, unused fork is removed,
+branch and all. Outside a git repository — or in one with no commits yet —
+`--isolated` refuses with the reason rather than quietly running unisolated:
+someone who asked for isolation must never get a silent live mount instead.
+
+## Fork a conversation, and what survives a crash
+
+The ⑂ button (or `POST /api/session/fork`) forks the current conversation:
+a new session continues its history while the original stays exactly as it
+is — try two approaches from the same point, keep the winner. The cut always
+lands on a complete turn, never inside a tool exchange, and the fork records
+its parent. In a git repository the fork also gets its own isolated worktree
+on a `silk/<stamp>` branch (the `--isolated` machinery), so the two lines
+diverge on disk as well as in conversation; merging the winner back is one
+`git merge silk/<stamp>`.
+
+Crashes are accounted for honestly. Session saves are atomic — a crash
+mid-save keeps the previous version of the conversation, never a half-written
+file. And every locally-run command leaves a durable record in
+`.silkcode/inflight/` while it runs: if Silk Code dies mid-`pytest` (the
+laptop sleeps, the daemon is killed), the next session in that workspace says
+what was in flight, which of two fates it met — *never started* or
+*interrupted before an exit status was recorded* — and the tail of whatever
+output was captured, instead of knowing nothing. Reported once, then cleaned
+up; a completed command leaves no trace.
+
+## The project as a graph
+
+Silk Code adopts [graphify](https://github.com/Graphify-Labs/graphify): the
+project parsed into a knowledge graph with tree-sitter — deterministic, local,
+**no model call**, nothing leaves the machine. We verified it on this repository
+before adopting it (3,273 nodes in 6.5 seconds, with `affected` answers that
+matched our own tests' imports exactly).
+
+The agent gets four tools: `graph_build` parses the project (it writes
+`graphify-out/` into the tree, so it goes through the permission gate like any
+command), then `graph_query`, `graph_explain`, and — the one that earns its
+keep — **`graph_impact`**: the blast radius of changing something, every caller
+and importer with file:line anchors, checked *before* a refactor instead of
+discovered after. The query tools never auto-build: a read-only tool that
+quietly writes on first use has lied about what it is.
+
+The **Graph** tab in the GUI's details drawer is the user-facing half: how big
+the platform you built has grown (concepts, connections, files), what
+everything flows through (the hubs, ranked), and how much of the map was read
+directly from source versus inferred — plus the interactive clickable map
+(`graphify-out/graph.html`) served at `/graph-view`.
+
+Graphify is installed by `install.py` alongside Chromium, but is not a wheel
+dependency — fifteen tree-sitter grammars is a lot to charge a bare
+`pip install silkcode` for. Without it, every entry point explains the one
+command (`pip install graphifyy`) instead of failing.
+
+## Fresh documentation, replaceable vendor
+
+A model's knowledge of a library ends at its training cutoff; after that it
+hallucinates the API from stale weights. The `search_docs` tool fixes that with
+retrieval: it queries an index of current developer artifacts — READMEs, docs
+sites, GitHub issues, API specs — and hands the model ranked passages.
+
+The first backend is [Firecrawl's developer index](https://firecrawl.dev); setting
+`FIRECRAWL_API_KEY` is all it takes. But the vendor is replaceable, the same way
+the model is — any endpoint speaking a two-line contract is a backend:
+
+```json
+"doc_search": {"type": "firecrawl", "api_key_env": "FIRECRAWL_API_KEY"}
+"doc_search": {"type": "http", "base_url": "https://your-index/search"}
+```
+
+(The `http` backend POSTs `{"query", "limit"}` and expects
+`{"results": [{"title", "url", "snippet"}]}` — a self-hosted index or an internal
+wiki fits in an afternoon.)
+
+Three properties are deliberate:
+
+- **Private by default.** Configure nothing and export nothing, and no query
+  ever leaves the machine — the tool explains what to set instead of failing.
+- **A search is an outward act.** The query is derived from your private work,
+  so it goes through the permission gate classified like `curl`: prompted in
+  `ask`/`edit`, unprompted in `agent`, refused in `plan` mode — plan mode's
+  promise is that nothing leaves the machine without a decision.
+- **Results are data, never instructions.** What comes back is text other
+  people wrote — GitHub issues are a classic injection vector — and it re-enters
+  the conversation as a tool result, which the provenance boundary already
+  records and scans (*Who asked for this?* below).
+
+## Seeing the page, not just the source
+
+An agent that writes a web page cannot tell whether it works. Reading the source shows
+what was written, not what happens — a mistyped id, a stylesheet that 404s, a table that
+pushes the layout sideways on a phone are all invisible in the file and obvious the
+moment something renders it.
+
+`live_server` serves the workspace so *you* can watch it reload. `review_url` is the
+other half: it opens a URL in headless Chromium and reports what a browser sees.
+
+```text
+SILKCODE_IMAGE:.silkcode/reviews/page-1755912000.png
+GET http://127.0.0.1:8000/ -> 200
+title: 'Pricing'
+viewport: 390x844
+
+problems (3):
+  ! page scrolls sideways by 1210px at 390px wide
+  ! 404: http://127.0.0.1:8000/styles/main.css
+  ! uncaught Cannot read properties of null (reading 'addEventListener')
+
+screenshot saved: .silkcode/reviews/page-1755912000.png
+(an image, so it is for the person reading this — the report above is what describes the page)
+
+visible text:
+Pricing
+…
+```
+
+Three real faults, none of them visible in the source, found in about a second. Pass
+`mobile=true` for a phone viewport (390×844).
+
+The report is **text on purpose.** A screenshot cannot reach the model: the provider
+layer carries strings, and most coding models have no vision. One is still saved and
+shown inline in the GUI *for you* (into `.silkcode/reviews/`, which is self-ignoring),
+and the report names the file and says plainly that it is for the reader, rather than
+implying the model looked at it.
+
+Playwright is a runtime dependency; its browser is a separate download, so if
+`playwright install chromium` has never been run, `review_url` says exactly that instead
+of failing obscurely.
+
+A page on this machine is reviewed without ceremony; a URL that leaves the machine goes
+through the permission gate, classified like `curl`, and only `http`/`https` are opened —
+a browser will read the filesystem given `file://`, and reading files is what the
+workspace-confined file tools are for.
+
 ## Context management
 
 The full conversation is sent to the model each turn. When the estimated size
@@ -418,8 +1097,28 @@ medium-risk commands (installs, branch switches) need approval unless you are in
 `agent` mode; high-risk commands (`rm -rf`, `git push`, destructive checkouts,
 `sudo`, ...) always require explicit approval, in every mode.
 
-Modes (SRS section 31): `ask` (approve everything), `edit` (file edits are free,
-commands ask), `agent` (autonomous except high-risk).
+Modes (SRS section 31): `plan` (read-only — see below), `ask` (approve everything),
+`edit` (file edits are free, commands ask), `agent` (autonomous except high-risk).
+
+### Plan first, build second
+
+For work with enough steps to lose track of, the plan is a file, not a message:
+the agent writes it to `.silkcode/plan.md` with `propose_plan` and checks steps
+off with `update_plan` as it executes, so progress survives new turns and context
+compaction — and you can open the file, reorder steps, or add a note by hand.
+A step can carry its own acceptance criterion (`step => how you know it's done`,
+rendered as a `(done when: …)` line), and the plan an end-to-end `Verify:` recipe;
+marking a step done echoes its criterion back, and finishing the last step
+surfaces the end-to-end check — the half a checklist usually forgets.
+
+`plan` mode makes the proposal phase safe to leave unattended: writes and non-read
+commands are **refused outright rather than prompted for** — the mode exists so
+you are not fielding approval prompts for actions you have not decided to take.
+The one write allowed is into `.silkcode/` state, which is where the plan itself
+(and memory) live: proposing is the point. Approving is a human act — read the
+plan, switch to `edit` or `agent`, and the agent works through the checklist.
+"Yes to all" does not override plan mode's refusals: they are not prompts, and
+leaving plan mode is a decision, not an answer.
 
 The GUI's permission prompt also offers **Always** (approve this kind of request
 for the session — all writes, or one command) and **Yes to all** (approve every
@@ -430,6 +1129,40 @@ asks the user the same way instead of auto-approving.
 Before every automated file modification Silk Code snapshots the file; `/revert` (CLI)
 or **Revert** (GUI) restores the last turn's changes (SRS section 28).
 
+### Who asked for this?
+
+Only you can authorize a consequential action. Everything the agent reads on the
+way — a file, command output, a fetched page, an MCP result — is data: it can
+describe an action and suggest one, but it cannot authorize it. A repository whose
+README carries an HTML comment addressed to the assistant, telling it to disregard
+its instructions and push, is describing what its author wants — not what you asked
+for. (Spelled out rather than quoted here on purpose: a doc that carries a working
+payload poisons every agent that reads it, including the ones helping you.)
+
+So every permission prompt now shows what you actually asked and what the agent read
+to get here, and in one narrow case it does more: if content read during the turn was
+written to steer an agent, an action that leaves this machine (a push, a merge, a
+`curl | sh`) asks even when you granted it or answered "Yes to all". Ordinary work is
+untouched — a tainted turn still runs `ls` and `pytest` without a word — because a
+gate that interrupts often is answered with "yes to all", and then it protects nothing.
+
+Detection is deliberately conservative and will miss things phrased as documentation;
+it is context for a decision you were already being asked to make, not the control.
+The control is that high-risk actions stop and ask. See `silkcode/provenance.py`.
+
+The same rule applies to the files a repository puts in front of the agent before any
+tool runs — `SILKCODE.md`, `.silkcode/memory.md`, and skill descriptions. They arrive
+with a clone, so they are read the same way tool output is: an ordinary one is used
+exactly as before, and one carrying text written to steer an agent is kept out of the
+agent's instructions, reported to you, and counted as something the turn consumed —
+so a push in that turn asks even under a standing grant.
+
+Risky commands are classified from the command that will actually run, not the text it
+was written as. `"git" push`, `g\it push` and `r\m -rf` are all the plain thing to a
+shell, so they are all the plain thing to the gate. A line that cannot be parsed, or
+whose command name is decided at run time (`$CMD push`), is treated as high-risk
+rather than guessed at.
+
 ## Architecture
 
 ```
@@ -438,18 +1171,30 @@ silkcode/
 ├── repomap.py       compact repository map injected into the model's context
 ├── context.py       context assembly: repo map + SILKCODE.md + memory + skills
 ├── skills.py        reusable skills loaded from markdown files
-├── memory.py        project memory (.silkcode/memory.md)
+├── memory.py        typed project memory (SQLite store + readable markdown mirror)
+├── plan.py          the plan as a file: propose in read-only plan mode, execute by checkbox
+├── roles.py         swarm roles as files: override tester/critic/worker, add read-only specialists
+├── trace.py         JSONL run trace for external harnesses (with --final-answer and exit-code contract)
+├── docsearch.py     current-docs retrieval with swappable backends (Firecrawl first, any endpoint next)
+├── graph.py         the project as a knowledge graph (graphify): build, query, explain, impact
+├── lightmodel.py    a cheap model for cheap work: compaction checkpoints with nac's discipline
+├── worktree.py      --isolated: the session runs in a fork of HEAD, your checkout stays yours
 ├── mcp.py           MCP client (stdio): external tool servers for the agent
 ├── github.py        GitHub integration: PRs and issues via $GITHUB_TOKEN
 ├── execbackend.py   execution backends: local subprocesses or remote sandbox
+├── inflight.py      durable records of commands in flight; honest orphan reports after a crash
 ├── sandbox_server.py  reference Silk Sandbox Protocol server (self-hosted)
-├── tools/           read/write/edit, glob/grep, run_command, run_tests, git status/diff/log/commit
+├── tools/           read/write/edit, glob/grep, run_command, run_tests, live_server, review_url, search_docs, git status/diff/log/commit
+├── liveserver.py    built-in live preview server: serve the workspace + auto-reload pages on change
+├── browser.py       render a page and report what a browser sees (headless Chromium)
 ├── agent/           the agent loop: streaming, tool dispatch, permissions
 ├── swarm.py         multi-agent improvement loop (tester/critic/worker, 0-10 scoring)
 ├── update.py        self-update: pull from git, hot-apply via GUI daemon restart
 ├── permissions.py   risk classification + ask/edit/agent modes + "yes to all"
+├── provenance.py    what a turn read, so a file cannot authorize a push
+├── version.py       build identity: release + commit, for installs that track a branch
 ├── checkpoints.py   snapshot-before-modify, revert per turn
-├── sessions.py      persistence shared by CLI and GUI
+├── sessions.py      persistence shared by CLI and GUI: atomic saves, forking
 ├── config.py        provider registry and model resolution
 ├── cli/             REPL + subcommands
 └── gui/             local daemon (HTTP + SSE) + browser app

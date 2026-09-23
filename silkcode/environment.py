@@ -14,7 +14,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-from .config import Config
+from .config import Config, valid_env_name
 from .sessions import SessionStore
 
 MASK_TAIL = 4
@@ -33,7 +33,8 @@ def credentials(config: Config) -> list[dict]:
     out: list[dict] = []
     for name in sorted(config.providers):
         cfg = config.providers[name]
-        env_var = cfg.get("env") or cfg.get("api_key_env")
+        raw_env_var = cfg.get("env") or cfg.get("api_key_env")
+        env_var = valid_env_name(raw_env_var)
         from_env = os.environ.get(env_var) if env_var else None
         stored = cfg.get("api_key")
         key = from_env or stored
@@ -44,6 +45,7 @@ def credentials(config: Config) -> list[dict]:
             "base_url": cfg.get("base_url", ""),
             "default_model": cfg.get("default_model"),
             "env_var": env_var,
+            "invalid_env_var": bool(raw_env_var and not env_var),
             "needs_key": needs_key,
             "set": bool(key),
             # where the value in use came from, so a stale env var that shadows
@@ -78,7 +80,7 @@ def clear_key(config: Config, provider: str) -> dict:
     config.providers[provider].pop("api_key", None)
     config.save()
     cfg = config.providers[provider]
-    env_var = cfg.get("env") or cfg.get("api_key_env")
+    env_var = valid_env_name(cfg.get("env") or cfg.get("api_key_env"))
     still_set = bool(env_var and os.environ.get(env_var))
     return {"provider": provider, "set": still_set,
             "note": f"still set from ${env_var}" if still_set else ""}
