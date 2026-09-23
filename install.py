@@ -58,6 +58,12 @@ def install(source: str, root: Path | None = None) -> Path:
     python, command, launcher = paths(root)
     run([str(python), "-m", "pip", "install", "--upgrade", source])
     run([str(python), "-m", "playwright", "install", "chromium"])
+    # graphify (PyPI: graphifyy) powers the graph tools and the GUI's Graph
+    # panel - local tree-sitter parsing, no model call. Installed here rather
+    # than as a wheel dependency: fifteen grammar wheels is a lot to charge a
+    # bare `pip install silkcode` for, and everything degrades gracefully
+    # without it.
+    run([str(python), "-m", "pip", "install", "--upgrade", "graphifyy"])
     if not command.exists():
         raise RuntimeError(f"Silk Code launcher was not created at {command}")
     write_launcher(command, launcher)

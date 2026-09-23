@@ -33,17 +33,53 @@ class LocalBackend:
     name = "local"
 
     def exec(self, ws: Workspace, command: str, timeout: int = 120) -> str:
+        """Run a command, leaving a durable record while it is in flight.
+
+        The record (silkcode.inflight) is written before the process starts
+        and removed once there is an outcome to report, and the command's
+        output goes to files beside it - so if this process dies mid-run, the
+        next session in the workspace can say what was running, which fate it
+        met, and what it printed, instead of knowing nothing.
+        """
+        from . import inflight
+
         timeout = min(max(int(timeout), 1), 600)
+        record = inflight.begin(ws.root, command)
+        out_file = err_file = None
+        if record is not None:
+            try:
+                out_file = open(record.out_path, "w+", errors="replace")
+                err_file = open(record.err_path, "w+", errors="replace")
+            except OSError:
+                if out_file is not None:
+                    out_file.close()
+                out_file = err_file = None
         try:
-            proc = subprocess.run(
-                command, shell=True, cwd=ws.root,
-                capture_output=True, text=True, timeout=timeout,
+            proc = subprocess.Popen(
+                command, shell=True, cwd=ws.root, text=True,
+                stdout=out_file or subprocess.PIPE,
+                stderr=err_file or subprocess.PIPE,
             )
-        except subprocess.TimeoutExpired:
-            return f"Command timed out after {timeout} seconds: {command}"
-        out = proc.stdout or ""
-        if proc.stderr:
-            out = out + ("\n" if out else "") + proc.stderr
+            inflight.started(record, proc.pid)
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                return f"Command timed out after {timeout} seconds: {command}"
+            if out_file is not None:
+                out_file.seek(0)
+                stdout = out_file.read()
+                err_file.seek(0)
+                stderr = err_file.read()
+        finally:
+            for f in (out_file, err_file):
+                if f is not None:
+                    f.close()
+            inflight.finish(record)
+        out = stdout or ""
+        if stderr:
+            out = out + ("\n" if out else "") + stderr
         out = out.strip() or "(no output)"
         if len(out) > MAX_OUTPUT_CHARS:
             out = out[:MAX_OUTPUT_CHARS] + "\n... [output truncated]"

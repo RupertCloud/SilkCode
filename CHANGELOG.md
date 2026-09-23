@@ -4,7 +4,57 @@ Silk Code's history, newest first, grouped by the phase that produced it.
 Entries name what changed and why it mattered; pull requests are numbered
 where one existed. The project began 2026-08-12 with the SRS and V0.1.
 
-## Unreleased (PR #39) — retrieval, and six lessons from nac · 2026-08-29/30
+## Unreleased — what survives: forks and crash honesty, from unreal-agent · 2026-09-23
+
+Reading [unreallabsai/unreal-agent](https://github.com/unreallabsai/unreal-agent)
+— a Go harness whose whole first act is durability plumbing (append-only
+forkable history, durable operations, fuzzed crash recovery) — surfaced three
+of its disciplines worth having without its machinery.
+
+### Added
+- **Session forking** — the ⑂ button (and `POST /api/session/fork`): a new
+  session continues this conversation's history while the original stays as
+  it is, so two approaches can be tried from the same point and the winner
+  kept. Cuts land on complete turns (never inside a tool exchange), the fork
+  records its parent (`forked_from`, versioned), and — paired with the
+  existing `--isolated` machinery — the fork gets its own git worktree on a
+  `silk/<stamp>` branch where the project allows one, so the two lines
+  diverge on disk as well as in conversation.
+- **Honest states for interrupted commands** (`silkcode/inflight.py`) — the
+  local backend records every command in `.silkcode/inflight/` before it
+  starts and clears the record on an outcome; a record with no live process
+  behind it is reported by the next session in that workspace with
+  unreal-agent's taxonomy — "its start was never recorded, so it may not
+  have run at all" vs. "interrupted before an exit status was recorded" —
+  plus the tail of whatever output was captured. Reported once, then
+  consumed; records are versioned.
+- **Crash-recovery tests** (`tests/test_crash_recovery.py`) — kill Silk Code
+  at the worst moments and look: a real SIGKILL mid-command is reported with
+  its output next session; a torn session file never poisons the store.
+
+### Fixed
+- **Session saves are atomic** (write-beside then `os.replace`): a crash
+  mid-save now keeps the previous version of the conversation instead of
+  leaving a half-written JSON file.
+
+## PR #40 — the project as a knowledge graph (graphify) · 2026-09-02
+
+Full adoption of [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify):
+local tree-sitter parsing, no model call, verified on this repository first.
+
+### Added
+- **Four agent tools** — `graph_build` (writes `graphify-out/`, so it passes
+  the permission gate like the command it runs), `graph_query`,
+  `graph_explain`, and `graph_impact` (the blast radius of a change, with
+  file:line anchors, before a refactor instead of after). Query tools never
+  auto-build; remote workspaces are refused with the reason.
+- **The Graph tab** — the GUI shows users the platform they built: concepts,
+  connections, files, communities, extracted-vs-inferred share, ranked hubs,
+  and the interactive map served at `/graph-view`.
+- Installed by `install.py` alongside Chromium; not a wheel dependency —
+  without it every entry point explains the one command instead of failing.
+
+## PR #39 — retrieval, and six lessons from nac · 2026-08-29/30
 
 Reading [arcee-ai/nac](https://github.com/arcee-ai/nac) and Firecrawl's
 developer-index launch produced one new tool and six harness improvements.
