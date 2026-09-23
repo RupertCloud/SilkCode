@@ -1,8 +1,16 @@
 import json
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
+
+# `install.py` sits at the repository root, not in a package, so importing it
+# depends on the root being on sys.path. `python -m pytest` puts it there and
+# a bare `pytest` does not - which is what CI runs, so test_installer.py
+# collected fine locally and failed there. Put it on the path explicitly.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from silkcode.providers.base import ChatResult, ModelProvider
 

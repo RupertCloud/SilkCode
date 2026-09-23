@@ -39,45 +39,89 @@ def repo_map(ws: Workspace, max_chars: int = 3500) -> str:
     scanned = 0
     truncated_scan = False
 
-    for name, label in MARKER_FILES.items():
-        if (ws.root / name).is_file():
-            markers.append(f"{name} ({label})")
-
-    def walk(directory: Path, depth: int) -> None:
-        nonlocal scanned, truncated_scan
-        if scanned >= MAX_SCAN_ENTRIES or depth > MAX_WALK_DEPTH:
-            truncated_scan = True
-            return
-        try:
-            children = sorted(directory.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
-        except OSError:
-            return
-        shown = 0
-        for child in children:
-            if scanned >= MAX_SCAN_ENTRIES:
-                truncated_scan = True
-                return
-            if child.name in IGNORED_DIRS or child.name.startswith(".") or child.name.endswith(".egg-info"):
+    from .remotews import RemoteWorkspace
+    if isinstance(ws, RemoteWorkspace):
+        # Remote workspace: build the map purely from the sandbox's file
+        # listing - no local disk access, so the repo truly never touches
+        # this machine.
+        files = ws.list_files()
+        top_names = {Path(f).parts[0] for f in files}
+        for name in sorted(top_names):
+            if name in MARKER_FILES:
+                markers.append(f"{name} ({MARKER_FILES[name]})")
+        entries: list[tuple[int, str]] = []  # (depth, display)
+        seen: set[str] = set()
+        for f in files:
+            parts = Path(f).parts
+            if any(p in IGNORED_DIRS or p.startswith(".") or p.endswith(".egg-info")
+                   for p in parts):
                 continue
             scanned += 1
-            is_dir = child.is_dir()
-            if not is_dir:
-                lang = LANG_BY_EXT.get(child.suffix)
-                if lang:
-                    languages[lang] += 1
-            if depth < MAX_DEPTH:
-                if shown == MAX_CHILDREN_SHOWN:
+            if scanned >= MAX_SCAN_ENTRIES:
+                truncated_scan = True
+                break
+            lang = LANG_BY_EXT.get(Path(f).suffix)
+            if lang:
+                languages[lang] += 1
+            for i in range(len(parts)):
+                node = "/".join(parts[: i + 1])
+                if node in seen:
+                    continue
+                seen.add(node)
+                is_dir = i < len(parts) - 1
+                if i < MAX_DEPTH:
+                    entries.append((i, parts[i] + ("/" if is_dir else "")))
+        # keep per-depth display capped like the local walk
+        counts: dict[int, int] = {}
+        for depth, disp in entries:
+            if counts.get(depth, 0) >= MAX_CHILDREN_SHOWN:
+                if counts.get(depth) == MAX_CHILDREN_SHOWN:
                     tree_lines.append("  " * depth + "... (more entries)")
-                    shown += 1
-                elif shown < MAX_CHILDREN_SHOWN:
-                    tree_lines.append("  " * depth + child.name + ("/" if is_dir else ""))
-                    shown += 1
-            if is_dir:
-                walk(child, depth + 1)
+                    counts[depth] += 1
+                continue
+            counts[depth] = counts.get(depth, 0) + 1
+            tree_lines.append("  " * depth + disp)
+        parts = ["Repository map (remote sandbox):"]
+    else:
+        for name, label in MARKER_FILES.items():
+            if (ws.root / name).is_file():
+                markers.append(f"{name} ({label})")
 
-    walk(ws.root, 0)
+        def walk(directory: Path, depth: int) -> None:
+            nonlocal scanned, truncated_scan
+            if scanned >= MAX_SCAN_ENTRIES or depth > MAX_WALK_DEPTH:
+                truncated_scan = True
+                return
+            try:
+                children = sorted(directory.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+            except OSError:
+                return
+            shown = 0
+            for child in children:
+                if scanned >= MAX_SCAN_ENTRIES:
+                    truncated_scan = True
+                    return
+                if child.name in IGNORED_DIRS or child.name.startswith(".") or child.name.endswith(".egg-info"):
+                    continue
+                scanned += 1
+                is_dir = child.is_dir()
+                if not is_dir:
+                    lang = LANG_BY_EXT.get(child.suffix)
+                    if lang:
+                        languages[lang] += 1
+                if depth < MAX_DEPTH:
+                    if shown == MAX_CHILDREN_SHOWN:
+                        tree_lines.append("  " * depth + "... (more entries)")
+                        shown += 1
+                    elif shown < MAX_CHILDREN_SHOWN:
+                        tree_lines.append("  " * depth + child.name + ("/" if is_dir else ""))
+                        shown += 1
+                if is_dir:
+                    walk(child, depth + 1)
 
-    parts = ["Repository map:"]
+        walk(ws.root, 0)
+        parts = ["Repository map:"]
+
     if truncated_scan:
         parts.append(f"(large directory: scan capped at {MAX_SCAN_ENTRIES} entries / depth {MAX_WALK_DEPTH}; "
                      "counts are partial)")

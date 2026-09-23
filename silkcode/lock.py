@@ -129,7 +129,9 @@ def acquire(root: Path, owner: str) -> dict:
             )
         lock = {"owner": owner, "pid": os.getpid(), "acquired_at": time.time()}
         p = _lock_path(root)
+        from .statedir import ensure_ignored
         p.parent.mkdir(parents=True, exist_ok=True)
+        ensure_ignored(p.parent)  # never let a pid file into the user's repo
         p.write_text(json.dumps(lock))
         return lock
 

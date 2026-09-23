@@ -20,29 +20,51 @@ def _pytest_command() -> str:
 
 
 def detect_test_command(ws: Workspace) -> str | None:
-    root = ws.root
-    package_json = root / "package.json"
-    if package_json.is_file():
+    from ..remotews import RemoteWorkspace
+    remote = isinstance(ws, RemoteWorkspace)
+    files = ws.list_files() if remote else None
+
+    def exists(rel: str) -> bool:
+        if remote:
+            return rel in files
+        return (ws.root / rel).is_file()
+
+    def read(rel: str) -> str:
+        return ws.read_text(rel) if remote else (ws.root / rel).read_text(errors="replace")
+
+    def has_test_files(directory: str) -> bool:
+        """Test files directly in `directory`; "" means the workspace root."""
+        if remote:
+            prefix = directory + "/" if directory else ""
+            names = [f[len(prefix):] for f in files if f.startswith(prefix)]
+            return any("/" not in n and (n.startswith("test_") or n.endswith("_test.py"))
+                       for n in names)
+        d = ws.root / directory if directory else ws.root
+        if not d.is_dir():
+            return False
+        return bool(list(d.glob("test_*.py")) or list(d.glob("*_test.py")))
+
+    if exists("package.json"):
         try:
-            scripts = json.loads(package_json.read_text()).get("scripts", {})
+            scripts = json.loads(read("package.json")).get("scripts", {})
             if "test" in scripts:
                 return "npm test"
         except ValueError:
             pass
-    if (root / "Cargo.toml").is_file():
+    if exists("Cargo.toml"):
         return "cargo test"
-    if (root / "go.mod").is_file():
+    if exists("go.mod"):
         return "go test ./..."
-    if (root / "pubspec.yaml").is_file():
+    if exists("pubspec.yaml"):
         return "flutter test"
-    if (root / "pytest.ini").is_file() or (root / "conftest.py").is_file():
+    if exists("pytest.ini") or exists("conftest.py"):
         return _pytest_command()
-    pyproject = root / "pyproject.toml"
-    if pyproject.is_file() and "pytest" in pyproject.read_text(errors="replace"):
+    if exists("pyproject.toml") and "pytest" in read("pyproject.toml"):
         return _pytest_command()
-    for directory in ("tests", "test"):
-        d = root / directory
-        if d.is_dir() and (list(d.glob("test_*.py")) or list(d.glob("*_test.py"))):
+    # "" is the workspace root: a flat project keeps test_foo.py next to
+    # foo.py, with no tests/ directory and nothing to declare it.
+    for directory in ("tests", "test", ""):
+        if has_test_files(directory):
             return _pytest_command()
     return None
 

@@ -69,6 +69,24 @@ def test_update_installation_up_to_date(tmp_path):
     install = _clone(origin, tmp_path / "install")
     result = update_installation(repo=install)
     assert result["status"] == "up-to-date"
+    # The whole point of running update is to learn whether anything changed,
+    # so the answer has to be in the sentence a user actually reads - not left
+    # to be inferred from a status field they never see.
+    assert result["detail"].startswith("Already up to date")
+    assert "main" in result["detail"]
+
+
+def test_a_run_that_changes_nothing_does_not_announce_an_update(tmp_path):
+    """The progress line used to open with `updating <repo> ...` before the
+    fetch had happened, so a run that pulled nothing still read as though it
+    had done something."""
+    origin = _make_origin(tmp_path)
+    install = _clone(origin, tmp_path / "install")
+    lines = []
+    result = update_installation(repo=install, on_progress=lines.append)
+    assert result["status"] == "up-to-date"
+    assert not any(line.lower().startswith("updating") for line in lines), lines
+    assert any(line.lower().startswith("checking") for line in lines), lines
 
 
 def test_update_installation_dirty_tree_refuses(tmp_path):
@@ -130,3 +148,45 @@ def test_head_changed():
 def test_restart_argv():
     argv = restart_argv(["gui", ".", "--port", "9000"])
     assert argv == [sys.executable, "-m", "silkcode", "gui", ".", "--port", "9000"]
+
+
+def test_an_update_that_imports_a_different_install_says_so(tmp_path):
+    """The failure that looks like success: the pull lands, the daemon restarts,
+    and comes back up on code from a site-packages copy that shadows this
+    checkout. The old health check printed __version__ — the same string before
+    and after any update — so it could not tell the two apart.
+
+    Here the scratch repo is not the silkcode being imported, which is exactly
+    the shadowed shape.
+    """
+    origin = _make_origin(tmp_path)
+    install = _clone(origin, tmp_path / "install")
+    _commit(origin, "b.txt", "two\n")
+
+    result = update_installation(repo=install)
+    assert result["status"] == "updated"
+    assert "shadowing this checkout" in result["detail"]
+    assert result["after"][:12] in result["detail"]
+
+
+def test_no_warning_when_the_imported_code_is_the_code_we_pulled(tmp_path, monkeypatch):
+    """The ordinary case must stay quiet, or the warning is noise."""
+    origin = _make_origin(tmp_path)
+    install = _clone(origin, tmp_path / "install")
+    _commit(origin, "b.txt", "two\n")
+
+    import subprocess as sp
+    real = sp.run
+
+    def fake(cmd, *a, **k):
+        # stand in for the import check: report the commit the pull just landed
+        if isinstance(cmd, list) and "-c" in cmd and "silkcode.version" in cmd[-1]:
+            head = real(["git", "-C", str(install), "rev-parse", "HEAD"],
+                        capture_output=True, text=True)
+            return sp.CompletedProcess(cmd, 0, stdout=head.stdout.strip()[:7], stderr="")
+        return real(cmd, *a, **k)
+
+    monkeypatch.setattr(sp, "run", fake)
+    result = update_installation(repo=install)
+    assert result["status"] == "updated"
+    assert "warning" not in result["detail"], result["detail"]

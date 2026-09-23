@@ -20,6 +20,7 @@ MAX_STEPS = 40
 # budget and never touches the most recent turns.
 DEFAULT_CONTEXT_TOKENS = 100_000
 KEEP_RECENT_TOOL_RESULTS = 6
+CHECKPOINT_MARKER = "[Checkpoint of earlier work, written after context trimming]\n"
 TRUNCATED_TOOL_CHARS = 500
 
 # on_event(kind, data): kind in {"text", "tool_start", "tool_result"}
@@ -41,7 +42,14 @@ class Agent:
         session_id: int | None = None,
         attribution: bool = True,
         lock_owner: str | None = None,
+        redact_output: bool = True,
+        summarizer=None,
     ):
+        # `summarizer` (optional): transcript -> checkpoint text, run on a
+        # configured light model (lightmodel.py). When present, turns that
+        # compaction is about to drop are summarized into a checkpoint
+        # instead of vanishing.
+        self.summarizer = summarizer
         self.provider = provider
         self.model = model
         self.workspace = workspace
@@ -61,6 +69,25 @@ class Agent:
         # Per-owner optimistic-concurrency registry for the file tools: this
         # agent's reads/writes never mask another session's stale base.
         self._fp_registry: dict = {}
+        # Where this turn's instructions came from, so the permission gate
+        # can tell the human whether an outward-facing action traces back to
+        # their request or to something the agent read.
+        from ..provenance import TurnProvenance
+        self.provenance = TurnProvenance()
+        if hasattr(permissions, "watch"):
+            permissions.watch(self.provenance)
+        # Literal credentials this installation holds, so tool output that
+        # happens to print one is scrubbed before it reaches the provider.
+        # Resolved once per agent: it reads the config and the environment.
+        self._known_secrets: tuple[str, ...] = ()
+        if redact_output:
+            try:
+                from ..config import Config
+                from ..redact import known_secrets
+                self._known_secrets = known_secrets(Config.load())
+            except Exception:
+                pass  # never let redaction setup stop an agent from starting
+        self.redact_output = redact_output
         system = SYSTEM_PROMPT.format(root=workspace.root, platform=platform.platform())
         if context:
             system += "\n" + context
@@ -87,6 +114,8 @@ class Agent:
             set_attribution(model=f"{self.provider.name}/{self.model}", session=self.session_id)
         self.stop_requested = False
         self.checkpoints.begin()
+        self.provenance.begin(user_input)
+        self._note_project_sources()
         self.messages.append({"role": "user", "content": user_input})
         try:
             for _ in range(MAX_STEPS):
@@ -103,13 +132,33 @@ class Agent:
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": call.id,
-                        "content": output,
+                        "content": self._scrub(output),
                     })
                 if self.stop_requested:
                     return "Stopped by user."
             return "Stopped: reached the maximum number of agent steps for one turn."
         finally:
             clear_attribution()  # attribution never outlives the turn
+            self.provenance.end()  # nor does what this turn read
+
+    def _scrub(self, output: str) -> str:
+        """Remove credentials from tool output before it joins the
+        conversation - which is to say, before it is sent to the provider.
+
+        A backstop for the ordinary case: a `printenv`, a `cat .env`, a stack
+        trace carrying a connection string. It is not a boundary and cannot
+        be one; the boundaries are the sandbox never holding a credential as
+        a string, an owner-only config file, and the permission gate.
+        """
+        if not self.redact_output:
+            return output
+        try:
+            from ..redact import redact
+            return redact(output, extra=self._known_secrets)
+        except Exception:
+            # A failure here must never lose the tool's result: the agent
+            # needs it to make progress, and redaction is the backstop.
+            return output
 
     def request_stop(self) -> None:
         """Stop after the current model call or tool finishes."""
@@ -150,20 +199,57 @@ class Agent:
             if len(content) > TRUNCATED_TOOL_CHARS:
                 m["content"] = content[:TRUNCATED_TOOL_CHARS] + "\n...[old output truncated to save context]"
         # Stage 2: drop the oldest turns, always cutting at a user-message
-        # boundary so assistant/tool pairs stay intact.
+        # boundary so assistant/tool pairs stay intact. What is dropped is
+        # collected first: with a light model configured it becomes a
+        # checkpoint instead of vanishing.
+        dropped: list[dict] = []
         while self.context_tokens() > self.max_context_tokens:
             user_indices = [i for i, m in enumerate(self.messages) if m.get("role") == "user"]
             if len(user_indices) < 2:
                 break  # only the current turn remains; nothing left to drop
             start, end = user_indices[0], user_indices[1]
             self.trimmed_messages += end - start
+            dropped.extend(self.messages[start:end])
             del self.messages[start:end]
+        if dropped:
+            self._write_checkpoint(dropped)
         if self.trimmed_messages:
             self.messages[0]["content"] = (
                 self._base_system
                 + f"\n[Context note: {self.trimmed_messages} earlier messages were trimmed to fit "
                 "the context window. Re-read files or re-run searches if you need that information.]"
             )
+
+    def _write_checkpoint(self, dropped: list[dict]) -> None:
+        """Summarize dropped turns into one checkpoint message, replacing any
+        earlier checkpoint (its text joins the input, so nothing stacks).
+
+        The checkpoint is history the agent wrote about itself, so it is
+        inserted as an assistant message: it must never read as the user
+        speaking, and never carry a user message's authority.
+        """
+        if self.summarizer is None:
+            return
+        parts = []
+        for i, m in enumerate(self.messages):
+            content = str(m.get("content", ""))
+            if m.get("role") == "assistant" and content.startswith(CHECKPOINT_MARKER):
+                parts.append(content[len(CHECKPOINT_MARKER):])
+                del self.messages[i]
+                break
+        for m in dropped:
+            content = str(m.get("content") or "")
+            calls = " ".join(tc["function"]["name"] for tc in m.get("tool_calls") or [])
+            if content or calls:
+                parts.append(f"{m.get('role', '?')}: {calls + ' ' if calls else ''}{content}")
+        try:
+            checkpoint = self.summarizer("\n".join(parts))
+        except Exception:
+            return  # compaction must never break the turn; the trim stands
+        if not checkpoint:
+            return
+        self.messages.insert(1, {"role": "assistant",
+                                 "content": CHECKPOINT_MARKER + checkpoint})
 
     def _call_model(self) -> ChatResult:
         self._compact()
@@ -206,6 +292,9 @@ class Agent:
         self.on_event("tool_start", {"name": call.name, "args": args})
         if tool is None:
             output = self._execute_mcp(call.name, args)
+            # An MCP result is the least trusted content the agent sees: it
+            # came off the network, through a server this process does not own.
+            self._note_source(call.name, args, output)
             self.on_event("tool_result", {"name": call.name, "output": output})
             return output
         try:
@@ -216,8 +305,38 @@ class Agent:
             output = f"Error: bad arguments for {call.name}: {exc}"
         except Exception as exc:  # surface unexpected failures to the model
             output = f"Error: {type(exc).__name__}: {exc}"
+        self._note_source(call.name, args, output)
         self.on_event("tool_result", {"name": call.name, "output": output})
         return output
+
+    def _note_project_sources(self) -> None:
+        """Record what the repository put in front of the model before this
+        turn started.
+
+        SILKCODE.md, project memory and the skill descriptions reach the
+        conversation without any tool being called, so nothing else in the
+        turn would ever record them — they are the one input the provenance
+        record used to miss entirely. Re-read each turn rather than cached
+        from start-up: the agent edits files, and one of the files it can edit
+        is the one telling it what to do.
+        """
+        try:
+            from ..context import project_sources
+            for label, text in project_sources(self.workspace):
+                self.provenance.record(label, text, kind="file",
+                                       addressed_to_agent=True)
+        except Exception:
+            pass  # provenance is context for a human, never a failure path
+
+    def _note_source(self, name: str, args: dict, output: str) -> None:
+        """Record what this turn read. Tool output describes the world; it
+        never carries the authority to approve an action."""
+        try:
+            detail = args.get("path") or args.get("command") or args.get("url") or ""
+            label = f"{name}({str(detail)[:60]})" if detail else name
+            self.provenance.record(label, str(output), kind="tool")
+        except Exception:
+            pass  # provenance is context for a human, never a failure path
 
     def _execute_mcp(self, qualified: str, args: dict) -> str:
         if not self.permissions.check_mcp(qualified):
@@ -235,6 +354,10 @@ class Agent:
                 raw_path = str(args.get("path", ""))
             resolved = self.workspace.resolve(raw_path)
             if not self.permissions.check_write(self.workspace.relative(resolved)):
+                if self.permissions.mode == "plan":
+                    return ("Plan mode is read-only: investigate and propose, "
+                            "do not modify. Write the steps with propose_plan "
+                            "and ask the user to approve by switching mode.")
                 return "User denied permission to modify this file."
             self.checkpoints.snapshot(resolved)
         elif tool.kind == "command":
@@ -243,6 +366,10 @@ class Agent:
             else:
                 command = str(args.get("command") or "")
             if command and not self.permissions.check_command(command):
+                if self.permissions.mode == "plan":
+                    return ("Plan mode runs read-only commands only. Note the "
+                            "step in your plan instead; it runs once the user "
+                            "approves and switches mode.")
                 return "User denied permission to run this command."
         if getattr(tool, "owner_aware", False):
             return tool.func(self.workspace, _registry=self._fp_registry,

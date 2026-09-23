@@ -91,6 +91,7 @@ def test_store_token_and_client_id_resolution(tmp_path):
 
     assert client_id_from({"github": {"client_id": "abc"}}) == "abc"
     assert client_id_from({}) == gho.DEFAULT_GITHUB_CLIENT_ID
+    assert client_id_from({}) == "Iv23liIVrIULoOVsdX9b"
 
 
 def test_get_token_env_beats_stored(tmp_path, monkeypatch):

@@ -15,6 +15,19 @@ Current state: one session = one workspace. GitHub repos clone into
 GUI `＋` modal + CLI `/project` both work. The plumbing is fine; management and
 switching are the gaps (SRS FR-GUI-001, section 10; section 85).
 
+- [x] **Create a new project** — `silkcode new [name] --template python|python-cli|node|web|blank`
+      and REPL `/new` scaffold a runnable project (source, a test suite the runner
+      detects, README, `.gitignore`, `SILKCODE.md`), `git init` it, remember it as a
+      recent project, and can hand it straight to the agent (`-p`) or the REPL
+      (`--open`). See `silkcode/scaffold.py`.
+- [x] **Projects how-to** — one guide, two surfaces: `docs/projects.html` on the
+      landing site (linked from the hero, a Projects section, the CLI table and the
+      footer) and the **? How-to** panel in the GUI's PROJECT pane, which hands over
+      copyable `silkcode new` commands and opens the project picker.
+- [ ] **New project from the GUI** — the ＋ modal still only *opens* projects;
+      give it the `scaffold.py` templates too (and a "create on GitHub" option that
+      pairs the local scaffold with `github_create_repo` + first push). Until then
+      the GUI how-to has to send people to the terminal to create one.
 - [ ] **Switch project within a session** (highest value)
       A Project dropdown in the GUI header that re-targets the current session's
       workspace without losing the conversation (SRS line 290 mockup, section 2160:
@@ -73,6 +86,36 @@ checkpoints, benchmarking, swarm). Remaining gaps:
       in the header; a real dashboard + per-session/per-day cost caps are not.
 - [ ] **V0.3: enterprise & team** — audit logs, team settings, shared skills,
       organization model gateway, GitLab integration (SRS 80).
+
+## Priority 4 — Silk Cloud (hosted)
+
+A fully hosted Silk Code: sign in with GitHub, pick a repo, start working —
+no install, no API keys. The agent runs in a per-session cloud container and
+reaches models through a metered gateway holding pooled provider keys.
+
+The architecture, the roadmap, and what in this codebase moves versus gets
+rewritten are in **[docs/CLOUD.md](docs/CLOUD.md)**.
+
+The roadmap (CLOUD.md section 11) is five milestones behind one always-on
+track, ordered so the cheap reversible work comes first:
+
+- **Track A — foundations, startable now.** A `SessionStore` interface, opaque
+  session ids, a per-turn token budget generalized out of `swarm.py`, cost
+  accounting on the existing `Usage`, and provider failover. No hosting
+  decision required, and each one improves the local product — so a delayed
+  cloud launch wastes none of it. Track A also closes the **usage dashboard**
+  (SRS 48/49) above.
+- **M0 — Gateway.** The metered model proxy. No containers at all: local users
+  point `base_url` at it and buy credits. Ships the business model, and is
+  where the missing **Model Auto Router** above naturally lives.
+- **M1 — Runner under gVisor.** A measurement, not a feature — `npm install`
+  cost, cold start, Docker-in-Docker survey. Gates M2.
+- **M2 — Hosted MVP.** Sign in, pick a repo, work, push a branch. Private beta.
+- **M3 — Public launch.** Network containment, warm pool, reaping, caps, and
+  the BYO-key uncapped tier.
+- **M4 — What hosting unlocks.** Async tasks that need no browser open,
+  PR-first workflows, mobile, teams — which also closes most of **V0.3
+  enterprise** above.
 
 ## How to verify changes
 

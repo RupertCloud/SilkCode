@@ -24,15 +24,20 @@ from typing import Callable
 
 from .agent import Agent
 from .agent.prompts import (
+    EPISODE_CONTRACT,
     SWARM_CRITIC_PROMPT,
     SWARM_TESTER_PROMPT,
     SWARM_WORKER_PROMPT,
+    TEAM_DEVELOPER_PROMPT,
+    TEAM_ROLE_PROMPTS,
 )
 from .checkpoints import Checkpoints
 from .config import Config, config_dir
 from .permissions import PermissionManager
 from .providers import ProviderError, build_provider
 from .repomap import repo_map
+from .roles import custom_specialists, load_roles, role_model, role_prompt
+from .roles import withheld as withheld_roles
 from .tools.shell import run_command
 from .tools.testing import detect_test_command
 from .workspace import ToolError, Workspace
@@ -54,6 +59,11 @@ TODO_RE = re.compile(rf"\b({_TODO}|{_FIXME}|{_XXX}|{_HACK})\b")
 DEBUG_MARKERS = ("break" + "point(", "pdb.set" + "_trace(", "debug" + "ger;")
 
 MAX_CRITIC_SUGGESTIONS = 5
+# What one retained episode may occupy in the next dispatch's prompt. Long
+# enough for commands and file paths, short enough that three of them do not
+# crowd out the actual task.
+EPISODE_CHARS = 2_000
+MAX_TEAM_DEVELOPERS = 12
 CLIP_CHARS = 4_000
 
 
@@ -170,6 +180,7 @@ class SwarmResult:
     saved_to: str | None = None
     traces: str | None = None
     role_tokens: dict = None          # {"tester": n, "critic": n, "worker": n}
+    artifacts: dict = None            # latest shared team artifacts
 
 
 # Structured events emitted via on_event(kind, data):
@@ -232,14 +243,94 @@ def _parse_critic(content: str) -> dict:
     return data
 
 
-def _tester_prompt(score: Score) -> str:
+def _parse_team_plan(content: str, max_developers: int = MAX_TEAM_DEVELOPERS) -> dict:
+    """Normalize the lead's plan and reject unsafe/unrecognized task owners."""
+    text = (content or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        raw = json.loads(text)
+    except ValueError:
+        return {"summary": _summarize(content, 500), "tasks": []}
+    if not isinstance(raw, dict):
+        return {"summary": str(raw), "tasks": []}
+    tasks = []
+    for item in raw.get("tasks") or []:
+        if not isinstance(item, dict):
+            continue
+        match = re.fullmatch(r"dev([1-9][0-9]*)", str(item.get("owner") or "").lower())
+        if not match or int(match.group(1)) > max_developers:
+            continue
+        tasks.append({
+            "owner": str(item["owner"]).lower(),
+            "title": str(item.get("title") or "Assigned improvement"),
+            "detail": str(item.get("detail") or ""),
+            "acceptance": [str(x) for x in (item.get("acceptance") or [])][:6],
+        })
+    return {"summary": str(raw.get("summary") or ""),
+            "tasks": tasks[:max_developers * 3]}
+
+
+def _team_discovery_prompt(role: str, objective: str, score: Score) -> str:
+    return (f"Product objective:\n{objective}\n\nCurrent score: {score.score:.1f}/10. "
+            f"Test state: {score.detail}.\nInspect the repository and provide your {role} brief. "
+            "Do not modify files.")
+
+
+def _team_head_prompt(objective: str, artifacts: dict, score: Score,
+                      developer_count: int) -> str:
+    staffing = (f"Use exactly dev1 through dev{developer_count} when useful; do not assign "
+                "owners above that number." if developer_count else
+                f"Choose the smallest effective team from dev1 through dev{MAX_TEAM_DEVELOPERS}. "
+                "Simple work should use one developer; use more only for genuinely separable work.")
+    return (f"Product objective:\n{objective}\n\nCurrent score: {score.score:.1f}/10.\n\n"
+            f"Shared team briefs:\n{_clip(json.dumps(artifacts, indent=2), 12000)}\n\n"
+            f"{staffing}\nInspect the repository and return ONLY strict JSON: "
+            '{"summary":"...","tasks":[{"owner":"dev1","title":"...",'
+            '"detail":"...","acceptance":["..."]}]}')
+
+
+def _developer_prompt(task: dict, objective: str, plan: dict) -> str:
+    acceptance = "\n".join(f"- {x}" for x in task.get("acceptance") or []) or "- Verify the task works"
+    return (f"Product objective: {objective}\nTeam plan: {plan.get('summary', '')}\n\n"
+            f"Your task: {task['title']}\n{task.get('detail', '')}\n\n"
+            f"Acceptance criteria:\n{acceptance}\n\nImplement this task now. Run focused tests and report the result.")
+
+
+def _episode_of(report: str) -> str:
+    """The retained episode from a role's final message.
+
+    The contract asks for an EPISODE block at the end; when a model ignores
+    that (small ones do), the tail of the report is the closest thing to a
+    work record, so keep that instead of nothing.
+    """
+    text = (report or "").strip()
+    if not text:
+        return ""
+    marker = text.rfind("EPISODE")
+    episode = text[marker:] if marker != -1 else text
+    return episode[-EPISODE_CHARS:]
+
+
+def _episodes_section(episodes: dict, *roles: str) -> str:
+    """Retained episodes as prompt text, or "" when there are none yet."""
+    parts = [f"[{role}]\n{episodes[role]}" for role in roles if episodes.get(role)]
+    if not parts:
+        return ""
+    return ("\nRetained episodes from the previous iteration (work already "
+            "done - build on it, do not rediscover it):\n" + "\n\n".join(parts) + "\n")
+
+
+def _tester_prompt(score: Score, episodes: dict | None = None) -> str:
     command = score.test_command or "(none detected)"
     return (
         f"The workspace scores {score.score:.1f}/10 "
         f"(tests {score.tests:.1f}/8, hygiene {score.hygiene:.1f}/2). Target: 10/10.\n\n"
         f"Test command: {command}\n\n"
         f"Test output:\n{_clip(score.test_output)}\n\n"
-        "Investigate the failures (read files, run read-only commands) and report:\n"
+        + _episodes_section(episodes or {}, "worker", "tester")
+        + "Investigate the failures (read files, run read-only commands) and report:\n"
         "1. What is broken and why.\n"
         "2. Concrete fixes that would make the tests pass.\n"
         "Do not modify any files - the worker implements changes."
@@ -247,7 +338,7 @@ def _tester_prompt(score: Score) -> str:
 
 
 def _critic_prompt(score: Score, tester_report: str, diff: str,
-                   previous: list[str]) -> str:
+                   previous: list[str], episodes: dict | None = None) -> str:
     lines = [
         f"The workspace scores {score.score:.1f}/10 "
         f"(tests {score.tests:.1f}/8, hygiene {score.hygiene:.1f}/2). Target: 10/10.",
@@ -256,6 +347,9 @@ def _critic_prompt(score: Score, tester_report: str, diff: str,
         f"\nTester report:\n{_clip(tester_report)}",
         f"\nCurrent diff:\n{_clip(diff) if diff else '(not a git repository)'}",
     ]
+    section = _episodes_section(episodes or {}, "worker")
+    if section:
+        lines.append(section)
     if previous:
         lines.append("\nPreviously suggested (do not repeat unless still unfixed):\n"
                      + "\n".join(f"- {s}" for s in previous[-5:]))
@@ -268,11 +362,14 @@ def _critic_prompt(score: Score, tester_report: str, diff: str,
     return "\n".join(lines)
 
 
-def _worker_prompt(parsed: dict, score: Score) -> str:
+def _worker_prompt(parsed: dict, score: Score, episodes: dict | None = None) -> str:
     lines = [
         f"The workspace scores {score.score:.1f}/10. Target: 10/10.",
         f"Test command: {score.test_command or '(none detected)'}",
     ]
+    section = _episodes_section(episodes or {}, "worker")
+    if section:
+        lines.append(section)
     critique = (parsed.get("critique") or "").strip()
     if critique:
         lines.append(f"\nCritique:\n{critique}")
@@ -335,6 +432,9 @@ def run_swarm(
     should_stop: Callable[[], bool] | None = None,
     worker_permissions: PermissionManager | None = None,
     worker_owner: str | None = None,
+    team_mode: bool = False,
+    objective: str | None = None,
+    developer_count: int = 0,         # 0 = Head chooses, otherwise Dev1..DevN
 ) -> SwarmResult:
     """Run the tester/critic/worker loop until the target score is reached.
 
@@ -373,10 +473,21 @@ def run_swarm(
         raise ValueError("stall_limit must be >= 1")
     if max_tokens < 0:
         raise ValueError("max_tokens must be >= 0")
+    if not 0 <= developer_count <= MAX_TEAM_DEVELOPERS:
+        raise ValueError(f"developer_count must be between 0 and {MAX_TEAM_DEVELOPERS}")
     critic_spec = critic_spec or worker_spec
     tester_spec = tester_spec or worker_spec
     config = Config.load()
     cache: dict = {}
+    # Roles defined on disk override the built-in prompts and may pin a
+    # model; a definition that reads as prompt injection is not loaded, and
+    # the person is told (see roles.py).
+    definitions = load_roles(ws)
+    for warning in withheld_roles(ws):
+        on_progress(warning)
+    tester_spec = role_model(definitions, "tester", tester_spec)
+    critic_spec = role_model(definitions, "critic", critic_spec)
+    worker_spec = role_model(definitions, "worker", worker_spec)
     tester_provider, tester_model, tester_cfg = _provider_for(config, cache, tester_spec)
     critic_provider, critic_model, critic_cfg = _provider_for(config, cache, critic_spec)
     worker_provider, worker_model, worker_cfg = _provider_for(config, cache, worker_spec)
@@ -384,9 +495,16 @@ def run_swarm(
     started = time.monotonic()
     scores: list[float] = []
     previous: list[str] = []
+    # Retained episodes, by role, across iterations - the compressed record
+    # of the last dispatch, fed forward so iteration N+1 does not rediscover
+    # what N established (nac's thread/episode idea, one thread per role).
+    episodes: dict[str, str] = {}
     traces: list[dict] = []
     total_tokens = 0
     role_tokens = {"tester": 0, "critic": 0, "worker": 0}
+    if team_mode:
+        role_tokens.update({role: 0 for role in TEAM_ROLE_PROMPTS})
+    artifacts: dict = {}
     best = -1.0
     stall = 0
     iteration = 0
@@ -444,6 +562,71 @@ def run_swarm(
 
         tester = critic = worker = None
         try:
+            if team_mode:
+                team_objective = (objective or
+                                  "Improve this product into a coherent, useful, production-ready release.")
+                # Product specialists establish shared intent before anyone edits.
+                specialist_roles = [
+                    (role, role_prompt(definitions, role, TEAM_ROLE_PROMPTS[role]))
+                    for role in ("business", "user", "designer")
+                ] + [(d.name, d.prompt) for d in custom_specialists(definitions)]
+                for role, prompt_text in specialist_roles:
+                    emit("phase", {"role": role})
+                    provider, model, cfg = _provider_for(
+                        config, cache, role_model(definitions, role, worker_spec))
+                    specialist = _make_agent(ws, provider, model, cfg,
+                                             prompt_text, read_only=True)
+                    report = specialist.run_turn(_team_discovery_prompt(role, team_objective, score))
+                    artifacts[role] = report
+                    emit("artifact", {"artifacts": artifacts})
+                    role_tokens.setdefault(role, 0)
+                    role_tokens[role] += specialist.usage.total_tokens
+                    total_tokens += specialist.usage.total_tokens
+                    progress(f"{role}: {_summarize(report)}")
+                emit("phase", {"role": "head"})
+                provider, model, cfg = _provider_for(config, cache, critic_spec)
+                lead = _make_agent(ws, provider, model, cfg,
+                                   role_prompt(definitions, "head", TEAM_ROLE_PROMPTS["head"]),
+                                   read_only=True)
+                lead_out = lead.run_turn(
+                    _team_head_prompt(team_objective, artifacts, score, developer_count))
+                role_tokens["head"] += lead.usage.total_tokens
+                total_tokens += lead.usage.total_tokens
+                plan = _parse_team_plan(
+                    lead_out, developer_count or MAX_TEAM_DEVELOPERS)
+                artifacts["plan"] = plan
+                emit("artifact", {"artifacts": artifacts})
+                progress(f"head: {len(plan['tasks'])} task(s) planned")
+                team_size = developer_count or max(
+                    (int(t["owner"][3:]) for t in plan["tasks"]), default=1)
+                allowed = {f"dev{i}" for i in range(1, team_size + 1)}
+                for task in (t for t in plan["tasks"] if t["owner"] in allowed):
+                    role = task["owner"]
+                    role_tokens.setdefault(role, 0)
+                    emit("phase", {"role": role})
+                    provider, model, cfg = _provider_for(config, cache, worker_spec)
+                    # A custom developer prompt is used verbatim - .format on a
+                    # body with a brace in it (a JSON example, a dict literal)
+                    # would raise, and the file's author never asked for
+                    # placeholders. The role line is appended instead.
+                    dev_definition = definitions.get("developer")
+                    dev_prompt = (f"{dev_definition.prompt}\nYou are {role.upper()}."
+                                  if dev_definition else
+                                  TEAM_DEVELOPER_PROMPT.format(role=role.upper())) \
+                        + EPISODE_CONTRACT
+                    developer = _make_agent(
+                        ws, provider, model, cfg,
+                        dev_prompt,
+                                            read_only=False, on_event=on_worker_event,
+                                            worker_permissions=worker_permissions, owner=worker_owner)
+                    result = developer.run_turn(_developer_prompt(task, team_objective, plan))
+                    role_tokens[role] += developer.usage.total_tokens
+                    total_tokens += developer.usage.total_tokens
+                    artifacts.setdefault("developer_reports", []).append(
+                        {"role": role, "task": task["title"], "report": result})
+                    emit("artifact", {"artifacts": artifacts})
+                    progress(f"{role}: {_summarize(result)}")
+
             tests_pass = score.tests >= 8.0 or score.test_command is None
             if skip_tester_when_tests_pass and tests_pass:
                 tester_report = (
@@ -457,8 +640,11 @@ def run_swarm(
             else:
                 emit("phase", {"role": "tester"})
                 tester = _make_agent(ws, tester_provider, tester_model, tester_cfg,
-                                     SWARM_TESTER_PROMPT, read_only=True)
-                tester_report = tester.run_turn(_tester_prompt(score))
+                                     role_prompt(definitions, "tester", SWARM_TESTER_PROMPT)
+                                     + EPISODE_CONTRACT,
+                                     read_only=True)
+                tester_report = tester.run_turn(_tester_prompt(score, episodes))
+                episodes["tester"] = _episode_of(tester_report)
                 role_tokens["tester"] += tester.usage.total_tokens
                 total_tokens += tester.usage.total_tokens
                 progress(f"tester: {_summarize(tester_report)}")
@@ -469,9 +655,11 @@ def run_swarm(
 
             emit("phase", {"role": "critic"})
             critic = _make_agent(ws, critic_provider, critic_model, critic_cfg,
-                                 SWARM_CRITIC_PROMPT, read_only=True)
+                                 role_prompt(definitions, "critic", SWARM_CRITIC_PROMPT),
+                                 read_only=True)
             critic_out = critic.run_turn(
-                _critic_prompt(score, tester_report, _diff_summary(ws), previous))
+                _critic_prompt(score, tester_report, _diff_summary(ws), previous,
+                               episodes))
             role_tokens["critic"] += critic.usage.total_tokens
             total_tokens += critic.usage.total_tokens
             parsed = _parse_critic(critic_out)
@@ -486,11 +674,14 @@ def run_swarm(
             if suggestions or not tests_pass:
                 emit("phase", {"role": "worker"})
                 worker = _make_agent(ws, worker_provider, worker_model, worker_cfg,
-                                     SWARM_WORKER_PROMPT, read_only=False,
+                                     role_prompt(definitions, "worker", SWARM_WORKER_PROMPT)
+                                     + EPISODE_CONTRACT,
+                                     read_only=False,
                                      on_event=on_worker_event,
                                      worker_permissions=worker_permissions,
                                      owner=worker_owner)
-                worker_out = worker.run_turn(_worker_prompt(parsed, score))
+                worker_out = worker.run_turn(_worker_prompt(parsed, score, episodes))
+                episodes["worker"] = _episode_of(worker_out)
                 role_tokens["worker"] += worker.usage.total_tokens
                 total_tokens += worker.usage.total_tokens
                 progress(f"worker: {_summarize(worker_out)}")
@@ -508,6 +699,7 @@ def run_swarm(
         traces.append({
             "iteration": iteration,
             "score": score.score,
+            "episodes": dict(episodes),
             "tester": tester.messages if tester is not None else [],
             "critic": critic.messages if critic is not None else [],
             "worker": worker.messages if worker is not None else [],
@@ -537,6 +729,9 @@ def run_swarm(
         "critic_spec": critic_spec,
         "tester_spec": tester_spec,
         "traces": str(trace_dir),
+        "team_mode": team_mode,
+        "objective": objective,
+        "artifacts": artifacts,
     }, indent=2))
 
     return SwarmResult(
@@ -551,6 +746,7 @@ def run_swarm(
         saved_to=str(out_path),
         traces=str(trace_dir),
         role_tokens=role_tokens,
+        artifacts=artifacts,
     )
 
 

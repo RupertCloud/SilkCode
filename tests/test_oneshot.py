@@ -120,3 +120,45 @@ def test_reload_command_picks_up_config_changes(tmp_path, monkeypatch, capsys, s
     finally:
         server.httpd.shutdown()
         server.httpd.server_close()
+
+
+def test_oneshot_pushes_when_auto_push_is_on(oneshot_env, monkeypatch, capsys):
+    """--auto-push says "after each turn", and a one-shot run is a turn.
+
+    It is also the case that needs it most: there is no prompt afterwards
+    for anyone to type /push at, which is the whole point of running
+    non-interactively.
+    """
+    pushed = []
+    monkeypatch.setattr("silkcode.tools.git.push_if_needed",
+                        lambda ws: pushed.append(ws) or "Pushed main to origin.")
+
+    rc = run_repl(str(oneshot_env), None, "agent", prompt="create hello.txt",
+                  auto_push=True)
+    assert rc == 0
+    assert pushed, "the one-shot turn finished without pushing"
+    assert "auto-push" in capsys.readouterr().out
+
+
+def test_oneshot_does_not_push_when_auto_push_is_off(oneshot_env, monkeypatch):
+    pushed = []
+    monkeypatch.setattr("silkcode.tools.git.push_if_needed",
+                        lambda ws: pushed.append(ws) or "Pushed.")
+    run_repl(str(oneshot_env), None, "agent", prompt="create hello.txt")
+    assert not pushed
+
+
+def test_auto_push_grants_push_without_prompting(oneshot_env, monkeypatch):
+    """Turning auto-push on has to carry the push grant, or the agent stops
+    to ask for permission on a run with nobody watching."""
+    seen = {}
+    monkeypatch.setattr("silkcode.tools.git.push_if_needed", lambda ws: None)
+    real_init = __import__("silkcode.permissions", fromlist=["PermissionManager"]).PermissionManager.__init__
+
+    def spy(self, *a, **kw):
+        real_init(self, *a, **kw)
+        seen["grants"] = set(self.grants)
+
+    monkeypatch.setattr("silkcode.permissions.PermissionManager.__init__", spy)
+    run_repl(str(oneshot_env), None, "agent", prompt="create hello.txt", auto_push=True)
+    assert "push" in seen["grants"]

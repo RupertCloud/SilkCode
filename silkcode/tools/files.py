@@ -83,6 +83,27 @@ def _check_locked(ws: Workspace, owner: str | None) -> None:
 
 def read_file(ws: Workspace, path: str, offset: int = 1, limit: int = 1000,
               _registry: dict | None = None, _owner: str | None = None) -> str:
+    from ..remotews import RemoteWorkspace
+    if isinstance(ws, RemoteWorkspace):
+        rel = path.lstrip("/")
+        if not ws.is_file(rel):
+            raise ToolError(f"File not found: {path}")
+        text = ws.read_text(rel)
+        lines = text.splitlines()
+        if not lines:
+            return "(empty file)"
+        offset = max(1, int(offset))
+        limit = max(1, int(limit))
+        chunk = lines[offset - 1 : offset - 1 + limit]
+        if not chunk:
+            return f"(no lines at offset {offset}; file has {len(lines)} lines)"
+        body = "\n".join(f"{i}\t{line}" for i, line in enumerate(chunk, start=offset))
+        if len(body) > MAX_READ_CHARS:
+            body = body[:MAX_READ_CHARS] + "\n... [truncated]"
+        remaining = len(lines) - (offset - 1 + len(chunk))
+        if remaining > 0:
+            body += f"\n... ({remaining} more lines)"
+        return body
     registry = _registry if _registry is not None else _ANON_REGISTRY
     p = ws.resolve(path)
     if not p.is_file():
@@ -108,6 +129,11 @@ def read_file(ws: Workspace, path: str, offset: int = 1, limit: int = 1000,
 
 def write_file(ws: Workspace, path: str, content: str,
                _registry: dict | None = None, _owner: str | None = None) -> str:
+    from ..remotews import RemoteWorkspace
+    if isinstance(ws, RemoteWorkspace):
+        rel = path.lstrip("/")
+        ws.write_text(rel, content)
+        return f"Wrote {len(content)} characters to {rel}"
     registry = _registry if _registry is not None else _ANON_REGISTRY
     p = ws.resolve(path)
     _check_stale(registry, ws, p)
@@ -123,6 +149,25 @@ def write_file(ws: Workspace, path: str, content: str,
 def edit_file(ws: Workspace, path: str, old_string: str, new_string: str,
               replace_all: bool = False, _registry: dict | None = None,
               _owner: str | None = None) -> str:
+    from ..remotews import RemoteWorkspace
+    if isinstance(ws, RemoteWorkspace):
+        rel = path.lstrip("/")
+        if not ws.is_file(rel):
+            raise ToolError(f"File not found: {path}")
+        text = ws.read_text(rel)
+        count = text.count(old_string)
+        if count == 0:
+            raise ToolError(f"old_string not found in {path}")
+        if count > 1 and not replace_all:
+            raise ToolError(
+                f"old_string occurs {count} times in {path}; make it unique or set replace_all=true"
+            )
+        if replace_all:
+            text = text.replace(old_string, new_string)
+        else:
+            text = text.replace(old_string, new_string, 1)
+        ws.write_text(rel, text)
+        return f"Replaced {count if replace_all else 1} occurrence(s) in {rel}"
     registry = _registry if _registry is not None else _ANON_REGISTRY
     p = ws.resolve(path)
     _check_stale(registry, ws, p)  # before the existence check: a read-then-deleted file is "changed"

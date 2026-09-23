@@ -33,17 +33,51 @@ class LocalBackend:
     name = "local"
 
     def exec(self, ws: Workspace, command: str, timeout: int = 120) -> str:
+        """Run a command, leaving a durable record while it is in flight.
+
+        The record (silkcode.inflight) is written before the process starts
+        and removed once there is an outcome to report, and the command's
+        output goes to files beside it - so if this process dies mid-run, the
+        next session in the workspace can say what was running, which fate it
+        met, and what it printed, instead of knowing nothing.
+        """
+        from . import inflight
+
         timeout = min(max(int(timeout), 1), 600)
+        record = inflight.begin(ws.root, command)
+        out_file = err_file = None
+        if record is not None:
+            try:
+                out_file = open(record.out_path, "w+", errors="replace")
+                err_file = open(record.err_path, "w+", errors="replace")
+            except OSError:
+                out_file = err_file = None
         try:
-            proc = subprocess.run(
-                command, shell=True, cwd=ws.root,
-                capture_output=True, text=True, timeout=timeout,
+            proc = subprocess.Popen(
+                command, shell=True, cwd=ws.root, text=True,
+                stdout=out_file or subprocess.PIPE,
+                stderr=err_file or subprocess.PIPE,
             )
-        except subprocess.TimeoutExpired:
-            return f"Command timed out after {timeout} seconds: {command}"
-        out = proc.stdout or ""
-        if proc.stderr:
-            out = out + ("\n" if out else "") + proc.stderr
+            inflight.started(record, proc.pid)
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                return f"Command timed out after {timeout} seconds: {command}"
+            if out_file is not None:
+                out_file.seek(0)
+                stdout = out_file.read()
+                err_file.seek(0)
+                stderr = err_file.read()
+        finally:
+            for f in (out_file, err_file):
+                if f is not None:
+                    f.close()
+            inflight.finish(record)
+        out = stdout or ""
+        if stderr:
+            out = out + ("\n" if out else "") + stderr
         out = out.strip() or "(no output)"
         if len(out) > MAX_OUTPUT_CHARS:
             out = out[:MAX_OUTPUT_CHARS] + "\n... [output truncated]"
@@ -72,7 +106,8 @@ class RemoteBackend:
         self.url = url.rstrip("/")
         self.name = f"remote({self.url})"
         self._headers = {"Authorization": f"Bearer {token}"}
-        self._client = client or httpx.Client(timeout=630.0)
+        # No redirects: every request carries the sandbox's Bearer token.
+        self._client = client or httpx.Client(timeout=630.0, follow_redirects=False)
         self._last_manifest: tuple | None = None
 
     def _workspace_id(self, ws: Workspace) -> str:
@@ -88,10 +123,80 @@ class RemoteBackend:
         return tuple(entries)
 
     def health(self) -> dict:
-        resp = self._client.get(f"{self.url}/health", headers=self._headers)
+        # A health check is the one call whose whole job is to report an
+        # unreachable sandbox, so a connection error is an expected answer
+        # here, not a crash: wrap it like every other request does.
+        try:
+            resp = self._client.get(f"{self.url}/health", headers=self._headers)
+        except httpx.HTTPError as exc:
+            raise ToolError(f"sandbox unreachable: {exc}") from exc
         if resp.status_code >= 400:
             raise ToolError(f"sandbox health check failed: HTTP {resp.status_code}: {resp.text[:200]}")
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise ToolError(
+                f"sandbox at {self.url} did not return JSON; is it a Silk Code sandbox?"
+            ) from exc
+
+    # ---- remote-workspace protocol (the repo lives in the sandbox) ---------
+
+    def _ws_request(self, method: str, path: str, **kwargs) -> dict:
+        try:
+            resp = self._client.request(method, f"{self.url}{path}", headers=self._headers, **kwargs)
+        except httpx.HTTPError as exc:
+            raise ToolError(f"sandbox request failed: {exc}") from exc
+        if resp.status_code >= 400:
+            detail = resp.text[:200]
+            try:
+                detail = resp.json().get("error", detail)
+            except ValueError:
+                pass
+            raise ToolError(f"sandbox {method} {path} failed: HTTP {resp.status_code}: {detail}")
         return resp.json()
+
+    def clone(self, workspace_id: str, url: str, token: str | None = None) -> None:
+        """Tell the sandbox to clone a repo into its own store (or fetch it
+        when already present). The repo never touches this machine."""
+        self._ws_request("POST", f"/clone/{workspace_id}",
+                         json={"url": url, "token": token})
+
+    def files(self, workspace_id: str) -> list[str]:
+        return self._ws_request("GET", f"/files/{workspace_id}").get("files", [])
+
+    def read(self, workspace_id: str, path: str) -> str:
+        import urllib.parse
+        return self._ws_request(
+            "GET", f"/read/{workspace_id}?path={urllib.parse.quote(path)}"
+        ).get("content", "")
+
+    def write(self, workspace_id: str, path: str, content: str) -> None:
+        self._ws_request("POST", f"/write/{workspace_id}",
+                         json={"path": path, "content": content})
+
+    def grep(self, workspace_id: str, pattern: str, path: str = ".",
+             glob: str = "**/*") -> list[str]:
+        return self._ws_request(
+            "POST", f"/grep/{workspace_id}",
+            json={"pattern": pattern, "path": path, "glob": glob},
+        ).get("matches", [])
+
+    def exec_json(self, workspace_id: str, command: str, timeout: int = 120) -> dict:
+        """Run `command` in the sandbox workspace without syncing anything up
+        (the sandbox owns the files). Returns the raw {"exit_code", "output"}."""
+        return self._ws_request(
+            "POST", f"/exec/{workspace_id}",
+            json={"command": command, "timeout": min(max(int(timeout), 1), 600)},
+        )
+
+    def exec_raw(self, workspace_id: str, command: str, timeout: int = 120) -> str:
+        data = self.exec_json(workspace_id, command, timeout=timeout)
+        output = str(data.get("output", "")).strip() or "(no output)"
+        if len(output) > MAX_OUTPUT_CHARS:
+            output = output[:MAX_OUTPUT_CHARS] + "\n... [output truncated]"
+        return f"[sandbox] exit code: {data.get('exit_code', '?')}\n{output}"
+
+    # ---- classic sync-mode exec (local workspace mirrored up) --------------
 
     def _sync(self, ws: Workspace) -> None:
         manifest = self._manifest(ws)
@@ -116,6 +221,15 @@ class RemoteBackend:
                 json={"command": command, "timeout": timeout},
                 headers=self._headers,
             )
+        except httpx.TimeoutException as exc:
+            # The command's own limit is enforced by the sandbox, which
+            # answers with a "timed out" result. Reaching this instead means
+            # the round trip itself stalled, and the caller's remedy is a
+            # different one, so say which happened.
+            raise ToolError(
+                f"the sandbox at {self.url} did not respond within the client "
+                f"timeout while running a command (limit was {timeout}s): {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
             raise ToolError(f"sandbox request failed: {exc}") from exc
         if resp.status_code >= 400:

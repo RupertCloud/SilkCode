@@ -113,3 +113,32 @@ def test_git_error_is_single_line(tmp_path):
     out = git_diff(Workspace(tmp_path))  # not a git repository
     assert out.startswith("git error")
     assert "\n" not in out
+
+
+def test_a_plain_folder_is_told_so_in_words(tmp_path):
+    """Opening a directory that is not a repository is a normal thing to do,
+    and the diff panel is where a new user meets the answer. It used to read
+    `git error (exit 128): fatal: not a git repository (or any of the parent
+    directories): .git`."""
+    from silkcode.tools.git import git_diff, git_log, git_status
+    from silkcode.workspace import Workspace
+
+    plain = tmp_path / "just-a-folder"
+    plain.mkdir()
+    (plain / "notes.txt").write_text("hello\n")
+    ws = Workspace(str(plain))
+
+    for report in (git_diff(ws), git_status(ws), git_log(ws)):
+        assert "not a git repository" in report
+        assert "git init" in report, f"no way forward offered: {report}"
+        assert "exit 12" not in report, f"still quoting git's exit code: {report}"
+        assert "fatal:" not in report and "warning:" not in report
+
+
+def test_a_real_repository_is_unaffected(repo):
+    """`git diff` and `git status` disagree about how to say it — exit 129 with
+    'warning: Not a git repository' versus exit 128 with 'fatal: not a git
+    repository' — so the check is case-insensitive, and must not catch
+    anything else."""
+    from silkcode.tools.git import git_status
+    assert "not a git repository" not in git_status(repo)

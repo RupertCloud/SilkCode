@@ -40,7 +40,18 @@ def _with_trailers(message: str) -> str:
     return message.rstrip() + "\n\n" + "\n".join(trailers)
 
 
+# Said once, in words, rather than echoing git's exit code at the user. The
+# `git error` prefix is load-bearing: callers below test for it to decide
+# whether a command succeeded.
+NOT_A_REPOSITORY = ("git error: this project is not a git repository — "
+                    "run `git init` here to track changes, revert turns, and "
+                    "see diffs")
+
+
 def _git(ws: Workspace, *args: str, env: dict | None = None, timeout: int = 60) -> str:
+    from ..remotews import RemoteWorkspace
+    if isinstance(ws, RemoteWorkspace):
+        return ws.git(*args, env=env, timeout=timeout)
     run_env = None
     if env:
         run_env = dict(os.environ)
@@ -59,6 +70,15 @@ def _git(ws: Workspace, *args: str, env: dict | None = None, timeout: int = 60) 
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout).strip()
         first_line = detail.splitlines()[0] if detail else "unknown error"
+        # Opening a plain folder is a normal thing to do, and "git error (exit
+        # 128): fatal: not a git repository (or any of the parent
+        # directories): .git" is not the way to say so. It is the first thing
+        # a new user sees in the diff panel.
+        # `status` says "fatal: not a git repository" and exits 128; `diff`
+        # says "warning: Not a git repository" and exits 129. Same situation,
+        # and the diff panel is where a user meets it first.
+        if "not a git repository" in first_line.lower():
+            return NOT_A_REPOSITORY
         return f"git error (exit {proc.returncode}): {first_line}"
     return proc.stdout
 
@@ -112,6 +132,14 @@ def git_push(ws: Workspace, remote: str = "origin", branch: str | None = None,
     if out.startswith("git error"):
         return out
     return f"Pushed {branch} to {remote}." + (f"\n{out.strip()}" if out.strip() else "")
+
+
+def git_add_remote(ws: Workspace, name: str, url: str) -> str:
+    """Add a named remote without putting credentials in repository config."""
+    if not name.strip() or not url.strip():
+        return "git error: remote name and URL are required"
+    out = _git(ws, "remote", "add", name, url)
+    return out if out.startswith("git error") else f"Added remote {name}."
 
 
 def push_if_needed(ws: Workspace) -> str | None:

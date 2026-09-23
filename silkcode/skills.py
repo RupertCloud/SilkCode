@@ -63,7 +63,21 @@ def skill_dirs(ws: Workspace) -> list[Path]:
 
 
 def load_skills(ws: Workspace) -> dict[str, Skill]:
+    from .remotews import RemoteWorkspace
     skills: dict[str, Skill] = {}
+    if isinstance(ws, RemoteWorkspace):
+        # remote mode: only user-level skills (local machine config) are
+        # loaded; project skills would live in the sandbox clone and are not
+        # fetched in this version.
+        user_dir = config_dir() / "skills"
+        if user_dir.is_dir():
+            for path in sorted(user_dir.glob("*.md")):
+                text = path.read_text(errors="replace")
+                meta, body = _split_frontmatter(text)
+                name = meta.get("name") or path.stem
+                description = meta.get("description") or _first_meaningful_line(body)
+                skills[name] = Skill(name=name, description=description, path=path)
+        return skills
     for directory in skill_dirs(ws):  # project dir last: overrides user skills
         if not directory.is_dir():
             continue

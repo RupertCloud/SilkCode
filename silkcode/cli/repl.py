@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
-from .. import __version__
+from ..version import build_id
 from ..agent import Agent
 from ..config import Config, ConfigError
 from ..providers import ProviderError, build_provider
-from ..context import build_context
+from ..context import assemble, build_context
 from ..sessions import SessionStore, new_session
 from ..permissions import PermissionManager
 from ..tools.git import git_diff
@@ -31,7 +32,9 @@ HELP = """Commands:
   /help              show this help
   /model [spec]      show or switch the model (e.g. /model ollama/qwen2.5-coder)
   /models            list configured providers
-  /mode [m]          show or set permission mode: ask | edit | agent
+  /mode [m]          show or set permission mode: plan | ask | edit | agent
+  /new [name] [tpl]  create a new project from a template and switch to it
+                     (e.g. /new todo-cli python-cli; no arguments prompts)
   /project [spec]    open another project (GitHub repo or local path) for this session
   /reload            re-read the config and rebuild the provider + MCP (e.g. a new
                      'timeout' for a slow provider) without losing this conversation
@@ -42,6 +45,8 @@ HELP = """Commands:
   /revert            revert the files changed in the last turn (checkpoint restore)
   /skills            list installed skills
   /memory            show the project memory
+  /plan              show the current plan and its progress
+  /agents            list swarm role definitions (built-in overrides and custom specialists)
   /mcp               list connected MCP servers and their tools
   /clear             clear the conversation (keeps the session file)
   /sessions          list saved sessions
@@ -84,14 +89,42 @@ def _on_event(kind: str, data) -> None:
 
 def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None = None,
              prompt: str | None = None, grants: list[str] | None = None,
-             use_sandbox: bool = False, auto_push: bool = False) -> int:
-    try:
-        workspace = Workspace(path)
-    except ToolError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+             use_sandbox: bool = False, auto_push: bool = False,
+             remote: str | None = None, trace_path: str | None = None,
+             final_answer_path: str | None = None,
+             check_command: str | None = None, isolated: bool = False) -> int:
     config = Config.load()
-    if use_sandbox:
+    worktree = None
+    if isolated:
+        if remote:
+            print("error: --isolated is for local checkouts; a remote workspace "
+                  "already lives in the sandbox", file=sys.stderr)
+            return 1
+        from ..worktree import create as create_worktree
+        try:
+            worktree = create_worktree(path)
+        except ToolError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        path = str(worktree.root)
+        print(f"{CYAN}isolated{RESET} {worktree.root}  "
+              f"{DIM}(branch {worktree.branch}, forked from "
+              f"{worktree.base[:10]}; your checkout is untouched){RESET}")
+    try:
+        return _run_repl(path, model_spec, mode, resume, prompt, grants,
+                         use_sandbox, auto_push, remote, trace_path,
+                         final_answer_path, check_command, config)
+    finally:
+        if worktree is not None:
+            from ..worktree import cleanup as cleanup_worktree
+            print(cleanup_worktree(worktree))
+
+
+def _run_repl(path, model_spec, mode, resume, prompt, grants, use_sandbox,
+              auto_push, remote, trace_path, final_answer_path, check_command,
+              config) -> int:
+    if remote:
+        from ..remotews import RemoteWorkspace
         from ..execbackend import remote_backend_from_config
         try:
             backend = remote_backend_from_config(config.data)
@@ -99,11 +132,30 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
                 print("error: no sandbox configured; run 'silkcode sandbox connect <url>'", file=sys.stderr)
                 return 1
             backend.health()
-            workspace.exec_backend = backend
-            print(f"{DIM}commands run in sandbox: {backend.url}{RESET}")
+            workspace = RemoteWorkspace(backend, remote)
+            print(f"{CYAN}remote workspace{RESET} {remote}  {DIM}(repo lives in sandbox {backend.url}){RESET}")
         except ToolError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+    else:
+        try:
+            workspace = Workspace(path)
+        except ToolError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        if use_sandbox:
+            from ..execbackend import remote_backend_from_config
+            try:
+                backend = remote_backend_from_config(config.data)
+                if backend is None:
+                    print("error: no sandbox configured; run 'silkcode sandbox connect <url>'", file=sys.stderr)
+                    return 1
+                backend.health()
+                workspace.exec_backend = backend
+                print(f"{DIM}commands run in sandbox: {backend.url}{RESET}")
+            except ToolError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
     store = SessionStore()
 
     spec = model_spec or (resume or {}).get("model") or config.default_model
@@ -133,11 +185,21 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
                                     grants=grants)
     autopush_state = {"on": auto_push}
     from ..agent.loop import DEFAULT_CONTEXT_TOKENS
+    from ..project import remember_workspace
+    remember_workspace(workspace.root)   # the project you launched on counts
+    project = assemble(workspace)
+    # stderr, and before anything else: `silkcode -p` output gets piped into
+    # scripts, and a security notice must not land in the middle of it - nor
+    # be skipped just because this run is non-interactive.
+    for warning in project.warnings:
+        print(f"{YELLOW}{warning}{RESET}\n", file=sys.stderr)
+    from ..lightmodel import checkpoint_summarizer
     agent = Agent(provider, model, workspace, permissions, on_event=_on_event,
-                  context=build_context(workspace), mcp=mcp,
+                  context=project.text, mcp=mcp,
                   max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS,
                   session_id=(resume or {}).get("id"),
-                  attribution=config.data.get("attribution", True))
+                  attribution=config.data.get("attribution", True),
+                  summarizer=checkpoint_summarizer(config))
 
     if resume:
         session = resume
@@ -151,23 +213,63 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         agent.session_id = session["id"]
 
     if prompt is not None:
-        # one-shot mode: run a single turn and exit
+        # One-shot mode: run a single turn and exit. With --trace,
+        # --final-answer or --check this is adapter mode - a harness is
+        # driving, so the exit code is a contract: 0 the run completed (and
+        # the check passed), 1 the check failed, 2 the harness's fault
+        # domain (provider down, bad config). Without them the plain
+        # behavior is unchanged.
+        adapter = bool(trace_path or final_answer_path or check_command)
+        trace = None
+        if trace_path:
+            from ..trace import TraceWriter
+            trace = TraceWriter(trace_path)
+            inner = agent.on_event
+            agent.on_event = lambda kind, data: (trace.event(kind, data), inner(kind, data))[-1]
         session["title"] = prompt[:60]
         try:
-            agent.run_turn(prompt)
+            answer = agent.run_turn(prompt)
             print()
         except ProviderError as exc:
             print(f"\n{RED}provider error: {exc}{RESET}", file=sys.stderr)
-            return 1
+            if trace:
+                trace.done(status="harness_error", detail=str(exc),
+                           prompt_tokens=agent.usage.prompt_tokens,
+                           completion_tokens=agent.usage.completion_tokens)
+            return 2 if adapter else 1
+        if final_answer_path:
+            Path(final_answer_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(final_answer_path).write_text(answer or "")
+        check_out = ""
+        check_passed = True
+        if check_command:
+            from ..tools.shell import run_command
+            check_out = run_command(agent.workspace, check_command, timeout=600)
+            check_passed = check_out.startswith("exit code: 0")
+            first = check_out.splitlines()[0] if check_out else ""
+            print(f"{DIM}check: {check_command} -> {first}{RESET}", file=sys.stderr)
+        if trace:
+            trace.done(status="success" if check_passed else "task_failure",
+                       detail="" if check_passed else check_out[:2000],
+                       prompt_tokens=agent.usage.prompt_tokens,
+                       completion_tokens=agent.usage.completion_tokens)
+        if autopush_state["on"]:
+            # --auto-push means "after each turn", and a one-shot run is a
+            # turn. It is also the case that most needs it: nobody is at a
+            # prompt to type /push afterwards.
+            from ..tools.git import push_if_needed
+            pushed = push_if_needed(agent.workspace)
+            if pushed:
+                print(f"{DIM}auto-push: {pushed.splitlines()[0]}{RESET}")
         session["messages"] = agent.messages
         session["usage"] = {
             "prompt_tokens": agent.usage.prompt_tokens,
             "completion_tokens": agent.usage.completion_tokens,
         }
         store.save(session)
-        return 0
+        return 0 if check_passed else 1
 
-    print(f"{BOLD}Silk Code{RESET} v{__version__}  {DIM}|{RESET}  model: {CYAN}{provider_name}/{model}{RESET}  "
+    print(f"{BOLD}Silk Code{RESET} v{build_id()}  {DIM}|{RESET}  model: {CYAN}{provider_name}/{model}{RESET}  "
           f"{DIM}|{RESET}  mode: {permissions.mode}  {DIM}|{RESET}  {workspace.root}")
     print(f"{DIM}Type a request, or /help for commands.{RESET}")
 
@@ -250,7 +352,7 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
             session["mode"] = arg
             print(f"mode set to {arg}")
         else:
-            print(f"{RED}unknown mode '{arg}'; expected ask, edit, or agent{RESET}")
+            print(f"{RED}unknown mode '{arg}'; expected plan, ask, edit, or agent{RESET}")
     elif cmd == "/diff":
         print(git_diff(agent.workspace))
     elif cmd == "/push":
@@ -293,6 +395,23 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
         content = load_memory(agent.workspace)
         print(content if content else f"No project memory yet ({memory_path(agent.workspace)}). "
               "The agent adds notes with the remember tool.")
+    elif cmd == "/plan":
+        from ..plan import progress, read_plan
+        print(read_plan(agent.workspace))
+        print(progress(agent.workspace))
+    elif cmd == "/agents":
+        from ..roles import load_roles, role_dirs, withheld
+        definitions = load_roles(agent.workspace)
+        for warning in withheld(agent.workspace):
+            print(warning)
+        if definitions:
+            for d in definitions.values():
+                kind = "custom specialist" if d.custom else "overrides built-in"
+                pin = f", model {d.model}" if d.model else ""
+                print(f"  {d.name}: {d.description} ({kind}{pin})")
+        else:
+            dirs = " or ".join(str(d) for d in role_dirs(agent.workspace))
+            print(f"No agent definitions. Add markdown files to {dirs}")
     elif cmd == "/mcp":
         if agent.mcp is None:
             print("No MCP servers configured. Add one with: silkcode mcp add <name> --command '...'")
@@ -304,6 +423,8 @@ def _handle_slash(line: str, agent: Agent, config: Config, session: dict, store:
     elif cmd == "/sessions":
         for s in store.list():
             print(f"#{s['id']:<5} {s['model']:<28} {s['title']}")
+    elif cmd == "/new":
+        _new_command(agent, session, arg)
     elif cmd == "/project":
         _project_command(agent, config, session, arg)
     elif cmd == "/reload":
@@ -375,6 +496,50 @@ def _reload_command(agent: Agent, config: Config, session: dict, mcp) -> object:
         except Exception:
             pass
     return new_mcp
+
+
+def _new_command(agent: Agent, session: dict, arg: str) -> None:
+    """Create a new project and point this session at it.
+
+    New projects land next to the current one (`/new sibling` in ~/code/app
+    creates ~/code/sibling) rather than inside it, so scaffolding never drops
+    an unrelated tree into the repository being worked on.
+    """
+    from pathlib import Path
+
+    from ..context import build_context
+    from ..project import record_recent_project
+    from ..remotews import RemoteWorkspace
+    from ..scaffold import (DEFAULT_TEMPLATE, create_project, format_result,
+                            prompt_for_new_project)
+    from ..workspace import ToolError
+
+    # A remote workspace's root is an empty local scratch dir; its parent is a
+    # temp directory nobody wants a new project in. Use the shell's cwd there.
+    parent = (Path.cwd() if isinstance(agent.workspace, RemoteWorkspace)
+              else agent.workspace.root.parent)
+    parts = arg.split()
+    if len(parts) > 2:
+        print(f"{RED}usage: /new [name] [template]{RESET}  "
+              f"(a name with spaces goes through the prompt: type /new alone)")
+        return
+    try:
+        if parts:
+            name, template = parts[0], (parts[1] if len(parts) > 1 else DEFAULT_TEMPLATE)
+            result = create_project(name, template=template, parent=parent)
+        else:
+            result = prompt_for_new_project(parent=parent)
+    except ToolError as exc:
+        print(f"{RED}{exc}{RESET}")
+        return
+
+    print(format_result(result))
+    record_recent_project("local", str(result.path), str(result.path))
+    workspace = result.workspace
+    agent.set_workspace(workspace, build_context(workspace))
+    session["cwd"] = str(workspace.root)
+    print(f"\n{BOLD}Opened project:{RESET} {CYAN}{workspace.root}{RESET}")
+    print(f"{DIM}Files and git now refer to {workspace.root}{RESET}")
 
 
 def _project_command(agent: Agent, config: Config, session: dict, arg: str) -> None:

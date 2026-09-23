@@ -3,6 +3,7 @@ import pytest
 from silkcode.tools.files import edit_file, read_file, write_file
 from silkcode.tools.search import glob_files, grep
 from silkcode.tools.shell import run_command
+from silkcode.tools.images import IMAGE_MARKER, _web_url, show_image
 from silkcode.workspace import ToolError, Workspace
 
 
@@ -161,3 +162,90 @@ def test_run_command(ws):
 def test_run_command_failure(ws):
     out = run_command(ws, "false")
     assert "exit code: 1" in out
+
+
+def test_show_image_validates_workspace_image(ws):
+    image = ws.root / "shot.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n")
+    assert show_image(ws, "shot.png") == IMAGE_MARKER + "shot.png"
+    with pytest.raises(ToolError):
+        show_image(ws, "../shot.png")
+    (ws.root / "notes.txt").write_text("not an image")
+    with pytest.raises(ToolError, match="Only PNG"):
+        show_image(ws, "notes.txt")
+
+
+def test_web_review_accepts_links_but_not_files_or_credentials():
+    assert _web_url("https://example.com/page") == "https://example.com/page"
+    assert _web_url("http://localhost:3000") == "http://localhost:3000"
+    for url in ("file:///etc/passwd", "data:text/html,hi", "https://user:pass@example.com"):
+        with pytest.raises(ToolError):
+            _web_url(url)
+
+
+# ---- live preview server (the Python-native live-server) ---------------------
+
+def test_live_server_start_serves_and_injects_reload(ws):
+    import urllib.request
+    import silkcode.liveserver as L
+
+    write_file(ws, "index.html", "<html><body>hello</body></html>")
+    try:
+        out = L.live_server(ws, "start", port=0)
+        assert "live preview server running at" in out
+        srv = L.REGISTRY.get(ws)
+        assert srv is not None
+        body = urllib.request.urlopen(srv.url + "index.html", timeout=5).read()
+        assert b"hello" in body                    # the page is served
+        assert b"silk-reload" in body              # the reload meta is injected
+        assert b"location.reload()" in body        # and the reload client script
+    finally:
+        L.live_server(ws, "stop")
+    assert "no live preview server is running" in L.live_server(ws, "status")
+
+
+def test_live_server_status_and_stop(ws):
+    import silkcode.liveserver as L
+    write_file(ws, "index.html", "<html><body>x</body></html>")
+    assert "no live preview server is running" in L.live_server(ws, "status")
+    L.live_server(ws, "start", port=0)
+    assert "already running" in L.live_server(ws, "start", port=0)
+    assert "running at" in L.live_server(ws, "status")
+    assert "stopped" in L.live_server(ws, "stop")
+
+
+def test_live_server_unknown_action(ws):
+    import silkcode.liveserver as L
+    with pytest.raises(ToolError, match="unknown live_server action"):
+        L.live_server(ws, "boom")
+
+
+def test_live_server_watcher_detects_changes(ws):
+    import time
+    import silkcode.liveserver as L
+    write_file(ws, "index.html", "<html><body>v1</body></html>")
+    try:
+        L.live_server(ws, "start", port=0)
+        srv = L.REGISTRY.get(ws)
+        before = srv._reload_count
+        time.sleep(0.05)
+        write_file(ws, "index.html", "<html><body>v2 changed</body></html>")
+        time.sleep(srv.interval + 0.4)
+        assert srv._reload_count > before
+    finally:
+        L.live_server(ws, "stop")
+
+
+def test_live_server_blocks_path_escape(ws):
+    import urllib.request
+    import urllib.error
+    import silkcode.liveserver as L
+    write_file(ws, "index.html", "<html><body>x</body></html>")
+    try:
+        L.live_server(ws, "start", port=0)
+        srv = L.REGISTRY.get(ws)
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(srv.url + "../" + "pyproject.toml", timeout=5)
+        assert exc.value.code == 403
+    finally:
+        L.live_server(ws, "stop")

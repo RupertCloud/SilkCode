@@ -2,16 +2,28 @@
 
 Commands:
     silkcode [path] [--model M] [--mode ask|edit|agent]   interactive REPL
+    silkcode new [name] [--template T] [--dir D] [...]     scaffold a new project
     silkcode gui [path] [--port N] [--host H] [--model M] local web GUI
     silkcode models                                        list providers and models
     silkcode models add <name> --base-url URL [...]        onboard a provider/endpoint
     silkcode models pull <model>                           pull a model into Ollama
     silkcode models default <spec>                         set the default model
+    silkcode inference                                     status of a linked inference server
+    silkcode inference discover                            find model servers on this network
+    silkcode inference link <host|url>                     run the models on another machine
+    silkcode inference ping [--chat]                       is it up, and can it generate?
+    silkcode inference host                                (on that machine) how to let it in
     silkcode sessions                                      list saved sessions
     silkcode resume <id>                                   resume a session in the REPL
     silkcode config                                        show configuration
     silkcode swarm [path] [--model M] [...]                multi-agent improvement loop
     silkcode update [--branch B]                           pull updates and hot-apply them
+    silkcode sync [path] [--apply]                         check/reconcile a branch that moved
+    silkcode version [--json]                              what this install is, and how to update it
+
+Every subcommand also answers to its flag form - `silkcode -update` and
+`silkcode --update` both run `silkcode update` - except the flags the REPL
+itself defines (--sandbox, --version, --model, ...), which keep their meaning.
 
 Run several GUI instances on one machine - each on its own --host/--port and
 project. Session ids are unique across instances and every session is tagged
@@ -23,6 +35,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -32,9 +45,35 @@ from ..providers import build_provider
 from ..sessions import SessionStore
 
 
+# Flags the REPL itself defines. A token in here is never read as a subcommand
+# alias, which is what keeps `--sandbox <path>` meaning "run the REPL against
+# the configured sandbox" rather than the `sandbox` management command, and
+# `--version` printing the one-line build id rather than the full report.
+REPL_FLAGS = frozenset({
+    "-h", "--help", "-V", "--version", "-m", "--model", "--mode", "--allow",
+    "--sandbox", "--isolated", "--remote", "--auto-push", "-p", "--prompt",
+})
+
+
+def subcommand_alias(token: str, commands: dict) -> str | None:
+    """`-update` or `--update` -> the `update` subcommand.
+
+    Plenty of tools take their verbs as flags, so people type `silkcode
+    -update` and used to get `unrecognized arguments: -update` and no hint
+    that `silkcode update` was the same thing. These tokens were all errors
+    before, so reading them as the verb they name costs nothing - except for
+    the handful the REPL already defines, which keep their meaning.
+    """
+    if not token.startswith("-") or token in REPL_FLAGS:
+        return None
+    name = token[2:] if token.startswith("--") else token[1:]
+    return name if name in commands else None
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     commands = {
+        "new": cmd_new,
         "models": cmd_models,
         "config": cmd_config,
         "env": cmd_env,
@@ -45,30 +84,48 @@ def main(argv: list[str] | None = None) -> int:
         "review": cmd_review,
         "mcp": cmd_mcp,
         "connect": cmd_connect,
+        "inference": cmd_inference,
         "benchmark": cmd_benchmark,
         "swarm": cmd_swarm,
         "update": cmd_update,
         "sandbox": cmd_sandbox,
+        "sync": cmd_sync,
+        "version": cmd_version,
     }
-    if argv and argv[0] in commands:
-        try:
-            return commands[argv[0]](argv[1:])
-        except ConfigError as exc:
-            print(f"error: {exc}", file=sys.stderr)
-            return 1
+    if argv:
+        name = argv[0] if argv[0] in commands else subcommand_alias(argv[0], commands)
+        if name:
+            try:
+                return commands[name](argv[1:])
+            except ConfigError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
     return cmd_repl(argv)
 
 
 def _repl_parser(prog: str) -> argparse.ArgumentParser:
+    from ..version import build_id
     parser = argparse.ArgumentParser(prog=prog)
+    parser.add_argument("--version", "-V", action="version",
+                        version=f"Silk Code {build_id()}",
+                        help="print the version and exit "
+                             "('silkcode version' for the full report)")
     parser.add_argument("path", nargs="?", default=".", help="workspace directory (default: current)")
     parser.add_argument("--model", "-m", help="model spec, e.g. 'deepseek' or 'ollama/qwen2.5-coder'")
-    parser.add_argument("--mode", choices=("ask", "edit", "agent"), default="ask", help="permission mode")
+    parser.add_argument("--mode", choices=("plan", "ask", "edit", "agent"), default="ask",
+                        help="permission mode (plan = read-only: investigate and propose)")
     parser.add_argument("--allow", help="pre-authorize git operations without prompts, "
                         "comma-separated from: pull,commit,push,merge")
     parser.add_argument("--sandbox", action="store_true",
                         help="run commands in the configured remote sandbox "
                              "(silkcode sandbox connect <url>)")
+    parser.add_argument("--isolated", action="store_true",
+                        help="run in a throwaway git worktree forked from HEAD "
+                             "(silk/<stamp> branch); your checkout stays untouched")
+    parser.add_argument("--remote", metavar="REPO",
+                        help="work on a GitHub repo that lives entirely in the sandbox "
+                             "(e.g. 'github:owner/repo'); the repo never touches this "
+                             "machine - requires a configured sandbox")
     parser.add_argument("--auto-push", action="store_true",
                         help="automatically push unpushed commits after each turn "
                              "(implies the push grant)")
@@ -90,11 +147,97 @@ def _parse_grants(allow: str | None) -> list[str]:
 def cmd_repl(argv: list[str]) -> int:
     parser = _repl_parser("silkcode")
     parser.add_argument("--prompt", "-p", help="run a single request non-interactively and exit")
+    parser.add_argument("--trace", metavar="FILE",
+                        help="with -p: write a JSONL event trace of the run to FILE")
+    parser.add_argument("--final-answer", metavar="FILE",
+                        help="with -p: write the final assistant message to FILE, "
+                             "separate from the streamed output")
+    parser.add_argument("--check", metavar="CMD",
+                        help="with -p: run CMD in the workspace after the turn; "
+                             "exit 1 if it fails")
     args = parser.parse_args(argv)
+    if (args.trace or args.final_answer or args.check) and not args.prompt:
+        parser.error("--trace/--final-answer/--check require --prompt")
     from .repl import run_repl
     return run_repl(args.path, args.model, args.mode, prompt=args.prompt,
                     grants=_parse_grants(args.allow), use_sandbox=args.sandbox,
-                    auto_push=args.auto_push)
+                    auto_push=args.auto_push, remote=args.remote,
+                    trace_path=args.trace, final_answer_path=args.final_answer,
+                    check_command=args.check, isolated=args.isolated)
+
+
+def cmd_new(argv: list[str]) -> int:
+    """Scaffold a new project from a template (SRS section 10: a session needs
+    a project, and sometimes the project does not exist yet)."""
+    from ..scaffold import (DEFAULT_TEMPLATE, TEMPLATES, create_project, format_result,
+                            get_template, prompt_for_new_project, template_names)
+    from ..workspace import ToolError
+
+    parser = argparse.ArgumentParser(
+        prog="silkcode new",
+        description="Create a new project from a template, git-init it, and "
+                    "optionally start working on it right away.")
+    parser.add_argument("name", nargs="?",
+                        help="project name; omit to be prompted for name and template")
+    parser.add_argument("--template", "-t", default=None,
+                        help=f"template to use (default: {DEFAULT_TEMPLATE}); "
+                             f"one of: {', '.join(template_names())}")
+    parser.add_argument("--dir", "-d", dest="parent", default=".",
+                        help="directory to create the project in (default: current)")
+    parser.add_argument("--describe", default="",
+                        help="one-line description, written into the README, "
+                             "SILKCODE.md and package metadata")
+    parser.add_argument("--no-git", action="store_true",
+                        help="do not run 'git init' or make the initial commit")
+    parser.add_argument("--force", action="store_true",
+                        help="scaffold into an existing non-empty directory "
+                             "(existing files are never overwritten)")
+    parser.add_argument("--list", action="store_true", help="list templates and exit")
+    parser.add_argument("--open", action="store_true",
+                        help="open the new project in the interactive REPL when done")
+    parser.add_argument("--prompt", "-p",
+                        help="after creating it, run one agent turn in the new project "
+                             "(e.g. 'add a --json flag to the CLI')")
+    parser.add_argument("--model", "-m", help="model spec for --prompt / --open")
+    parser.add_argument("--mode", choices=("plan", "ask", "edit", "agent"), default="ask",
+                        help="permission mode for --prompt / --open (default: ask)")
+    args = parser.parse_args(argv)
+
+    if args.list:
+        print("Templates:")
+        for name in template_names():
+            marker = "  (default)" if name == DEFAULT_TEMPLATE else ""
+            print(f"  {name:<12} {TEMPLATES[name].description}{marker}")
+        print("\nCreate one with: silkcode new <name> --template <template>")
+        return 0
+
+    try:
+        if args.template:
+            get_template(args.template)  # fail before creating anything
+        if args.name:
+            result = create_project(args.name, template=args.template or DEFAULT_TEMPLATE,
+                                    parent=args.parent, description=args.describe,
+                                    git=not args.no_git, force=args.force)
+        else:
+            result = prompt_for_new_project(parent=args.parent)
+    except ToolError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    from ..project import record_recent_project
+    record_recent_project("local", str(result.path), str(result.path))
+    print(format_result(result))
+
+    if args.prompt or args.open:
+        from .repl import run_repl
+        if args.prompt:
+            print()
+            code = run_repl(str(result.path), args.model, args.mode, prompt=args.prompt)
+            if code != 0:
+                return code
+        if args.open:
+            return run_repl(str(result.path), args.model, args.mode)
+    return 0
 
 
 REVIEW_PROMPT = (
@@ -113,13 +256,17 @@ def cmd_review(argv: list[str]) -> int:
 
 def cmd_gui(argv: list[str]) -> int:
     parser = _repl_parser("silkcode gui")
+    parser.set_defaults(path=None)  # no path: choose a project in the GUI
     parser.add_argument("--port", type=int, default=8377)
     parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--token", help="access token required on every request; "
+                        "generated automatically when the daemon is reachable "
+                        "beyond this machine (--host other than loopback)")
     args = parser.parse_args(argv)
     from ..gui.server import run_gui
     # Normalized launch args so the daemon can re-exec itself with the same
     # configuration after a self-update (silkcode update / GUI Update button).
-    restart_args = ["gui", args.path or "."]
+    restart_args = ["gui"] + ([args.path] if args.path else [])
     if args.model:
         restart_args += ["--model", args.model]
     restart_args += ["--mode", args.mode]
@@ -131,11 +278,14 @@ def cmd_gui(argv: list[str]) -> int:
         restart_args += ["--allow", args.allow]
     if args.sandbox:
         restart_args += ["--sandbox"]
+    if args.remote:
+        restart_args += ["--remote", args.remote]
     if args.auto_push:
         restart_args += ["--auto-push"]
     return run_gui(args.path, args.model, args.mode, host=args.host, port=args.port,
                    grants=_parse_grants(args.allow), use_sandbox=args.sandbox,
-                   auto_push=args.auto_push, restart_args=restart_args)
+                   auto_push=args.auto_push, restart_args=restart_args,
+                   remote=args.remote, token=args.token)
 
 
 def cmd_models(argv: list[str]) -> int:
@@ -389,12 +539,14 @@ def cmd_update(argv: list[str]) -> int:
     from ..update import git_repo_root, update_installation
     repo = git_repo_root()
     if repo is None:
-        print("error: silkcode is not installed from a git checkout.", file=sys.stderr)
-        print("Update it with: pip install -U silkcode", file=sys.stderr)
-        return 1
+        # Not a checkout. update_installation reinstalls from whatever pip
+        # recorded at install time, which is the case for the `pip install
+        # git+https://...` the README leads with. It used to stop here and
+        # recommend `pip install -U silkcode` - a package that is not on PyPI.
+        print("not a git checkout; updating from the source pip installed from ...")
     result = update_installation(repo=repo, branch=args.branch, force=args.force,
                                  on_progress=print)
-    if args.install and result["status"] == "updated":
+    if args.install and repo is not None and result["status"] == "updated":
         print("installing editable package ...")
         proc = _subprocess.run([sys.executable, "-m", "pip", "install", "-e", "."],
                                cwd=repo, capture_output=True, text=True, timeout=600)
@@ -403,7 +555,13 @@ def cmd_update(argv: list[str]) -> int:
             return 1
     print(result["detail"])
     if result["status"] == "updated":
-        print("The GUI daemon (if running) will restart itself with the new code automatically.")
+        if repo is not None:
+            print("The GUI daemon (if running) will restart itself with the new "
+                  "code automatically.")
+        else:
+            # A reinstall swaps the files under any process already running,
+            # and nothing watches HEAD outside a checkout.
+            print("Restart any running silkcode process to pick up the new code.")
         return 0
     return 0 if result["status"] == "up-to-date" else 1
 
@@ -667,6 +825,60 @@ def cmd_config(argv: list[str]) -> int:
     return 0
 
 
+def cmd_version(argv: list[str]) -> int:
+    """Report what this install actually is, in enough detail to act on."""
+    parser = argparse.ArgumentParser(
+        prog="silkcode version",
+        description="Print the version, the commit it was built from, and how "
+                    "to update this particular install.")
+    parser.add_argument("--json", action="store_true",
+                        help="machine-readable output (for bug reports and scripts)")
+    args = parser.parse_args(argv)
+
+    from ..version import info, report
+    print(json.dumps(info(), indent=2) if args.json else report())
+    return 0
+
+
+def cmd_sync(argv: list[str]) -> int:
+    """Report whether the branch has moved underneath this workspace, and
+    optionally reconcile it."""
+    parser = argparse.ArgumentParser(
+        prog="silkcode sync",
+        description="Fetch and report where this branch stands against its "
+                    "upstream and the base branch. Without --apply it changes "
+                    "nothing.")
+    parser.add_argument("path", nargs="?", default=".")
+    parser.add_argument("--apply", action="store_true",
+                        help="perform the suggested action (fast-forward or merge)")
+    parser.add_argument("--restart", action="store_true",
+                        help="when the branch is already merged as a squash, move it "
+                             "onto the base branch (implies --apply)")
+    parser.add_argument("--base", help="branch to measure against (default: the "
+                                       "remote's default branch)")
+    parser.add_argument("--remote", default="origin")
+    args = parser.parse_args(argv)
+
+    from ..sync import resync, survey
+    from ..workspace import ToolError, Workspace
+    try:
+        ws = Workspace(args.path)
+    except ToolError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.apply or args.restart:
+        print(resync(ws, remote=args.remote, base=args.base,
+                     allow_restart=args.restart))
+        return 0
+
+    state = survey(ws, remote=args.remote, base=args.base)
+    print(state.summary())
+    # a branch that needs attention is worth a non-zero exit, so this can gate
+    # a script: `silkcode sync || silkcode sync --apply`
+    return 0 if state.recommendation()[0] in ("none", "push") else 1
+
+
 def cmd_sandbox(argv: list[str]) -> int:
     from ..execbackend import remote_backend_from_config
     from ..workspace import ToolError
@@ -759,6 +971,448 @@ def cmd_resume(argv: list[str]) -> int:
         return 1
     from .repl import run_repl
     return run_repl(data.get("cwd", "."), data.get("model"), data.get("mode", "ask"), resume=data)
+
+
+
+# ---- inference: drive from the phone, run the model on the laptop -----------
+
+def cmd_inference(argv: list[str]) -> int:
+    """`silkcode inference ...` - point this install at a model server on
+    another machine (SRS section 20: local models, not necessarily this CPU).
+
+    The shape of the problem: the phone is where you want to type and the
+    laptop is where the weights are. Everything here is either finding that
+    laptop, proving it answers, or telling the laptop to let the phone in.
+    """
+    subcommands = {
+        "discover": _inference_discover,
+        "link": _inference_link,
+        "unlink": _inference_unlink,
+        "ping": _inference_ping,
+        "host": _inference_host,
+    }
+    if argv and argv[0] in subcommands:
+        return subcommands[argv[0]](argv[1:])
+    if argv and argv[0].startswith("-"):
+        argparse.ArgumentParser(prog="silkcode inference").parse_args(argv)
+    if argv:
+        print(f"error: unknown subcommand '{argv[0]}' "
+              f"(try: {', '.join(sorted(subcommands))})", file=sys.stderr)
+        return 1
+    return _inference_status()
+
+
+def _inference_status() -> int:
+    from ..inference import linked_providers, probe
+
+    config = Config.load()
+    linked = linked_providers(config)
+    if not linked:
+        print("No inference server linked - this install runs models locally or in the cloud.\n")
+        print("To run the models on your laptop and drive them from here:")
+        print("  1. on the laptop:  silkcode inference host")
+        print("  2. here:           silkcode inference discover")
+        print("  3. here:           silkcode inference link <address-it-found>")
+        print()
+        _print_cloud_chain(config)
+        return 0
+    print(f"default model: {config.default_model}\n")
+    down = 0
+    for name, cfg in sorted(linked.items()):
+        url = cfg.get("base_url", "")
+        result = probe(url, token=config.api_key_for(cfg), timeout=4.0)
+        if result.ok:
+            print(f"{name:<12} {url:<40} up "
+                  f"({result.latency_ms:.0f} ms, {len(result.models)} models)")
+        else:
+            down += 1
+            print(f"{name:<12} {url:<40} unreachable")
+            print(f"{'':<12} {result.error}")
+    print()
+    _print_cloud_chain(config, skip=frozenset(linked))
+    print("\nCheck a round trip through the model with: silkcode inference ping --chat")
+    # Same convention as `silkcode sandbox`: a status command that found the
+    # thing it describes to be down exits non-zero, so a script can act on it.
+    return 1 if down else 0
+
+
+def _cloud_chain(config, skip: frozenset = frozenset()) -> list[tuple[str, bool, str]]:
+    """The direct-to-provider endpoints `auto` falls through to.
+
+    Linking a laptop must never look like it took DeepSeek or Kimi away - those
+    are still one `--model deepseek` away, and they are what answers when the
+    laptop is asleep or on a network it cannot be reached from. Returned as
+    (name, ready-right-now, what-it-is-missing).
+    """
+    from ..config import DEFAULT_AUTO_ORDER
+
+    # The auto chain first, because that is the order they would be tried in,
+    # then anything else that holds a key. Cloudflare is the reason for the
+    # second half: it is a built-in provider that is not in the auto order, and
+    # leaving it off this list would tell a user who has one configured that
+    # they have no cloud provider at all.
+    order = list(config.data.get("auto_order") or DEFAULT_AUTO_ORDER)
+    order += sorted(n for n in config.providers if n not in order)
+
+    chain: list[tuple[str, bool, str]] = []
+    for name in order:
+        cfg = config.providers.get(name)
+        if not cfg or name in skip:
+            continue
+        if not (cfg.get("api_key_env") or cfg.get("api_key")):
+            continue  # a local server: whether it can serve depends on it running
+        if "{account_id}" in cfg.get("base_url", "") and not cfg.get("account_id"):
+            chain.append((name, False, "needs --account-id"))
+        elif not config.api_key_for(cfg):
+            chain.append((name, False, f"needs ${cfg.get('api_key_env', 'an API key')}"))
+        elif not cfg.get("default_model"):
+            chain.append((name, False, "needs a model"))
+        else:
+            chain.append((name, True, ""))
+    return chain
+
+
+def _print_cloud_chain(config, skip: frozenset = frozenset()) -> None:
+    chain = _cloud_chain(config, skip=skip)
+    if not chain:
+        return
+    ready = [name for name, ok, _ in chain if ok]
+    missing = [name for name, ok, _ in chain if not ok]
+    if ready:
+        print("Direct to a cloud provider: " + ", ".join(ready))
+        print(f"  available at any time:  silkcode --model {ready[0]}")
+    else:
+        print("No cloud provider is set up yet - Silk Code also talks straight to "
+              "DeepSeek, Kimi and the rest.")
+    if missing:
+        # Names only: `silkcode models` already prints the env var each one wants,
+        # and six "needs $SOMETHING_API_KEY" clauses on one line reads as noise.
+        print(f"  not set up: {', '.join(missing)}"
+              "   (silkcode models shows what each needs)")
+
+
+def _inference_discover(argv: list[str]) -> int:
+    from ..inference import KNOWN_PORTS, InferenceError, discover, local_ipv4, preferred_model
+
+    parser = argparse.ArgumentParser(
+        prog="silkcode inference discover",
+        description="sweep this network for Ollama / LM Studio / vLLM / llama.cpp servers")
+    parser.add_argument("--host", action="append", dest="hosts", metavar="HOST",
+                        help="check this host only (repeatable); skips the sweep")
+    parser.add_argument("--port", action="append", type=int, dest="ports", metavar="PORT",
+                        help="port to try instead of defaults (repeatable)")
+    parser.add_argument("--prefix", type=int, default=24,
+                        help="how much of the subnet to sweep (default 24 = 254 addresses)")
+    parser.add_argument("--timeout", type=float, default=0.35,
+                        help="per-address connect timeout in seconds (default 0.35)")
+    parser.add_argument("--token", help="bearer token, if the servers require one")
+    args = parser.parse_args(argv)
+
+    # An explicit port is an exact target. Besides making the command less
+    # surprising, this prevents an unrelated local model on a default port
+    # from masking a failed check of the address the user actually supplied.
+    ports = list(dict.fromkeys(args.ports)) if args.ports else [p for p, _ in KNOWN_PORTS]
+    own = local_ipv4()
+    if args.hosts:
+        print(f"Checking {len(args.hosts)} host(s) on {len(ports)} ports ...")
+    else:
+        print(f"Sweeping {own or '?'}/{args.prefix} on ports "
+              f"{', '.join(str(p) for p in ports)} ...")
+    try:
+        found = discover(hosts=args.hosts, ports=ports, prefix=args.prefix,
+                         connect_timeout=args.timeout, token=args.token)
+    except InferenceError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if not found:
+        print("\nNothing found.")
+        print("On the machine that should run the model, run: silkcode inference host")
+        print("It prints the address to use and how to open the server to this network.")
+        return 1
+    print()
+    for result in found:
+        model = preferred_model(result.models)
+        print(f"{result.url:<34} {result.server:<10} {result.latency_ms:>6.0f} ms  "
+              f"{len(result.models)} models" + (f" (e.g. {model})" if model else ""))
+    print(f"\nLink one with: silkcode inference link {found[0].url}")
+    return 0
+
+
+def _inference_link(argv: list[str]) -> int:
+    from ..inference import (DEFAULT_LINK_NAME, InferenceError, link, normalize_url,
+                             preferred_model, probe)
+
+    parser = argparse.ArgumentParser(
+        prog="silkcode inference link",
+        description="point this install at a model server on another machine")
+    parser.add_argument("address", help="host, host:port or URL, e.g. 192.168.1.20:11434")
+    parser.add_argument("--name", default=DEFAULT_LINK_NAME,
+                        help=f"provider name to save it as (default {DEFAULT_LINK_NAME})")
+    parser.add_argument("--model", help="default model on that server "
+                                        "(default: the best-looking one it reports)")
+    parser.add_argument("--token", help="bearer token stored in the config file")
+    parser.add_argument("--token-env", help="environment variable holding the bearer token "
+                                            "(preferred over --token)")
+    parser.add_argument("--timeout", type=float, default=None,
+                        help="request timeout in seconds; a laptop loading a big model "
+                             "cold can take a while to answer the first turn")
+    parser.add_argument("--no-default", action="store_true",
+                        help="save the provider but leave the default model alone")
+    parser.add_argument("--force", action="store_true",
+                        help="save it even if it does not answer right now")
+    args = parser.parse_args(argv)
+
+    config = Config.load()
+    token = args.token or (os.environ.get(args.token_env) if args.token_env else None)
+    if args.token:
+        # Same trade-off `models add` flags: the config file is chmod 0600, but an
+        # environment variable keeps the secret out of a file that gets synced,
+        # backed up and pasted into bug reports.
+        print("warning: storing the token in the config file; prefer --token-env",
+              file=sys.stderr)
+    try:
+        url = normalize_url(args.address, default_port=11434)
+    except InferenceError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Probing {url} ...")
+    result = probe(url, token=token)
+    if not result.ok:
+        print(f"error: {result.error}", file=sys.stderr)
+        if not args.force:
+            print("\nOn the machine running the model: silkcode inference host", file=sys.stderr)
+            print("Save it anyway (e.g. the laptop is asleep) with --force.", file=sys.stderr)
+            return 1
+        print("warning: saving an endpoint that did not answer (--force)", file=sys.stderr)
+        result.kind = "ollama" if (result.port == 11434) else "openai_compat"
+        # A probe would have told us which shape the server serves. Forced, we
+        # guess from the port - and must not re-append a /v1 the user already
+        # typed, or every later request goes to /v1/v1/chat/completions.
+        if result.kind == "ollama" or url.rstrip("/").endswith("/v1"):
+            result.base_url = url
+        else:
+            result.base_url = f"{url}/v1"
+
+    model = args.model or preferred_model(result.models)
+    if args.model and result.models and args.model not in result.models:
+        print(f"warning: {url} does not list '{args.model}' "
+              f"(it has: {', '.join(result.models[:6])})", file=sys.stderr)
+    saved = link(config, args.name, result, model=model, token=args.token,
+                 token_env=args.token_env, timeout=args.timeout,
+                 make_default=not args.no_default)
+    print(f"Linked '{args.name}' -> {saved['base_url']} ({result.server or 'model server'})")
+    if result.models:
+        print(f"Models: {', '.join(result.models[:8])}"
+              + (f" (+{len(result.models) - 8} more)" if len(result.models) > 8 else ""))
+    if model:
+        spec = f"{args.name}/{model}"
+        print(f"Default model: {config.default_model}" if not args.no_default
+              else f"Use it with: silkcode --model {spec}")
+    else:
+        print(f"Use it with: silkcode --model {args.name}/<model-name>")
+    print(f"Saved in {config.path}")
+    print("\n'auto' now tries this server first and falls back to the cloud when it is away.")
+    _print_cloud_chain(config, skip=frozenset([args.name]))
+    return 0
+
+
+def _inference_unlink(argv: list[str]) -> int:
+    from ..inference import DEFAULT_LINK_NAME, linked_providers, unlink
+
+    parser = argparse.ArgumentParser(prog="silkcode inference unlink")
+    parser.add_argument("name", nargs="?", default=None,
+                        help="provider to remove (default: the only linked one)")
+    args = parser.parse_args(argv)
+
+    config = Config.load()
+    linked = linked_providers(config)
+    name = args.name
+    if name is None:
+        if len(linked) == 1:
+            name = next(iter(linked))
+        elif not linked:
+            print("Nothing linked.")
+            return 0
+        else:
+            print(f"error: several servers are linked ({', '.join(sorted(linked))}); "
+                  "name the one to remove", file=sys.stderr)
+            return 1
+    if not unlink(config, name):
+        print(f"error: no provider named '{name}' in {config.path}", file=sys.stderr)
+        return 1
+    print(f"Unlinked '{name}'. Default model is now: {config.default_model}")
+    return 0
+
+
+def _inference_ping(argv: list[str]) -> int:
+    """Is it up, and can it actually generate?
+
+    Two different questions, and the gap between them is where the bad
+    surprises live: a laptop answers /api/tags in a millisecond and can still
+    take half a minute to produce a first token while it pages a 30B model in
+    from disk.
+    """
+    from ..inference import (DEFAULT_LINK_NAME, InferenceError, linked_providers,
+                             measure_chat, normalize_url, probe)
+
+    parser = argparse.ArgumentParser(prog="silkcode inference ping")
+    parser.add_argument("target", nargs="?",
+                        help="a linked provider name or an address "
+                             f"(default: '{DEFAULT_LINK_NAME}', or the only linked server)")
+    parser.add_argument("--chat", action="store_true",
+                        help="also send a one-word prompt and time the full round trip")
+    parser.add_argument("--model", help="model to use for --chat")
+    parser.add_argument("--count", type=int, default=3, help="how many probes (default 3)")
+    parser.add_argument("--token", help="bearer token, if the server requires one")
+    args = parser.parse_args(argv)
+
+    config = Config.load()
+    linked = linked_providers(config)
+    name, cfg = None, None
+    if args.target and args.target in config.providers:
+        name, cfg = args.target, config.providers[args.target]
+    elif args.target:
+        try:
+            url = normalize_url(args.target, default_port=11434)
+        except InferenceError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        cfg = {"base_url": url}
+    elif len(linked) == 1:
+        name, cfg = next(iter(linked.items()))
+    elif DEFAULT_LINK_NAME in linked:
+        name, cfg = DEFAULT_LINK_NAME, linked[DEFAULT_LINK_NAME]
+    else:
+        print("error: nothing linked to ping. Run: silkcode inference link <address>",
+              file=sys.stderr)
+        return 1
+
+    url = cfg["base_url"]
+    token = args.token or config.api_key_for(cfg)
+    label = f"{name} ({url})" if name else url
+    print(f"Pinging {label}")
+    latencies: list[float] = []
+    last = None
+    for _ in range(max(1, args.count)):
+        last = probe(url, token=token)
+        if last.ok and last.latency_ms is not None:
+            latencies.append(last.latency_ms)
+            print(f"  reply in {last.latency_ms:.0f} ms")
+        else:
+            print(f"  no reply: {last.error}")
+    if not latencies:
+        print("\nUnreachable.", file=sys.stderr)
+        print("If the laptop is awake and the server is running, it is probably bound to "
+              "loopback there - run `silkcode inference host` on it.", file=sys.stderr)
+        return 1
+    best, worst = min(latencies), max(latencies)
+    print(f"\n{len(latencies)}/{args.count} answered - "
+          f"min {best:.0f} ms, avg {sum(latencies) / len(latencies):.0f} ms, max {worst:.0f} ms")
+    if last and last.models:
+        print(f"Models: {', '.join(last.models[:8])}")
+    if not args.chat:
+        print("\nThat is the server answering, not the model generating. "
+              "Add --chat to time a real turn.")
+        return 0
+
+    model = args.model or cfg.get("default_model")
+    if not model:
+        from ..inference import preferred_model
+        model = preferred_model(last.models if last else [])
+    if not model:
+        print("error: no model to test with; pass --model", file=sys.stderr)
+        return 1
+    chat_cfg = dict(cfg)
+    chat_cfg.setdefault("type", "ollama" if (last and last.kind == "ollama") else "openai_compat")
+    chat_cfg.setdefault("base_url", url)
+    print(f"\nGenerating with {model} ...")
+    try:
+        reply, elapsed = measure_chat(chat_cfg, model, api_key=token)
+    except InferenceError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Reply in {elapsed:.0f} ms: {reply[:120] or '(empty)'}")
+    if elapsed > 30_000:
+        print("\nThat first turn was slow - usually the model being loaded into memory. "
+              "The next one should be much faster; if it is not, try a smaller model.")
+    return 0
+
+
+def _inference_host(argv: list[str]) -> int:
+    """Run this on the machine with the GPU. It answers one question: what do
+    I type on the phone, and why can't the phone see me yet?
+
+    Local model servers ship bound to 127.0.0.1, which is the right default and
+    the exact reason a phone on the same Wi-Fi gets 'connection refused'. So
+    the check that matters is not 'is it running' but 'is it listening on an
+    address something else can reach'.
+    """
+    from ..inference import KNOWN_PORTS, local_ipv4_addresses, port_open, probe
+
+    parser = argparse.ArgumentParser(
+        prog="silkcode inference host",
+        description="show what a phone or tablet needs to reach the model servers here")
+    parser.add_argument("--port", action="append", type=int, dest="ports", metavar="PORT",
+                        help="extra port to check (repeatable)")
+    args = parser.parse_args(argv)
+
+    ports = [p for p, _ in KNOWN_PORTS]
+    ports += [p for p in (args.ports or []) if p not in ports]
+    addresses = local_ipv4_addresses()
+    if addresses:
+        print("This machine is reachable at: " + ", ".join(addresses))
+    else:
+        print("This machine has no network address - it is offline or on a network that "
+              "gives it none. Connect it to the same Wi-Fi as the phone.")
+    print()
+
+    reachable: list[tuple[str, str]] = []   # (url, server kind)
+    loopback_only: list[int] = []
+    for port in ports:
+        if not port_open("127.0.0.1", port, timeout=0.3):
+            continue
+        exposed = [a for a in addresses if port_open(a, port, timeout=0.5)]
+        if not exposed:
+            loopback_only.append(port)
+            continue
+        for address in exposed:
+            result = probe(f"http://{address}:{port}", timeout=3.0)
+            if result.ok:
+                reachable.append((result.url, result.server or "model server"))
+                print(f"  {result.url:<28} {result.server:<12} "
+                      f"{len(result.models)} models - reachable from the network")
+
+    for port in loopback_only:
+        kind = next((name for p, name in KNOWN_PORTS if p == port), "server")
+        print(f"  port {port} ({kind}) is running, but only on 127.0.0.1 - "
+              "nothing else can reach it")
+        print("    " + _open_up_hint(kind, port))
+    if not reachable and not loopback_only:
+        print("  no model server is running here.")
+        print("  Start one first, e.g.:  ollama serve   (https://ollama.com)")
+
+    if reachable:
+        url = reachable[0][0]
+        print(f"\nOn the phone, run:\n  silkcode inference link {url}")
+        print("\nIf that fails while this machine is awake, the firewall here is dropping "
+              "the connection - allow inbound TCP on the port above for private networks.")
+    return 0
+
+
+def _open_up_hint(kind: str, port: int) -> str:
+    """The one command that makes a loopback-bound server answer the LAN."""
+    if kind == "ollama":
+        return (f"restart it listening on every interface:  "
+                f"OLLAMA_HOST=0.0.0.0:{port} ollama serve"
+                "\n      (macOS app: launchctl setenv OLLAMA_HOST \"0.0.0.0:11434\" and restart Ollama;"
+                "\n       Windows: set OLLAMA_HOST=0.0.0.0:11434 in your user environment variables)")
+    if kind == "lmstudio":
+        return "in LM Studio: Developer -> Server -> enable 'Serve on Local Network', then restart the server"
+    if kind == "vllm":
+        return f"restart it with:  vllm serve <model> --host 0.0.0.0 --port {port}"
+    if kind == "llamacpp":
+        return f"restart it with:  llama-server --host 0.0.0.0 --port {port} -m <model>"
+    return f"restart it bound to 0.0.0.0 instead of 127.0.0.1 on port {port}"
 
 
 if __name__ == "__main__":
