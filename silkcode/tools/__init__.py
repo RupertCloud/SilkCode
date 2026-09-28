@@ -8,6 +8,8 @@ from typing import Callable
 from . import files, git, images, search, shell, symbols, testing
 from ..browser import permission_command as _browser_permission
 from ..docsearch import permission_command as _docsearch_permission, search_docs
+from ..graph import (graph_build, graph_explain, graph_impact, graph_query,
+                     permission_command as _graph_permission)
 from ..liveserver import live_server
 from ..github import (
     github_agent_task_get,
@@ -267,6 +269,60 @@ _register(Tool(
     func=search_docs,
     kind="command",
     command_of=_docsearch_permission,
+))
+
+_register(Tool(
+    name="graph_build",
+    description=(
+        "Parse the project into a knowledge graph (graphify: local "
+        "tree-sitter, no model call) and summarize it - size, hubs, and how "
+        "much was read directly from source. Writes graphify-out/ into the "
+        "project, including graph.html for the user. Build once, then use "
+        "graph_query / graph_explain / graph_impact."),
+    parameters=_params({}, []),
+    func=graph_build,
+    kind="command",
+    command_of=_graph_permission,
+))
+
+_register(Tool(
+    name="graph_query",
+    description=(
+        "Traverse the project's knowledge graph for a question. Works best "
+        "with concept names ('PermissionManager', 'session locking'), not "
+        "full sentences. Needs graph_build to have run once."),
+    parameters=_params({
+        "question": {"type": "string", "description": "What to look for, e.g. a class or concept name"},
+    }, ["question"]),
+    func=graph_query,
+    kind="read",
+))
+
+_register(Tool(
+    name="graph_explain",
+    description=(
+        "One node of the project graph - a class, function or file - with "
+        "every connection, each tagged EXTRACTED (explicit in source) or "
+        "INFERRED, with file:line anchors."),
+    parameters=_params({
+        "name": {"type": "string", "description": "The node to explain, e.g. 'Workspace'"},
+    }, ["name"]),
+    func=graph_explain,
+    kind="read",
+))
+
+_register(Tool(
+    name="graph_impact",
+    description=(
+        "The blast radius of changing something: reverse dependency "
+        "traversal listing everything that calls, imports or uses it, with "
+        "file:line anchors. Use it before a refactor."),
+    parameters=_params({
+        "name": {"type": "string", "description": "The class/function/file about to change"},
+        "depth": {"type": "integer", "description": "Traversal depth 1-4 (default 2)"},
+    }, ["name"]),
+    func=graph_impact,
+    kind="read",
 ))
 
 _register(Tool(

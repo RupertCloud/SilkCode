@@ -90,10 +90,14 @@ class ProjectContext:
 
 
 def assemble(ws: Workspace) -> ProjectContext:
+    from .inflight import report as inflight_report
     from .provenance import scan
 
     parts = [repo_map(ws)]
-    warnings: list[str] = []
+    # Commands that were in flight when a previous session died: report each
+    # once (the report consumes the records), with whatever output was
+    # captured. See silkcode/inflight.py.
+    warnings: list[str] = inflight_report(ws.root)
     withheld: list[str] = []
 
     for label, text in project_sources(ws):

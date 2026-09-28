@@ -45,7 +45,7 @@ from ..providers import ProviderError, build_provider
 from ..lightmodel import checkpoint_summarizer as _checkpoint_summarizer
 from ..project import record_recent_project, remember_workspace, resolve_project
 from ..repomap import IGNORED_DIRS
-from ..sessions import SessionStore, new_session
+from ..sessions import SessionStore, fork_session, new_session
 from ..tools.git import git_diff, git_status
 from ..workspace import ToolError, Workspace
 
@@ -373,6 +373,52 @@ class GuiState:
         self.closed_projects.discard(_normalized(str(session.workspace.root)))
         self.default_session_id = session.id
         self._mark_active(session.id)
+        self.broadcast({"type": "reload", "session": session.id})
+        return session
+
+    def fork_session(self, session_id: int | None = None,
+                     at_message: int | None = None,
+                     isolated: bool = True) -> AgentSession:
+        """Fork a conversation: a new session that continues this one's
+        history while the original stays as it is - try two approaches to the
+        same problem from the same point, keep the winner.
+
+        With `isolated` (the default) the fork also gets its own git worktree
+        on a silk/<stamp> branch, so the two lines diverge on disk as well as
+        in conversation; where the project is not a git repository the fork is
+        in place, and the workspace lock explains itself as usual.
+        """
+        parent = self.get_session(session_id)
+        if parent.running:
+            raise ToolError("cannot fork while the agent is running in this session")
+        self._save_session(parent)
+        new_id = max([self.store.new_id()] + [sid + 1 for sid in self.sessions])
+        data = fork_session(parent.data, new_id, at_message=at_message,
+                            instance=self.instance)
+        notice = None
+        if isolated and not self.remote_spec:
+            from ..worktree import create as create_worktree
+            try:
+                wt = create_worktree(parent.workspace.root)
+                data["cwd"] = str(wt.root)
+                data["forked_from"]["worktree"] = {
+                    "branch": wt.branch, "base": wt.base, "repo": str(wt.repo_root),
+                }
+                notice = (f"⑂ Forked from session #{parent.id} into an isolated "
+                          f"worktree on {wt.branch}. The original checkout and "
+                          f"session are untouched; merge this line back with: "
+                          f"git merge {wt.branch}")
+            except ToolError as exc:
+                notice = f"⑂ Forked from session #{parent.id} in place ({exc})"
+        else:
+            notice = f"⑂ Forked from session #{parent.id}"
+        session = AgentSession(self, data)
+        if notice:
+            session.transcript.append({"kind": "notice", "text": notice})
+        self.sessions[session.id] = session
+        self.default_session_id = session.id
+        self._mark_active(session.id)
+        self._save_session(session)
         self.broadcast({"type": "reload", "session": session.id})
         return session
 
@@ -1430,6 +1476,38 @@ class GuiState:
         from ..share_update import build_share_update
         return build_share_update(self.get_session(session_id).workspace)
 
+    def graph_info(self, session_id: int | None = None) -> dict:
+        """The project's knowledge graph, as the Graph panel shows it: is
+        graphify installed, is a graph built, and what it says about the
+        platform the user built - size, hubs, extraction confidence."""
+        from .. import graph as graphmod
+        workspace = self.get_session(session_id).workspace
+        ok, hint = graphmod.available()
+        info: dict = {"available": ok}
+        if not ok:
+            info["hint"] = hint
+            return info
+        info.update(graphmod.stats(workspace))
+        return info
+
+    def graph_build(self, session_id: int | None = None) -> dict:
+        from .. import graph as graphmod
+        workspace = self.get_session(session_id).workspace
+        ok, hint = graphmod.available()
+        if not ok:
+            raise ToolError(hint)
+        graphmod.graph_build(workspace)
+        return self.graph_info(session_id)
+
+    def graph_page(self, session_id: int | None = None) -> bytes:
+        from ..graph import OUT_DIRNAME
+        workspace = self.get_session(session_id).workspace
+        page = workspace.root / OUT_DIRNAME / "graph.html"
+        if not page.is_file():
+            raise FileNotFoundError(
+                "graphify-out/graph.html is not built yet; build the graph first")
+        return page.read_bytes()
+
     def projects_info(self) -> list[dict]:
         from ..project import available_projects
         return available_projects()
@@ -1727,6 +1805,17 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json(st.diff(sid))
             elif route == "/api/share-update":
                 self._json(st.share_update(sid))
+            elif route == "/api/graph":
+                self._json(st.graph_info(sid))
+            elif route == "/graph-view":
+                body = st.graph_page(sid)
+                self.send_response(200)
+                self._security_headers()
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
             elif route == "/api/projects":
                 self._json(st.projects_info())
             elif route == "/api/providers":
@@ -1814,6 +1903,8 @@ class GuiHandler(BaseHTTPRequestHandler):
                     return self._error(f"unknown mode '{mode}'")
                 st.set_mode(mode)
                 self._json(st.state(sid))
+            elif route == "/api/graph/build":
+                self._json(st.graph_build(sid))
             elif route == "/api/revert":
                 session = st.get_session(sid)
                 if session.running:
@@ -1838,6 +1929,12 @@ class GuiHandler(BaseHTTPRequestHandler):
                 self._json(st.state(session.id))
             elif route == "/api/session":
                 session = st.load_session(int(body.get("id", 0)))
+                self._json(st.state(session.id))
+            elif route == "/api/session/fork":
+                at = body.get("at_message")
+                session = st.fork_session(
+                    sid, at_message=int(at) if at is not None else None,
+                    isolated=bool(body.get("isolated", True)))
                 self._json(st.state(session.id))
             elif route == "/api/session/project":
                 target = str(body.get("project", "")).strip()

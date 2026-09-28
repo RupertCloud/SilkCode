@@ -99,7 +99,7 @@ def open_details(page, panel="changes"):
         "sel => { const el = document.querySelector(sel);"
         "         return el && el.getBoundingClientRect().width > 1; }",
         arg={"changes": "#bottom", "files": "#file-details",
-             "activity": "#activity"}[panel])
+             "activity": "#activity", "graph": "#graph-details"}[panel])
 
 
 def send_and_wait(page, text, expected_reply):
@@ -1000,3 +1000,44 @@ def test_new_conversation_and_open_project_are_separate_actions(browser, two_pro
     assert not page.locator("#project-modal").evaluate("el => el.classList.contains('open')")
     assert page.locator(".project-card.current").get_attribute("data-path") == current
     assert page.locator("#project-select").input_value() not in ("__all__", "__open__")
+
+
+def test_the_graph_panel_shows_the_platforms_numbers(browser, gui_url, monkeypatch):
+    """The Graph tab is the user-facing half of the graphify adoption: the
+    size and hubs of the platform they built, from /api/graph."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.route("**/api/graph?*", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=json.dumps({
+            "available": True, "built": True, "nodes": 3273, "edges": 8452,
+            "files": 143, "communities": 158, "extracted_pct": 88,
+            "hubs": [{"name": "Workspace", "degree": 296},
+                     {"name": "ToolError", "degree": 171}],
+            "has_viz": True,
+        })))
+    page.goto(gui_url)
+    wait_for_switcher(page)
+    open_details(page, "graph")
+    page.wait_for_function(
+        "() => document.getElementById('graph-body').textContent.includes('3273')")
+
+    body = page.text_content("#graph-details")
+    assert "3273" in body and "8452" in body
+    assert "Workspace" in body and "296" in body
+    assert "read directly from source" in body
+    link = page.locator("#graph-actions a")
+    assert link.get_attribute("href") == "/graph-view"
+    assert link.get_attribute("target") == "_blank"
+
+
+def test_the_graph_panel_explains_when_graphify_is_missing(browser, gui_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.route("**/api/graph?*", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"available": False,
+                         "hint": "Graphify is not installed. pip install graphifyy"})))
+    page.goto(gui_url)
+    wait_for_switcher(page)
+    open_details(page, "graph")
+    page.wait_for_function(
+        "() => document.getElementById('graph-body').textContent.includes('graphifyy')")
+    assert "pip install graphifyy" in page.text_content("#graph-details")

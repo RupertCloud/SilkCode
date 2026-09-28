@@ -26,6 +26,7 @@ def test_installer_puts_silkcode_and_chromium_in_one_environment(tmp_path, monke
     assert calls == [
         [python, "-m", "pip", "install", "--upgrade", "."],
         [python, "-m", "playwright", "install", "chromium"],
+        [python, "-m", "pip", "install", "--upgrade", "graphifyy"],
     ]
     assert launcher == tmp_path / ".local" / "bin" / "silkcode"
     assert launcher.resolve() == root / "bin" / "silkcode"
