@@ -19,6 +19,9 @@ sections 67-68).
 ## Install
 
 ```bash
+# Have Node? One command, nothing to download first (needs Python 3.10+ on PATH)
+npx silkcode gui
+
 # Recommended: installs Silk Code and its headless Chromium browser together
 curl -fsSLO https://raw.githubusercontent.com/RupertCloud/SilkCode/main/install.py
 python3 install.py
@@ -43,6 +46,11 @@ python3 install.py --source .
 Once a tagged release is published, the wheel from the
 [latest release](https://github.com/RupertCloud/SilkCode/releases/latest) installs the
 same way — `pip install <url-of-the-.whl>` — without needing git on the machine.
+
+The `npx` route is a doorway, not a port: `npm/bin/silkcode.js` (zero npm
+dependencies — one auditable file) finds your Python, runs the same bundled
+`install.py` into the same isolated environment on first use, and execs the
+real CLI ever after. Publishing it is `cd npm && npm publish`.
 
 Requires Python 3.10+. The runtime dependencies are `httpx` and `playwright` — the
 latter so the agent can look at a page it just wrote (see

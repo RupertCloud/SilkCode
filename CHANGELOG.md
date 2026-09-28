@@ -12,6 +12,11 @@ forkable history, durable operations, fuzzed crash recovery) — surfaced three
 of its disciplines worth having without its machinery.
 
 ### Added
+- **`npx silkcode`** — an npm launcher (`npm/`): one dependency-free JS file
+  that finds a Python 3.10+, runs the bundled `install.py` into the isolated
+  runtime on first use, and execs the real CLI ever after. A doorway, not a
+  second implementation; the name is unclaimed on npm and the package is one
+  `cd npm && npm publish` away.
 - **Session forking** — the ⑂ button (and `POST /api/session/fork`): a new
   session continues this conversation's history while the original stays as
   it is, so two approaches can be tried from the same point and the winner
