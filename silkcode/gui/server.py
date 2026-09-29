@@ -41,7 +41,8 @@ from ..connections import ConnectionMonitor
 from ..context import assemble
 from ..lock import LockError, acquire, lock_state, release
 from ..permissions import PermissionManager
-from ..providers import ProviderError, build_provider
+from ..providers import build_provider
+from ..providers.base import AuthError, ProviderError
 from ..lightmodel import checkpoint_summarizer as _checkpoint_summarizer
 from ..project import record_recent_project, remember_workspace, resolve_project
 from ..repomap import IGNORED_DIRS
@@ -659,6 +660,14 @@ class GuiState:
     def _run_turn(self, session: AgentSession, text: str) -> None:
         try:
             session.agent.run_turn(text)
+        except AuthError as exc:
+            # A key problem is fixable right here: the page shows the message
+            # with an input for the key, and /api/keys stores it. Nothing to
+            # google, nothing to restart.
+            self.broadcast({"type": "key_needed", "message": str(exc),
+                            "provider": exc.provider_name, "hint": exc.hint,
+                            "session": session.id})
+            session.transcript.append({"kind": "error", "text": str(exc)})
         except ProviderError as exc:
             self.broadcast({"type": "error", "message": str(exc), "session": session.id})
             session.transcript.append({"kind": "error", "text": str(exc)})
@@ -936,6 +945,34 @@ class GuiState:
         session.transcript.append({"kind": "notice", "text": notice})
         self.broadcast({"type": "notice", "text": notice, "session": session.id})
         return {"ok": True, "lock_conflict": None}
+
+    def set_api_key(self, provider_name: str, key: str,
+                    session_id: int | None = None) -> dict:
+        """Store an API key a key_needed prompt collected, and put it to work.
+
+        The key goes into config.json (written owner-only, 0600 - where keys
+        already live), and every open session on that provider gets a rebuilt
+        provider immediately, so the very next message uses it. The key is
+        never echoed back, broadcast, or logged.
+        """
+        from ..environment import set_key
+        try:
+            set_key(self.config, provider_name, key)  # one storage path,
+        except ValueError as exc:                     # shared with the ⚙ page
+            raise ToolError(str(exc)) from None
+        cfg = self.config.providers[provider_name]
+        updated = 0
+        for session in self.sessions.values():
+            if session.provider_name == provider_name:
+                session.agent.provider = build_provider(
+                    provider_name, cfg, api_key=self.config.api_key_for(cfg))
+                updated += 1
+        notice = (f"🔑 API key for '{provider_name}' saved to config.json "
+                  "(owner-only). Send your message again.")
+        session = self.get_session(session_id)
+        session.transcript.append({"kind": "notice", "text": notice})
+        self.broadcast({"type": "notice", "text": notice, "session": session.id})
+        return {"ok": True, "provider": provider_name, "sessions_updated": updated}
 
     def switch_model(self, spec: str, session_id: int | None = None) -> None:
         session = self.get_session(session_id)
@@ -1930,6 +1967,9 @@ class GuiHandler(BaseHTTPRequestHandler):
             elif route == "/api/session":
                 session = st.load_session(int(body.get("id", 0)))
                 self._json(st.state(session.id))
+            elif route == "/api/keys":
+                self._json(st.set_api_key(str(body.get("provider", "")),
+                                          str(body.get("key", "")), sid))
             elif route == "/api/session/fork":
                 at = body.get("at_message")
                 session = st.fork_session(

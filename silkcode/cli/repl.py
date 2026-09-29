@@ -71,6 +71,38 @@ def _ask_user(prompt: str) -> str:
             return "always"
 
 
+def _offer_key_fix(config: "Config", agent: "Agent", provider_name: str) -> bool:
+    """A model call just failed on its API key: ask for the key right here.
+
+    The key is read without echo (getpass), stored in config.json - written
+    owner-only, where keys already live - and the agent's provider is rebuilt
+    so the very next prompt uses it. Enter skips; a non-tty never prompts
+    (the adapter and piped runs get the actionable message, not a hang).
+    """
+    if not sys.stdin.isatty():
+        return False
+    import getpass
+    try:
+        entered = getpass.getpass(
+            f"Paste an API key for '{provider_name}' (Enter to skip): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    if not entered:
+        return False
+    from ..environment import set_key
+    try:
+        set_key(config, provider_name, entered)  # one storage path, shared
+    except ValueError as exc:                    # with the GUI's key flows
+        print(f"{RED}{exc}{RESET}")
+        return False
+    cfg = config.providers[provider_name]
+    agent.provider = build_provider(provider_name, cfg,
+                                    api_key=config.api_key_for(cfg))
+    print(f"{CYAN}Key saved to {config.path} (owner-only). Ask again.{RESET}")
+    return True
+
+
 def _summarize_args(args: dict) -> str:
     text = json.dumps(args, ensure_ascii=False)
     return text if len(text) <= 140 else text[:140] + "..."
@@ -300,6 +332,9 @@ def _run_repl(path, model_spec, mode, resume, prompt, grants, use_sandbox,
                     print(f"{DIM}auto-push: {pushed.splitlines()[0]}{RESET}")
         except ProviderError as exc:
             print(f"\n{RED}provider error: {exc}{RESET}")
+            from ..providers.base import AuthError
+            if isinstance(exc, AuthError):
+                _offer_key_fix(config, agent, exc.provider_name)
         except KeyboardInterrupt:
             agent.repair_dangling_tool_calls()
             print(f"\n{YELLOW}[interrupted]{RESET}")

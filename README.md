@@ -944,6 +944,16 @@ install is holding, spending, and running:
 - **Sessions** — how many are open in this daemon, which are running, on which project
   and model, and their live token spend.
 
+Key errors fix themselves in place. A model call that fails on its API key —
+missing, rejected, expired — says exactly which key and where it comes from
+(`$DEEPSEEK_API_KEY`, or the `api_key` in config.json), and asks for it right
+there: the GUI shows a password field in the conversation (the key is stored
+owner-only and live sessions pick it up, so the next message just works), the
+interactive CLI asks via a hidden prompt, and scripted runs get the actionable
+message without hanging. A provider whose configured key variable is empty is
+told so before any request goes out; keyless local endpoints (Ollama & co.)
+are unaffected.
+
 ```bash
 silkcode env                     # the same view in the terminal
 silkcode env --set deepseek      # store a key (read from $SILKCODE_KEY or prompted)

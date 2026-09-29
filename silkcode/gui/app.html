@@ -88,6 +88,11 @@
   .msg.assistant { background: var(--panel2); }
   .msg.error { background: #4a2529; color: var(--err); font-family: var(--mono); font-size: 12px; }
   .msg.notice { background: #3a3220; color: #e8c766; font-family: var(--mono); font-size: 12px; }
+  .key-prompt input { width: 100%; margin: 8px 0 6px; padding: 6px 8px; background: #1c1917;
+    color: inherit; border: 1px solid #6b5c2e; border-radius: 6px; font-family: var(--mono); }
+  .key-prompt button { padding: 5px 12px; background: #6b5c2e; color: #f4e8c8;
+    border: 0; border-radius: 6px; cursor: pointer; }
+  .key-prompt button:disabled { opacity: .5; }
   .msg.tool { background: transparent; border: 1px dashed var(--border); color: var(--dim); font-family: var(--mono); font-size: 12px; padding: 4px 10px; }
   .markdown-body { white-space: normal; line-height: 1.58; }
   .markdown-body > :first-child { margin-top: 0; }
@@ -1020,6 +1025,43 @@ function addMsg(kind, text) {
   return div;  // return the bubble so streaming/appending keeps working
 }
 
+// A model call failed on its API key: show the message with an input to fix
+// it in place. Everything is built with textContent (never HTML) and the key
+// only ever travels in the POST body to /api/keys.
+function showKeyPrompt(ev) {
+  addMsg("error", ev.message);
+  const wrap = document.createElement("div");
+  wrap.className = "msg-wrap notice key-prompt";
+  const div = document.createElement("div");
+  div.className = "msg notice";
+  const label = document.createElement("div");
+  label.textContent = `Paste an API key for '${ev.provider}' to fix this here:`;
+  const input = document.createElement("input");
+  input.type = "password";
+  input.autocomplete = "off";
+  input.placeholder = "sk-…";
+  input.setAttribute("aria-label", `API key for ${ev.provider}`);
+  const save = document.createElement("button");
+  save.textContent = "Save key";
+  const submit = () => {
+    const key = input.value.trim();
+    if (!key) return;
+    save.disabled = true;
+    api("/api/keys", {provider: ev.provider, key, session_id: currentSessionId})
+      .then(() => { input.value = ""; wrap.remove(); })
+      .catch(err => { save.disabled = false; alert(err.message); });
+  };
+  save.onclick = submit;
+  input.onkeydown = (e) => { if (e.key === "Enter") submit(); };
+  div.appendChild(label);
+  div.appendChild(input);
+  div.appendChild(save);
+  wrap.appendChild(div);
+  $("messages").appendChild(wrap);
+  $("messages").scrollTop = $("messages").scrollHeight;
+  input.focus();
+}
+
 // ---- special code / terminal bubbles ---------------------------------------
 
 const CODE_FENCE = /^(`{3,})[ \t]*([\w+-]*)[ \t]*\n([\s\S]*?)^\1[ \t]*$/gm;
@@ -1358,6 +1400,7 @@ function handleEvent(ev) {
   }
   else if (ev.type === "image") addImage(ev.path);
   else if (ev.type === "error") { streamEl = null; addMsg("error", ev.message); }
+  else if (ev.type === "key_needed") { streamEl = null; showKeyPrompt(ev); }
   else if (ev.type === "notice") { addMsg("notice", ev.text); refreshSessionList(); }
   else if (ev.type === "turn_done") {
     streamEl = null; setRunning(false); renderUsage(ev.usage); loadDiff(); loadTree();

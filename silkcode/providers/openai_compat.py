@@ -72,7 +72,14 @@ class OpenAICompatProvider(ModelProvider):
             payload["tools"] = tools
         return payload
 
+    def _require_key(self) -> None:
+        # A provider whose config names a key env that is empty can only ever
+        # get a 401 back - say so before the request, naming the fix.
+        if self.missing_key_env and not self.api_key:
+            raise self.auth_error()
+
     def chat(self, model: str, messages: list[dict], tools: list[dict] | None = None) -> ChatResult:
+        self._require_key()
         last_error: Exception | None = None
         for attempt in range(self.retries + 1):
             try:
@@ -92,6 +99,8 @@ class OpenAICompatProvider(ModelProvider):
                 if self._should_retry_status(resp.status_code) and attempt < self.retries:
                     self._sleep_before_retry(attempt)
                     continue
+                if resp.status_code in (401, 403):
+                    raise self.auth_error(resp.status_code)
                 raise ProviderError(f"{self.name}: HTTP {resp.status_code}: {resp.text[:500]}")
             try:
                 data = resp.json()
@@ -140,6 +149,7 @@ class OpenAICompatProvider(ModelProvider):
         # Retry the *whole* stream only while nothing has been yielded yet. Once
         # the first chunk is out, retrying would duplicate output, so a failure
         # mid-stream surfaces as a ProviderError instead.
+        self._require_key()
         content_parts: list[str] = []
         calls: dict[int, dict] = {}
         usage = None
@@ -158,6 +168,8 @@ class OpenAICompatProvider(ModelProvider):
                             resp.read()  # drain so the connection can be reused
                             self._sleep_before_retry(attempt)
                             continue
+                        if resp.status_code in (401, 403):
+                            raise self.auth_error(resp.status_code)
                         body = resp.read().decode("utf-8", "replace")
                         raise ProviderError(f"{self.name}: HTTP {resp.status_code}: {body[:500]}")
                     for line in resp.iter_lines():
