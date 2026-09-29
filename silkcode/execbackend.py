@@ -66,7 +66,17 @@ class LocalBackend:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.communicate()
-                return f"Command timed out after {timeout} seconds: {command}"
+                message = f"Command timed out after {timeout} seconds: {command}"
+                # the output captured before the kill often says *why* it hung
+                # (waiting on a prompt, retrying a connection) - include it
+                if out_file is not None:
+                    out_file.seek(0)
+                    err_file.seek(0)
+                    partial = (out_file.read() + err_file.read()).strip()
+                    if partial:
+                        message += ("\nOutput before the timeout:\n"
+                                    + partial[-MAX_OUTPUT_CHARS // 10:])
+                return message
             if out_file is not None:
                 out_file.seek(0)
                 stdout = out_file.read()

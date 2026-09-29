@@ -21,7 +21,6 @@ demand so pages load in the browser while the agent edits them.
 
 from __future__ import annotations
 
-import io
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

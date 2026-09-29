@@ -152,7 +152,6 @@ def test_an_interrupt_leaves_a_valid_conversation(repl_env, monkeypatch, capsys)
     run, _, _ = repl_env
 
     from silkcode.agent import Agent
-    real_run_turn = Agent.run_turn
 
     def interrupted(self, user_input):
         # simulate a turn that got as far as requesting a tool, then Ctrl-C

@@ -6,7 +6,6 @@ guarantee under test: the repo files never land on the local machine.
 """
 
 import json
-import os
 import subprocess
 import threading
 from http.server import ThreadingHTTPServer

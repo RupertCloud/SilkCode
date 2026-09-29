@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
 from conftest import sse_response
 
 from silkcode.swarm import (

@@ -288,7 +288,7 @@ def prompt_for_project(asker=None) -> ProjectChoice:
             choice = _ask("\nPick a project (#, path, or q): ")
         except (EOFError, KeyboardInterrupt):
             print()
-            raise ToolError("cancelled")
+            raise ToolError("cancelled") from None
         if choice in ("q", "quit", "cancel"):
             raise ToolError("cancelled")
         if not choice:

@@ -47,17 +47,32 @@ def build_provider(name: str, cfg: dict, api_key: str | None = None, client=None
     except (TypeError, ValueError):
         raise ProviderError(
             f"Provider '{name}' has an invalid 'timeout' value: {cfg.get('timeout')!r}"
-        )
+        ) from None
     try:
         kwargs["retries"] = int(cfg.get("retries", 2))
         kwargs["retry_delay"] = float(cfg.get("retry_delay", 1.0))
     except (TypeError, ValueError):
         raise ProviderError(
             f"Provider '{name}' has invalid 'retries'/'retry_delay' values"
-        )
+        ) from None
     if client is not None:
         kwargs["client"] = client
-    return cls(**kwargs)
+    provider = cls(**kwargs)
+    # Where the key comes from, remembered on the provider so an auth failure
+    # can say exactly what to fix (see AuthError). Set as attributes rather
+    # than constructor kwargs so plugged-in provider classes need not know.
+    env = cfg.get("api_key_env")
+    if cfg.get("api_key"):
+        provider.key_hint = f"The key is the api_key stored in config.json for provider '{name}'."
+    elif env and api_key:
+        provider.key_hint = f"The key came from ${env}."
+    elif env:
+        provider.key_hint = f"Set ${env} (it is currently empty), or add the key when asked."
+        provider.missing_key_env = env
+    else:
+        provider.key_hint = (f"No api_key or api_key_env is configured for provider "
+                             f"'{name}'; add one, or paste the key when asked.")
+    return provider
 
 
 __all__ = [

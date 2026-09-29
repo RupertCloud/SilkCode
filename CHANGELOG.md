@@ -4,7 +4,34 @@ Silk Code's history, newest first, grouped by the phase that produced it.
 Entries name what changed and why it mattered; pull requests are numbered
 where one existed. The project began 2026-08-12 with the SRS and V0.1.
 
-## Unreleased — what survives: forks and crash honesty, from unreal-agent · 2026-09-23
+## Unreleased — a review pass, and key errors that fix themselves · 2026-09-28/29
+
+### Added
+- **Key-error management** — a model call that fails on its API key (missing,
+  rejected, expired) now raises a typed `AuthError` naming exactly which key
+  and where it comes from (`$ENV_VAR`, or the api_key in config.json), and
+  every surface asks for the key instead of printing an HTTP status: the GUI
+  shows a password input right in the conversation (`POST /api/keys` stores
+  it owner-only and rebuilds live sessions, so the next message just works),
+  the interactive REPL asks via a hidden prompt, and non-interactive runs get
+  the actionable message without hanging. A provider whose configured key env
+  is empty fails before any request, with the fix; keyless local endpoints
+  (Ollama & co.) are untouched; 401/403 are never retried; the key is never
+  echoed, broadcast, or logged.
+- **Timeouts show what the command printed** — a timed-out `run_command` now
+  includes the output captured before the kill (it often says *why* it hung:
+  a prompt it was waiting on, a connection it kept retrying).
+- The README wears its npm badge: `silkcode` 0.1.0 is
+  [live on npm](https://www.npmjs.com/package/silkcode), so `npx silkcode gui`
+  works everywhere now.
+
+### Fixed
+- A lint sweep (pyflakes + bugbear): 21 dead/shadowed imports and leftover
+  test locals removed; user-facing errors raised from `except` clauses now
+  use `from None`, so a cancelled prompt or a bad config value reads as one
+  clean message instead of a chained traceback.
+
+## PR #40 (with graphify below) — npx, forks, and crash honesty · 2026-09-23/28
 
 Reading [unreallabsai/unreal-agent](https://github.com/unreallabsai/unreal-agent)
 — a Go harness whose whole first act is durability plumbing (append-only

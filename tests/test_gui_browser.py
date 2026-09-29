@@ -213,7 +213,6 @@ def test_composer_always_visible_and_sessions_switch(browser, gui_url):
     assert page.locator(".msg.assistant", has_text="Reply in session two.").count() == 0
 
     # and FORTH to session 2 again
-    two_value = page.locator("#session-select option").all()[0].get_attribute("value")
     values = [o.get_attribute("value") for o in page.locator("#session-select option").all()]
     other = [v for v in values if v != first_label][0]
     page.select_option("#session-select", value=other)

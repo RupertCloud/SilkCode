@@ -1003,7 +1003,7 @@ def test_gui_takeover_of_dead_owners_lock(gui, tmp_path):
 
 def test_gui_takeover_refused_while_live_owner_holds_lock(gui):
     base, state, ws = gui
-    sid = state.default_session_id  # this live test process owns the workspace
+    # the default session of this live test process owns the workspace lock
     session = state.new_session(project=str(ws))  # second session -> conflict
     assert session.lock_conflict is not None
     resp = httpx.post(f"{base}/api/lock/takeover", json={"session_id": session.id})

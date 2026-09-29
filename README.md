@@ -1,6 +1,7 @@
 # Silk Code
 
-**Homepage: [silkcode.web.app](https://silkcode.web.app)** · MIT licensed
+**Homepage: [silkcode.web.app](https://silkcode.web.app)** · MIT licensed ·
+[![npm](https://img.shields.io/npm/v/silkcode)](https://www.npmjs.com/package/silkcode) — try it now: `npx silkcode gui`
 
 **An open, model-agnostic AI coding harness.** Use DeepSeek, Qwen, Kimi, OpenRouter, any
 OpenAI-compatible endpoint, or local models (Ollama, vLLM, LM Studio) to understand a
@@ -50,7 +51,9 @@ same way — `pip install <url-of-the-.whl>` — without needing git on the mach
 The `npx` route is a doorway, not a port: `npm/bin/silkcode.js` (zero npm
 dependencies — one auditable file) finds your Python, runs the same bundled
 `install.py` into the same isolated environment on first use, and execs the
-real CLI ever after. Publishing it is `cd npm && npm publish`.
+real CLI ever after. It is live as
+[`silkcode` on npm](https://www.npmjs.com/package/silkcode); publishing a new
+version is `cd npm && npm publish`.
 
 Requires Python 3.10+. The runtime dependencies are `httpx` and `playwright` — the
 latter so the agent can look at a page it just wrote (see
@@ -940,6 +943,16 @@ install is holding, spending, and running:
   GUI and swarm alike), plus the last 7 days.
 - **Sessions** — how many are open in this daemon, which are running, on which project
   and model, and their live token spend.
+
+Key errors fix themselves in place. A model call that fails on its API key —
+missing, rejected, expired — says exactly which key and where it comes from
+(`$DEEPSEEK_API_KEY`, or the `api_key` in config.json), and asks for it right
+there: the GUI shows a password field in the conversation (the key is stored
+owner-only and live sessions pick it up, so the next message just works), the
+interactive CLI asks via a hidden prompt, and scripted runs get the actionable
+message without hanging. A provider whose configured key variable is empty is
+told so before any request goes out; keyless local endpoints (Ollama & co.)
+are unaffected.
 
 ```bash
 silkcode env                     # the same view in the terminal

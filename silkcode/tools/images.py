@@ -6,7 +6,6 @@ import platform
 import subprocess
 import time
 from urllib.parse import urlparse
-from pathlib import Path
 
 from ..workspace import ToolError, Workspace
 
