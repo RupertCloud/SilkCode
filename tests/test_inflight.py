@@ -52,6 +52,15 @@ def test_a_timed_out_command_reports_and_leaves_no_records(tmp_path):
     assert not list(inflight_dir(tmp_path).glob("*"))
 
 
+def test_a_timeout_still_shows_what_the_command_printed(tmp_path):
+    """The output captured before the kill often says why the command hung -
+    a prompt it was waiting on, a connection it kept retrying."""
+    ws = Workspace(tmp_path)
+    result = LocalBackend().exec(ws, "echo waiting for input...; sleep 30", timeout=1)
+    assert "timed out after 1 seconds" in result
+    assert "waiting for input..." in result
+
+
 def test_output_format_is_unchanged(tmp_path):
     ws = Workspace(tmp_path)
     assert LocalBackend().exec(ws, "true") == "exit code: 0\n(no output)"

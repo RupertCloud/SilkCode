@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import subprocess
 
-import pytest
 
 from silkcode.lock import acquire
 from silkcode.memory import remember

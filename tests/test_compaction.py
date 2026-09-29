@@ -3,7 +3,6 @@ from conftest import FakeProvider
 from silkcode.agent import Agent
 from silkcode.checkpoints import Checkpoints
 from silkcode.permissions import PermissionManager
-from silkcode.providers.base import ChatResult
 from silkcode.workspace import Workspace
 
 

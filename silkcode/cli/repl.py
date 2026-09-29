@@ -507,7 +507,6 @@ def _new_command(agent: Agent, session: dict, arg: str) -> None:
     """
     from pathlib import Path
 
-    from ..context import build_context
     from ..project import record_recent_project
     from ..remotews import RemoteWorkspace
     from ..scaffold import (DEFAULT_TEMPLATE, create_project, format_result,
@@ -546,7 +545,6 @@ def _project_command(agent: Agent, config: Config, session: dict, arg: str) -> N
     """Open a new project in this session: switch the agent to another
     workspace chosen from GitHub or a local path (SRS: new sessions ask for
     a project)."""
-    from ..context import build_context
     from ..project import record_recent_project, resolve_project
     from ..workspace import ToolError
 

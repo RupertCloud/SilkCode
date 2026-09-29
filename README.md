@@ -1,6 +1,7 @@
 # Silk Code
 
-**Homepage: [silkcode.web.app](https://silkcode.web.app)** · MIT licensed
+**Homepage: [silkcode.web.app](https://silkcode.web.app)** · MIT licensed ·
+[![npm](https://img.shields.io/npm/v/silkcode)](https://www.npmjs.com/package/silkcode) — try it now: `npx silkcode gui`
 
 **An open, model-agnostic AI coding harness.** Use DeepSeek, Qwen, Kimi, OpenRouter, any
 OpenAI-compatible endpoint, or local models (Ollama, vLLM, LM Studio) to understand a
@@ -50,7 +51,9 @@ same way — `pip install <url-of-the-.whl>` — without needing git on the mach
 The `npx` route is a doorway, not a port: `npm/bin/silkcode.js` (zero npm
 dependencies — one auditable file) finds your Python, runs the same bundled
 `install.py` into the same isolated environment on first use, and execs the
-real CLI ever after. Publishing it is `cd npm && npm publish`.
+real CLI ever after. It is live as
+[`silkcode` on npm](https://www.npmjs.com/package/silkcode); publishing a new
+version is `cd npm && npm publish`.
 
 Requires Python 3.10+. The runtime dependencies are `httpx` and `playwright` — the
 latter so the agent can look at a page it just wrote (see

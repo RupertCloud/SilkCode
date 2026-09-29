@@ -14,7 +14,6 @@ import subprocess
 import pytest
 
 from silkcode.project import (
-    ProjectChoice,
     available_projects,
     clone_github_repo,
     is_github_spec,

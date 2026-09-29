@@ -47,14 +47,14 @@ def build_provider(name: str, cfg: dict, api_key: str | None = None, client=None
     except (TypeError, ValueError):
         raise ProviderError(
             f"Provider '{name}' has an invalid 'timeout' value: {cfg.get('timeout')!r}"
-        )
+        ) from None
     try:
         kwargs["retries"] = int(cfg.get("retries", 2))
         kwargs["retry_delay"] = float(cfg.get("retry_delay", 1.0))
     except (TypeError, ValueError):
         raise ProviderError(
             f"Provider '{name}' has invalid 'retries'/'retry_delay' values"
-        )
+        ) from None
     if client is not None:
         kwargs["client"] = client
     return cls(**kwargs)

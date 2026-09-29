@@ -651,7 +651,7 @@ def cmd_connect(argv: list[str]) -> int:
             try:
                 flow = DeviceFlow(client_id)
                 info = flow.start()
-                print(f"\nSign in with GitHub:")
+                print("\nSign in with GitHub:")
                 print(f"  1. Open {info['verification_uri']}")
                 print(f"  2. Enter code: {info['user_code']}")
                 print("  3. Click Authorize\n")
@@ -880,8 +880,6 @@ def cmd_sync(argv: list[str]) -> int:
 
 
 def cmd_sandbox(argv: list[str]) -> int:
-    from ..execbackend import remote_backend_from_config
-    from ..workspace import ToolError
 
     if argv and argv[0] == "connect":
         parser = argparse.ArgumentParser(prog="silkcode sandbox connect")
@@ -1217,7 +1215,7 @@ def _inference_link(argv: list[str]) -> int:
 
 
 def _inference_unlink(argv: list[str]) -> int:
-    from ..inference import DEFAULT_LINK_NAME, linked_providers, unlink
+    from ..inference import linked_providers, unlink
 
     parser = argparse.ArgumentParser(prog="silkcode inference unlink")
     parser.add_argument("name", nargs="?", default=None,
