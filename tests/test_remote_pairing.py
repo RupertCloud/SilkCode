@@ -143,17 +143,20 @@ def test_the_phone_layout_overrides_come_after_the_rules_they_override():
     text = APP.read_text(encoding="utf-8")
     media = text.index("@media (max-width: 768px)")
     assert media > text.index("#composer { grid-column: 2")
-    assert media > text.index("#bottom { grid-column: 2")
+    assert media > text.index("#files { grid-column: 1")
     assert media < text.index("</style>")
 
 
 def test_the_phone_pane_switcher_covers_every_pane():
-    """One pane fits a phone at a time, so each desktop pane needs a way back."""
+    """One pane fits a phone at a time, so each desktop pane needs a way back.
+    Activity and Changes live in the details drawer, which slides over on a
+    phone, so the tab bar only has to switch between chat and the projects."""
     text = APP.read_text(encoding="utf-8")
-    offered = set(re.findall(r'data-pane="([a-z]+)"', text))
-    assert {"chat", "files", "activity", "bottom"} <= offered
-    for pane in ("chat", "files", "activity", "bottom"):
+    offered = set(re.findall(r'<button data-pane="([a-z]+)"', text))
+    assert {"chat", "files"} <= offered
+    for pane in ("chat", "files"):
         assert f'main[data-pane="{pane}"] #{pane}' in text, pane
+    assert 'id="details-toggle"' in text
 
 
 def test_the_switcher_is_hidden_on_desktop():

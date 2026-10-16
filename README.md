@@ -371,9 +371,10 @@ sentence three times:
 Any WireGuard mesh handing out `100.64.0.0/10` addresses is treated the same
 way — the check is on the range, not on Tailscale.
 
-**The phone layout.** The desktop GUI is a three-column grid; below 820px it
-becomes one pane at a time with a switcher — Chat, Project, Activity, Diff —
-and the composer pinned within thumb reach.
+**The phone layout.** Below 768px wide (or 480px tall, for a phone on its side)
+the GUI shows one pane at a time with a Chat / Project switcher, the header
+controls move into a ⋯ sheet, the details drawer (changes, files, activity,
+graph) slides over from the right, and the composer stays within thumb reach.
 
 ### What guards it
 
@@ -511,6 +512,11 @@ explorer, AI conversation, agent activity timeline, git diff / file viewer, mode
 mode selectors, provider onboarding, checkpoint revert, a stop button for running
 turns, live permission prompts, a **🐝 Swarm** button (multi-agent improvement loop,
 see below), and a **↻ Update** button (self-update, see below).
+
+The interface uses a macOS-style glass look: translucent, blurred sidebars and
+toolbars over a soft backdrop, the system font, and message bubbles. It follows
+the system's light or dark appearance automatically. It is one self-contained
+page with no external assets, so it still works offline.
 
 **Multiple sessions:** open as many conversations as you like (the ＋ button) and
 switch between them with the session picker — each has its own agent, model choice,

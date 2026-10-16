@@ -4,6 +4,26 @@ Silk Code's history, newest first, grouped by the phase that produced it.
 Entries name what changed and why it mattered; pull requests are numbered
 where one existed. The project began 2026-08-12 with the SRS and V0.1.
 
+## Unreleased — a glass GUI at a fraction of the size · 2026-10-16
+
+### Changed
+- **The GUI has a macOS-style glass look.** Sidebars, toolbar, drawer and
+  dialogs are translucent and blurred over a soft backdrop. Text uses the
+  system font, chat is drawn as bubbles, and tabs are segmented controls.
+  The GUI follows the system light or dark appearance; before, it was dark
+  only, with about 30 colours hard-coded outside the theme.
+- **The GUI code is 27% smaller (5,050 → 3,682 lines)** with no feature removed.
+  `app.html` went from 2,824 to 1,925 lines and `server.py` from 2,226 to 1,757.
+  The page shares one element builder, one copy-button helper and one modal
+  close handler, and the server shares one response writer, one re-exec path
+  and route tables.
+
+### Fixed
+- On a phone, the ⋯ actions sheet no longer overflows the screen sideways.
+  A wide markdown table no longer pushes its copy button off-screen.
+- The `/api/checkout` route is removed. It called a method that does not
+  exist, so every request to it crashed the handler thread.
+
 ## Unreleased — a review pass, and key errors that fix themselves · 2026-09-28/29
 
 ### Added
