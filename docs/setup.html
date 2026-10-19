@@ -208,8 +208,15 @@
 
     <div class="os" id="os-macos">
       <h3>macOS</h3>
-      <p>macOS ships Python 3.9, which is below the floor. Install a current one first — either from
-      python.org or with Homebrew.</p>
+      <p>The shortest route needs no terminal: the <a href="https://github.com/RupertCloud/SilkCode/releases/latest">latest
+      release</a> carries a <code>.dmg</code> for Apple Silicon (<code>arm64</code>) and for Intel
+      Macs (<code>x86_64</code>). Drag <b>Silk Code</b> into Applications and open it; it starts the
+      GUI in your browser and carries its own Python. The app is not signed with an Apple developer
+      certificate, so the first launch is right-click → <b>Open</b>. API keys go in the GUI's
+      Environment page. The CLI is at
+      <code>/Applications/Silk Code.app/Contents/Resources/bin/silkcode</code>.</p>
+      <p>For the terminal install below: macOS ships Python 3.9, which is below the floor. Install
+      a current one first — either from python.org or with Homebrew.</p>
       <pre class="code"><span class="p">$</span> brew install python@3.12 git
 <span class="p">$</span> curl -fsSLO https://raw.githubusercontent.com/RupertCloud/SilkCode/main/install.py
 <span class="p">$</span> python3 install.py
