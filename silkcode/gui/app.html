@@ -84,7 +84,7 @@
   header .hgroup { display: inline-flex; align-items: center; gap: 4px; }
   header .hgroup + .hgroup { margin-left: 8px; }
   /* Push is the only header control that leaves this machine. */
-  header button.outward { color: var(--warn); }
+  header button.outward { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 36%, transparent); }
   header .spacer { flex: 1; }
   .icon-btn .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .usage { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
