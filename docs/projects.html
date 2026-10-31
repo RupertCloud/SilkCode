@@ -14,7 +14,7 @@
     --bg: #14161a; --panel: #1b1e24; --panel-2: #20242c; --border: #2b303a;
     --text: #d7dae0; --dim: #8d95a3; --accent: #5cc8ff; --gold: #e6c07b;
     --ok: #7ad48a; --err: #e06c75;
-    --thread: linear-gradient(180deg, var(--gold), var(--accent));
+    --thread: var(--gold);
     --code-bg: #101216;
     --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -48,10 +48,9 @@
   h1, h2, h3, h4 { font-family: var(--mono); text-wrap: balance; }
   h2 { font-size: 26px; margin-bottom: 6px; letter-spacing: -.01em; }
   h3 { font-size: 17px; margin-bottom: 6px; }
-  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .22em;
-             text-transform: uppercase; color: var(--gold); display: flex;
+  .eyebrow { font-family: var(--mono); font-size: 13px; color: var(--gold); display: flex;
              align-items: center; gap: 10px; }
-  .eyebrow::before { content: ""; width: 26px; height: 2px; background: var(--thread); display: inline-block; }
+  .eyebrow::before { content: ""; width: 24px; height: 2px; background: var(--thread); display: inline-block; }
   section { padding: 52px 0 8px; scroll-margin-top: 70px; }
   section > p.lede { color: var(--dim); max-width: 64ch; margin: 6px 0 20px; }
   p { max-width: 72ch; }
@@ -62,8 +61,7 @@
             border-bottom: 1px solid var(--border); }
   .topbar .wrap { display: flex; align-items: center; gap: 18px; padding-top: 12px;
                   padding-bottom: 12px; flex-wrap: wrap; }
-  .topbar .home { font-family: var(--mono); font-weight: 700; color: var(--text); }
-  .topbar .home .silk { color: var(--accent); }
+  .topbar .home { font-family: var(--mono); font-weight: 600; color: var(--text); }
   .topbar nav { display: flex; gap: 16px; font-size: 14px; flex-wrap: wrap; }
 
   header.page { padding: 56px 0 12px; }
@@ -76,15 +74,15 @@
              border-radius: 10px; padding: 14px 18px; font: 13.5px/1.7 var(--mono);
              overflow-x: auto; margin-top: 12px; }
   pre.code .cm { color: #8d95a3; }
-  pre.code .p { color: #5cc8ff; font-weight: 700; }
+  pre.code .p { color: #5cc8ff; font-weight: 600; }
   pre.code .g { color: #7ad48a; }
   code { font-family: var(--mono); font-size: .92em; background: var(--panel-2);
          padding: 1.5px 6px; border-radius: 5px; }
   pre.code code { background: none; padding: 0; }
 
   table.cmds { border-collapse: collapse; width: 100%; font-size: 14.5px; margin-top: 16px; }
-  .cmds th { text-align: left; font-family: var(--mono); font-size: 12px; letter-spacing: .1em;
-             text-transform: uppercase; color: var(--gold); padding: 0 12px 6px 0;
+  .cmds th { text-align: left; font-family: var(--mono); font-size: 12px;
+             color: var(--dim); font-weight: 500; padding: 0 12px 6px 0;
              border-bottom: 1px solid var(--border); }
   .cmds td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
   .cmds td:first-child { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
@@ -106,7 +104,7 @@
           gap: 14px; margin-top: 22px; }
   .cell { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
           padding: 18px 18px 16px; }
-  .cell h3 { font-size: 15px; color: var(--accent); margin-bottom: 8px; }
+  .cell h3 { font-size: 15px; color: var(--text); margin-bottom: 8px; }
   .cell p { font-size: 14px; color: var(--dim); }
 
   .note { border-left: 2px solid var(--accent); background: var(--panel);
@@ -124,14 +122,14 @@
   footer .spacer { flex: 1; }
 
   @media (prefers-reduced-motion: no-preference) {
-    .cell { transition: border-color .15s ease, transform .15s ease; }
-    .cell:hover { border-color: var(--accent); transform: translateY(-2px); }
+    .cell { transition: border-color .15s ease; }
+    .cell:hover { border-color: var(--dim); }
   }
 </style>
 
 <div class="topbar">
   <div class="wrap">
-    <a class="home" href="./"><span class="silk">Silk</span> Code</a>
+    <a class="home" href="./">Silk Code</a>
     <nav aria-label="On this page">
       <a href="#create">Create</a>
       <a href="#open">Open</a>
@@ -285,7 +283,7 @@ silk&gt; /project github:acme/widget     <span class="cm"># clones into ~/.silkc
       <div class="step-no">03</div>
       <div>
         <h3>From the GUI</h3>
-        <p>The <b>＋</b> button (new session) asks which project to run the session on: pick a
+        <p>The <b>New conversation</b> button (the plus) asks which project to run the session on: pick a
         GitHub repository from the list, or type a local path on the second tab. Recently opened
         projects appear in the same list, so the second visit is one click.</p>
       </div>
@@ -357,8 +355,8 @@ Track todos from the terminal.
       <table class="cmds">
         <tr><td>silkcode test</td><td>run the project's tests, framework auto-detected</td></tr>
         <tr><td>/diff · GIT DIFF</td><td>review exactly what changed before it goes anywhere</td></tr>
-        <tr><td>/revert · ↩ Revert</td><td>undo a whole turn from the checkpoint taken before it</td></tr>
-        <tr><td>/push · ⇧ Push</td><td>push the current branch when you say so</td></tr>
+        <tr><td>/revert · Revert</td><td>undo a whole turn from the checkpoint taken before it</td></tr>
+        <tr><td>/push · Push</td><td>push the current branch when you say so</td></tr>
         <tr><td>--auto-push</td><td>push unpushed commits after every turn</td></tr>
         <tr><td>silkcode review</td><td>an AI review of your uncommitted changes — reads, never writes</td></tr>
         <tr><td>silkcode swarm</td><td>tester + critic + worker iterate until the project scores 10/10</td></tr>

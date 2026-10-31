@@ -4,6 +4,37 @@ Silk Code's history, newest first, grouped by the phase that produced it.
 Entries name what changed and why it mattered; pull requests are numbered
 where one existed. The project began 2026-08-12 with the SRS and V0.1.
 
+## Unreleased — the GUI and the site, unslopped · 2026-10-31
+
+### Changed
+- **The GUI keeps its glass, on a graphite backdrop.** The violet and teal
+  wallpaper is gone; surfaces, borders and text come from one neutral ramp.
+  Cyan (the site's accent) marks the primary action, the selection and links,
+  and nothing else. Apple blue is gone.
+- **A gold "silk thread" shows work in progress.** A thin line runs along the
+  header while the agent works, and marks the active phase in the Swarm
+  pipeline. It replaces the blinking status and project dots.
+- **Line icons replace emoji and symbols** (📱 🐝 ⚙ ↻ ↩ ⇧ ＋ ⑂ ⧉). They are inlined
+  lucide icons, one size and stroke, so the page still loads nothing from outside.
+  Add model, Pair a phone, Environment and Update are icon buttons with tooltips
+  on desktop and keep their labels in the phone sheet. The header fits on one
+  row at 1440px; before, it wrapped onto two.
+- **Labels are sentence case** (Projects, Files, Agent activity, table headers)
+  instead of tracked capitals, spacing sits on a 4px grid, type uses three
+  sizes and weights 400 to 600, and status pills are quiet tags.
+- **Interface copy is plainer.** Tool lines, banners and buttons drop their
+  glyphs; "(not started)" is "Not started"; italics for emphasis are gone.
+- **The Changes diff shades added and removed lines.**
+- **The site:** the gold to cyan gradient thread is now solid gold, section
+  labels are no longer tracked capitals, the hero has two actions instead of
+  five (the rest moved into a new top bar), cards no longer jump on hover,
+  and the workspace screenshot shows the current GUI.
+
+### Fixed
+- On a phone, the conversation picker was cut to three letters ("Nev") and the
+  composer placeholder wrapped and was clipped. Both fit now, and Send gives
+  its place to Stop while a turn runs.
+
 ## Unreleased — a glass GUI at a fraction of the size · 2026-10-16
 
 ### Changed

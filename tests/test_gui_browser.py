@@ -258,7 +258,7 @@ def test_code_blocks_render_with_copy_and_run_buttons(browser, gui_url):
     # shell block gets a run button; the python one does not
     run_btns = page.locator("#messages .code-bubble .cb-icorun")
     assert run_btns.count() == 1
-    assert run_btns.first.text_content().strip() == "▶ run"
+    assert run_btns.first.text_content().strip() == "Run"
     assert page.locator("#messages .code-bubble .cb-copy").count() == 2
 
 
