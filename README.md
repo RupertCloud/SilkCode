@@ -124,7 +124,7 @@ silkcode --model myserver
 Model specs are `provider` (uses its default model) or `provider/model`, e.g.
 `deepseek`, `ollama/qwen2.5-coder:32b`, `openrouter/deepseek/deepseek-chat`. Switch
 mid-session with `/model <spec>` in the CLI or the model selector in the GUI.
-Providers can also be onboarded from the GUI (**+ Add model**).
+Providers can also be onboarded from the GUI (the **Add model** button, a plus beside the model selector).
 
 `--model auto` picks the first available model: a running local server first
 (Ollama, preferring coder models), then cloud providers with an API key configured.
@@ -335,8 +335,8 @@ Scan it and the session opens on the phone: same conversation, same files,
 same git diff, with the agent still running on the laptop.
 
 **Pairing another device later.** That banner prints once, at startup. When the
-terminal has scrolled, or a second phone turns up, the **📱 Pair** button in the
-GUI shows the same QR and addresses on demand — no restart. If the daemon is on
+terminal has scrolled, or a second phone turns up, the **Pair a phone** button in
+the GUI header shows the same QR and addresses on demand — no restart. If the daemon is on
 loopback it says so, and tells you to restart with `--host 0.0.0.0`, because
 there is nothing to pair with until then.
 
@@ -373,7 +373,7 @@ way — the check is on the range, not on Tailscale.
 
 **The phone layout.** Below 768px wide (or 480px tall, for a phone on its side)
 the GUI shows one pane at a time with a Chat / Project switcher, the header
-controls move into a ⋯ sheet, the details drawer (changes, files, activity,
+controls move into a More sheet, the details drawer (changes, files, activity,
 graph) slides over from the right, and the composer stays within thumb reach.
 
 ### What guards it
@@ -490,13 +490,13 @@ the files.
 In the REPL, `/new <name> [template]` does the same thing and switches the session
 to the new project (created next to the current one, not inside it); `/new` with no
 arguments prompts. Either way the project is added to your recent projects, so the
-GUI's ＋ modal and `/project` offer it later.
+GUI's Add dialog and `/project` offer it later.
 
 **The full how-to** — creating, opening, switching, teaching the agent about a codebase,
 verifying and shipping it, remote/sandboxed projects, and troubleshooting — is at
 [silkcode.web.app/projects.html](https://silkcode.web.app/projects.html)
-([source](docs/projects.html)). The same guide is built into the GUI: the **? How-to**
-button in the PROJECT pane.
+([source](docs/projects.html)). The same guide is built into the GUI: the **How projects work**
+button in the Projects pane.
 
 **Open a different project mid-session:** `/project` prompts you to pick a project for
 the session — either a GitHub repository you have access to (cloned for you into
@@ -510,23 +510,25 @@ project).
 `silkcode gui` starts the Silk Code daemon and opens a browser app with the project
 explorer, AI conversation, agent activity timeline, git diff / file viewer, model and
 mode selectors, provider onboarding, checkpoint revert, a stop button for running
-turns, live permission prompts, a **🐝 Swarm** button (multi-agent improvement loop,
-see below), and a **↻ Update** button (self-update, see below).
+turns, live permission prompts, a **Swarm** button (multi-agent improvement loop,
+see below), and an **Update** button (self-update, see below).
 
 The interface uses a macOS-style glass look: translucent, blurred sidebars and
-toolbars over a soft backdrop, the system font, and message bubbles. It follows
+toolbars over a graphite backdrop, the system font, and message bubbles. Surfaces
+stay neutral; cyan marks the primary action and the selection, and a thin gold
+line runs along the header while the agent is working. It follows
 the system's light or dark appearance automatically. It is one self-contained
 page with no external assets, so it still works offline.
 
-**Multiple sessions:** open as many conversations as you like (the ＋ button) and
+**Multiple sessions:** open as many conversations as you like (the plus button) and
 switch between them with the session picker — each has its own agent, model choice,
 workspace (project), transcript, and checkpoints, and turns can run concurrently
-(⏳ marks a busy session; permission prompts from any session reach you wherever you
+(the picker marks a busy session "running"; permission prompts from any session reach you wherever you
 are). **Project** is a control in the header, beside Session, Model and Mode: it lists the
 project you are on, every project you have sessions in, and the ones you opened
 before. Choosing one **moves this session** — the conversation, checkpoints and usage
 come with you, and the workspace lock moves too. That is what `/project` has always
-done in the REPL. The ＋ button opens the same picker for a *new* session instead, so
+done in the REPL. The plus button opens the same picker for a *new* session instead, so
 different sessions can work on different codebases side by side. Either way you can
 pick a GitHub repository (cloned for you into `~/.silkcode/projects/`) or type a local
 directory.
@@ -607,7 +609,7 @@ definition body goes through the same scan as any other repository text
 (*Who asked for this?* below): one that reads as prompt injection is not
 loaded, and you are told.
 
-In the GUI, the **🐝 Swarm** button runs the same loop with live progress, a
+In the GUI, the **Swarm** button runs the same loop with live progress, a
 score-history chart, a pipeline phase indicator, and per-role token stats. The
 worker asks you before modifying files or running commands — pick **Yes to all**
 on a permission prompt to let it run unattended for the rest of the session.
@@ -695,7 +697,7 @@ A running GUI daemon watches the checkout's HEAD and, once new code lands (and
 it is idle — no session or swarm running), re-execs itself with the same
 arguments so the update goes live without a manual restart. Sessions are
 persisted on disk and survive the restart; the browser reloads automatically.
-The GUI's **↻ Update** header button does the same thing.
+The GUI's **Update** header button (the circular arrows) does the same thing.
 
 For an install that is not a git checkout — `pip install git+…`, or a release wheel —
 one line updates it from anywhere:

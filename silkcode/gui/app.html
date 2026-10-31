@@ -6,246 +6,278 @@
 <meta name="color-scheme" content="light dark">
 <title>Silk Code</title>
 <style>
-  /* macOS-style glass: translucent, blurred surfaces over a soft wallpaper,
-     the system font, and the system light/dark appearance. Every colour is a
-     token so the two appearances differ only here. */
+  /* Glass surfaces over a graphite wallpaper, the system font, and the system
+     light/dark appearance. Every colour is a token so the two appearances
+     differ only here. Surfaces stay neutral; cyan marks the action or the
+     selection; gold is the silk thread, shown while work is in progress. */
   :root {
     --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
     --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-    --blur: saturate(180%) blur(26px);
-    --wall: radial-gradient(1100px 760px at 8% -12%, #3b2f72 0%, transparent 62%),
-            radial-gradient(900px 700px at 108% 112%, #0f4d6e 0%, transparent 58%), #131419;
-    --glass: rgba(32, 33, 40, .58); --glass-hi: rgba(40, 41, 50, .82);
-    --fill: rgba(255, 255, 255, .07); --fill-hi: rgba(255, 255, 255, .13);
-    --line: rgba(255, 255, 255, .1); --text: #f2f2f7; --dim: rgba(235, 235, 245, .58);
-    --accent: #0a84ff; --on-accent: #fff; --ok: #30d158; --warn: #ffd60a; --err: #ff453a;
-    --err-bg: rgba(255, 69, 58, .15); --warn-bg: rgba(255, 214, 10, .12);
-    --bubble: rgba(255, 255, 255, .08); --code-bg: rgba(0, 0, 0, .34);
-    --seg-on: rgba(255, 255, 255, .16); --shadow: 0 24px 70px rgba(0, 0, 0, .5);
+    --blur: saturate(140%) blur(24px);
+    --ease: cubic-bezier(.2, .8, .2, 1);
+    --wall: radial-gradient(1200px 800px at 20% -10%, #1f2023 0%, transparent 60%), #111214;
+    --glass: rgba(28, 29, 32, .62); --glass-hi: rgba(34, 35, 39, .9);
+    --fill: rgba(255, 255, 255, .06); --fill-hi: rgba(255, 255, 255, .1);
+    --line: rgba(255, 255, 255, .08); --text: #ececee; --dim: rgba(236, 236, 238, .62); --muted: rgba(236, 236, 238, .42);
+    --accent: #5cc8ff; --on-accent: #0b0d10; --thread: #e6c07b;
+    --ok: #7ad48a; --warn: #e6c07b; --err: #e8737c;
+    --err-bg: rgba(232, 115, 124, .12); --warn-bg: rgba(230, 192, 123, .1);
+    --bubble: rgba(255, 255, 255, .05); --code-bg: rgba(0, 0, 0, .3);
+    --seg-on: rgba(255, 255, 255, .12); --shadow: 0 24px 64px rgba(0, 0, 0, .45);
   }
   @media (prefers-color-scheme: light) {
     :root {
-      --wall: radial-gradient(1100px 760px at 8% -12%, #d9d0ff 0%, transparent 62%),
-              radial-gradient(900px 700px at 108% 112%, #c5ecff 0%, transparent 58%), #eef0f5;
-      --glass: rgba(255, 255, 255, .55); --glass-hi: rgba(255, 255, 255, .84);
-      --fill: rgba(0, 0, 0, .05); --fill-hi: rgba(0, 0, 0, .09);
-      --line: rgba(0, 0, 0, .1); --text: #1d1d1f; --dim: rgba(60, 60, 67, .62);
-      --accent: #007aff; --ok: #248a3d; --warn: #b25000; --err: #d70015;
-      --err-bg: rgba(215, 0, 21, .08); --warn-bg: rgba(255, 159, 10, .14);
-      --bubble: rgba(255, 255, 255, .86); --code-bg: rgba(0, 0, 0, .05);
-      --seg-on: #fff; --shadow: 0 24px 70px rgba(0, 0, 0, .18);
+      --wall: radial-gradient(1200px 800px at 20% -10%, #fafafb 0%, transparent 60%), #e9eaed;
+      --glass: rgba(255, 255, 255, .58); --glass-hi: rgba(255, 255, 255, .9);
+      --fill: rgba(0, 0, 0, .04); --fill-hi: rgba(0, 0, 0, .07);
+      --line: rgba(0, 0, 0, .09); --text: #1b1e24; --dim: rgba(27, 30, 36, .64); --muted: rgba(27, 30, 36, .46);
+      --accent: #0d76b8; --on-accent: #fff; --thread: #b8892e;
+      --ok: #257a3e; --warn: #8a6219; --err: #b3392f;
+      --err-bg: rgba(179, 57, 47, .08); --warn-bg: rgba(184, 137, 46, .12);
+      --bubble: rgba(255, 255, 255, .8); --code-bg: rgba(0, 0, 0, .04);
+      --seg-on: #fff; --shadow: 0 16px 48px rgba(0, 0, 0, .14);
     }
   }
   * { box-sizing: border-box; margin: 0; }
   body { background: var(--wall); background-attachment: fixed; color: var(--text);
-         font: 13.5px/1.5 var(--font); -webkit-font-smoothing: antialiased;
+         font: 13px/1.5 var(--font); -webkit-font-smoothing: antialiased;
          height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
   .glass { background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); }
   a { color: var(--accent); }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+  .i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5;
+       stroke-linecap: round; stroke-linejoin: round; }
 
   button, select, input, textarea {
     font: inherit; color: var(--text); background: var(--fill); border: 1px solid var(--line);
-    border-radius: 8px; padding: 5px 11px; }
-  button { cursor: pointer; transition: background .15s, border-color .15s; }
+    border-radius: 8px; padding: 4px 12px; }
+  button { cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+           transition: background-color .12s var(--ease), border-color .12s var(--ease), color .12s var(--ease); }
   button:hover { background: var(--fill-hi); }
-  button:disabled { opacity: .45; cursor: default; }
-  button.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 600; }
+  button:active { transform: scale(.98); }
+  button:disabled { opacity: .45; cursor: default; transform: none; }
+  button.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 500; }
+  button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
   button.danger, #stop { background: var(--err-bg); color: var(--err); border-color: transparent; }
+  .icon-btn { width: 32px; height: 32px; padding: 0; }
   input, textarea { width: 100%; }
   textarea { resize: vertical; }
   .note { color: var(--dim); font-size: 12px; }
   .mono { font-family: var(--mono); font-size: 12px; }
-  .err-text { color: var(--err); font-size: 12px; margin-top: 6px; }
+  .err-text { color: var(--err); font-size: 12px; margin-top: 8px; }
   .empty { color: var(--dim); font-size: 12px; padding: 4px 12px 12px; }
 
   /* segmented controls, as in a macOS toolbar */
-  .seg { display: flex; gap: 2px; padding: 2px; background: var(--fill); border-radius: 9px; }
-  .seg button { flex: 1; border: 0; background: transparent; color: var(--dim); padding: 4px 10px; border-radius: 7px; font-size: 12px; }
-  .seg button.active { background: var(--seg-on); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+  .seg { display: flex; gap: 2px; padding: 2px; background: var(--fill); border-radius: 10px; }
+  .seg button { flex: 1; border: 0; background: transparent; color: var(--dim); padding: 4px 12px; border-radius: 8px; font-size: 12px; }
+  .seg button:hover { color: var(--text); }
+  .seg button.active { background: var(--seg-on); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .16); }
 
-  header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; flex: 0 0 auto; flex-wrap: wrap;
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 16px; flex: 0 0 auto; flex-wrap: wrap;
            border-bottom: 1px solid var(--line); position: relative; z-index: 8; }
-  header .logo { font-weight: 700; letter-spacing: -.01em; }
-  header .logo b { color: var(--accent); }
-  header label { color: var(--dim); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
-  header button { padding: 5px 9px; }
-  #model-select { max-width: 210px; }
-  header .hgroup { display: inline-flex; align-items: center; gap: 6px; }
+  header .logo { font-weight: 600; font-size: 14px; margin-right: 4px; }
+  header label { color: var(--dim); font-size: 12px; display: inline-flex; align-items: center; gap: 8px; }
+  header button, header select { height: 32px; }
+  header button { padding: 0 12px; }
+  header button.icon-btn { padding: 0; }
+  #model-select { max-width: 220px; }
+  header .hgroup { display: inline-flex; align-items: center; gap: 4px; }
   header .hgroup + .hgroup { margin-left: 8px; }
   /* Push is the only header control that leaves this machine. */
-  header button.outward { border-color: var(--warn); color: var(--warn); font-weight: 600; }
+  header button.outward { color: var(--warn); }
   header .spacer { flex: 1; }
-  .usage { color: var(--dim); font-size: 12px; }
+  .icon-btn .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .usage { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
   .mobile-actions { display: contents; }
   #mobile-menu { display: none; }
-  #status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); display: inline-block; opacity: .7; }
-  #status-dot.running { background: var(--warn); opacity: 1; animation: pulse 1s infinite alternate; }
-  @keyframes pulse { to { opacity: .35; } }
-  .banner { display: none; padding: 7px 14px; font-size: 12.5px; background: var(--warn-bg); color: var(--warn); }
+  #status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; }
+  #status-dot.running { background: var(--thread); }
+  /* The silk thread: a gold line along the header while the agent works. */
+  #thread { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; overflow: hidden; display: none; }
+  body.running #thread { display: block; }
+  #thread::before { content: ""; position: absolute; inset: 0; width: 32%; background: var(--thread);
+                    animation: thread 1.6s var(--ease) infinite; }
+  @keyframes thread { from { transform: translateX(-100%); } to { transform: translateX(320%); } }
+  @media (prefers-reduced-motion: reduce) { #thread::before { animation: none; width: 100%; opacity: .7; } }
+  .banner { display: none; padding: 8px 16px; font-size: 12px; background: var(--warn-bg); color: var(--warn); }
   .banner button { margin-left: 8px; }
   @media (min-width: 769px) and (min-height: 481px) { .project-header-switch { display: none; } }
 
-  main { display: grid; grid-template-columns: 250px minmax(0, 1fr) 0; grid-template-rows: 1fr auto;
-         flex: 1; min-height: 0; transition: grid-template-columns .2s ease; }
-  main.details-open { grid-template-columns: 250px minmax(0, 1fr) min(380px, 34vw); }
+  main { display: grid; grid-template-columns: 256px minmax(0, 1fr) 0; grid-template-rows: 1fr auto;
+         flex: 1; min-height: 0; }
+  main.details-open { grid-template-columns: 256px minmax(0, 1fr) min(384px, 34vw); }
   .pane { overflow: auto; min-height: 0; }
-  .pane h2, #graph-details h2 { font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--dim);
-                                padding: 10px 12px 4px; display: flex; align-items: center; gap: 8px; }
+  .pane h2, #graph-details h2 { font-size: 12px; font-weight: 500; color: var(--dim);
+                                padding: 12px 12px 4px; display: flex; align-items: center; gap: 8px; }
 
   #files { grid-column: 1; grid-row: 1 / 3; border-right: 1px solid var(--line); padding: 8px; }
-  .drawer-head { display: flex; align-items: center; padding: 4px 4px 8px; }
-  .drawer-head strong { font-size: 11px; letter-spacing: .06em; color: var(--dim); }
-  #project-add { margin-left: auto; color: var(--accent); font-size: 12px; }
+  .drawer-head { display: flex; align-items: center; padding: 4px 4px 8px 8px; }
+  .drawer-head strong { font-size: 12px; font-weight: 500; color: var(--dim); }
+  #project-add { margin-left: auto; height: 28px; padding: 0 8px; border-color: transparent; background: transparent; color: var(--dim); font-size: 12px; gap: 4px; }
+  #project-add:hover { background: var(--fill); color: var(--text); }
   #project-cards { display: flex; flex-direction: column; gap: 2px; }
   #project-cards.switching { pointer-events: none; opacity: .6; }
   .project-card { display: grid; grid-template-columns: 8px 1fr auto auto; align-items: center; gap: 8px;
-                  padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+                  min-height: 44px; padding: 4px 4px 4px 8px; border-radius: 8px; cursor: pointer; border: 1px solid transparent;
+                  transition: background-color .12s var(--ease); }
   .project-card:hover { background: var(--fill); }
-  .project-card.current { background: color-mix(in srgb, var(--accent) 22%, transparent); }
-  .project-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .project-card.current { background: var(--fill-hi); border-color: var(--line); }
+  .project-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
   .project-card.current .project-dot { background: var(--accent); }
-  .project-card.running .project-dot { background: var(--warn); animation: pulse 1s infinite alternate; }
+  .project-card.running .project-dot { background: var(--thread); }
   .project-copy { min-width: 0; }
   .project-name, .project-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .project-name { font-weight: 600; }
-  .project-meta, .project-count { color: var(--dim); font-size: 11px; }
-  .project-close { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--dim); }
+  .project-name { font-weight: 500; }
+  .project-meta, .project-count { color: var(--muted); font-size: 12px; }
+  .project-count { font-variant-numeric: tabular-nums; }
+  .project-close { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--muted); }
+  .project-close .i { width: 14px; height: 14px; }
   .project-close:hover { background: var(--err-bg); color: var(--err); }
   .project-close:disabled { opacity: .2; background: transparent; }
-  #projects-help-btn { margin: 10px 4px; font-size: 12px; border-radius: 999px; }
-  #tree .entry { padding: 1px 10px; cursor: pointer; white-space: nowrap; font: 12px var(--mono); border-radius: 5px; }
+  #projects-help-btn { margin: 8px 0; height: 32px; padding: 0 8px; font-size: 12px; color: var(--dim);
+                       background: transparent; border-color: transparent; }
+  #projects-help-btn:hover { background: var(--fill); color: var(--text); }
+  #tree .entry { padding: 2px 12px; cursor: pointer; white-space: nowrap; font: 12px/20px var(--mono); border-radius: 4px; }
   #tree .entry.dir { color: var(--dim); }
   #tree .entry:hover { background: var(--fill); }
 
   /* min-width: 0, or the 1fr track grows to the conversation bar's
      min-content width and the whole page scrolls sideways on a phone. */
   #chat { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
-  #conversation-bar { display: flex; align-items: center; gap: 6px; padding: 7px 12px; border-bottom: 1px solid var(--line); }
-  #session-select { min-width: 180px; max-width: 52ch; }
-  #conversation-bar > button { width: 30px; height: 30px; padding: 0; }
+  #conversation-bar { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  #session-select { min-width: 180px; max-width: 52ch; height: 32px; margin-right: 4px; }
+  #conversation-bar > button { width: 32px; height: 32px; padding: 0; }
   #conversation-bar .grow { flex: 1; }
-  #details-toggle { width: auto !important; padding: 0 12px !important; }
-  #messages { flex: 1; min-height: 0; overflow: auto; padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; }
-  .msg-wrap { display: flex; align-items: center; gap: 6px; max-width: 86%; flex-shrink: 0; align-self: flex-start; }
+  #details-toggle { width: auto !important; padding: 0 12px !important; margin-left: 8px; }
+  #messages { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
+  .msg-wrap { display: flex; align-items: center; gap: 8px; max-width: 86%; flex-shrink: 0; align-self: flex-start; }
   .msg-wrap.user { align-self: flex-end; flex-direction: row-reverse; }
-  .msg { max-width: 100%; min-width: 0; padding: 8px 13px; border-radius: 16px; white-space: pre-wrap; word-break: break-word; }
-  .msg.user { background: var(--accent); color: var(--on-accent); border-bottom-right-radius: 5px; }
-  .msg.assistant { background: var(--bubble); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
-  .msg.error { background: var(--err-bg); color: var(--err); font: 12px var(--mono); border-radius: 10px; }
-  .msg.notice { background: var(--warn-bg); color: var(--warn); font: 12px var(--mono); border-radius: 10px; }
-  .msg.tool { color: var(--dim); font: 11.5px var(--mono); padding: 3px 10px; border-radius: 999px; background: var(--fill); }
-  .msg-copy { width: 26px; height: 26px; padding: 0; border-radius: 50%; font-size: 12px; color: var(--dim);
-              display: none; align-items: center; justify-content: center; flex: 0 0 auto; }
+  .msg { max-width: 100%; min-width: 0; padding: 8px 12px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { background: var(--fill-hi); border: 1px solid var(--line); border-bottom-right-radius: 4px; }
+  .msg.assistant { background: var(--bubble); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+  .msg.error { background: var(--err-bg); color: var(--err); font: 12px/1.5 var(--mono); border-radius: 10px; }
+  .msg.notice { background: var(--warn-bg); color: var(--warn); font: 12px/1.5 var(--mono); border-radius: 10px; }
+  .msg.tool { color: var(--dim); font: 12px/1.5 var(--mono); padding: 4px 12px; border-radius: 8px; background: var(--fill); }
+  .msg-copy { width: 28px; height: 28px; padding: 0; border-radius: 8px; color: var(--dim);
+              display: none; flex: 0 0 auto; }
+  .msg-copy .i { width: 14px; height: 14px; }
   .msg-wrap:hover .msg-copy { display: inline-flex; }
   .copied { color: var(--ok) !important; border-color: var(--ok) !important; }
-  .key-prompt input { margin: 8px 0 6px; font-family: var(--mono); }
+  .key-prompt input { margin: 8px 0; font-family: var(--mono); }
   .chat-image { max-width: min(100%, 900px); max-height: 70vh; object-fit: contain; border-radius: 12px;
                 border: 1px solid var(--line); align-self: flex-start; }
 
-  .markdown-body { white-space: normal; line-height: 1.58; }
+  .markdown-body { white-space: normal; line-height: 1.6; }
   .markdown-body > :first-child { margin-top: 0; }
   .markdown-body > :last-child { margin-bottom: 0; }
-  .markdown-body :is(h1, h2, h3, h4) { line-height: 1.25; margin: 16px 0 6px; }
+  .markdown-body :is(h1, h2, h3, h4) { line-height: 1.25; font-weight: 600; margin: 16px 0 8px; }
   .markdown-body h1 { font-size: 20px; } .markdown-body h2 { font-size: 17px; }
-  .markdown-body h3 { font-size: 15px; } .markdown-body h4 { font-size: 13px; color: var(--accent); }
-  .markdown-body p, .markdown-body ul, .markdown-body ol { margin: 7px 0; }
-  .markdown-body ul, .markdown-body ol { padding-left: 22px; }
-  .markdown-body code { font: .92em var(--mono); background: var(--code-bg); border-radius: 5px; padding: 1px 5px; }
-  .msg.user code { background: rgba(255, 255, 255, .22); }
-  .msg.user a { color: inherit; }
-  .markdown-body blockquote { margin: 8px 0; padding: 4px 12px; color: var(--dim); border-left: 3px solid var(--accent); }
-  .markdown-table-wrap { overflow-x: auto; margin: 10px 0; border: 1px solid var(--line); border-radius: 8px; }
+  .markdown-body h3 { font-size: 15px; } .markdown-body h4 { font-size: 13px; }
+  .markdown-body p, .markdown-body ul, .markdown-body ol { margin: 8px 0; }
+  .markdown-body ul, .markdown-body ol { padding-left: 20px; }
+  .markdown-body code { font: .92em var(--mono); background: var(--code-bg); border-radius: 4px; padding: 1px 4px; }
+  .markdown-body blockquote { margin: 8px 0; padding: 4px 12px; color: var(--dim); border-left: 2px solid var(--line); }
+  .markdown-table-wrap { overflow-x: auto; margin: 12px 0; border: 1px solid var(--line); border-radius: 8px; }
   .markdown-body table { width: 100%; border-collapse: collapse; min-width: 480px; font-size: 12px; }
-  .markdown-body :is(th, td) { padding: 7px 9px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
-  .markdown-body th { background: var(--fill); font-weight: 600; }
+  .markdown-body :is(th, td) { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  .markdown-body th { background: var(--fill); font-weight: 500; }
   .markdown-body tr:last-child td { border-bottom: 0; }
 
   /* flex-shrink: 0 matters: #messages is a column flex box, so without it a
      code card is squashed below its content height and the code is clipped. */
-  .code-bubble { max-width: 92%; align-self: stretch; flex-shrink: 0; margin: 2px 0; font-family: var(--mono);
+  .code-bubble { max-width: 92%; align-self: stretch; flex-shrink: 0; margin: 4px 0; font-family: var(--mono);
                  background: var(--code-bg); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-  .cb-head { display: flex; align-items: center; gap: 6px; padding: 5px 10px; background: var(--fill); border-bottom: 1px solid var(--line); }
-  .cb-lang { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: .06em; margin-right: auto; }
-  .cb-ico { font: 11px var(--mono); padding: 2px 9px; border-radius: 999px; color: var(--dim); }
-  .cb-icorun { color: var(--ok); }
-  .code-bubble pre { padding: 10px 12px; overflow-x: auto; font: 12.5px/1.55 var(--mono); white-space: pre; }
+  .cb-head { display: flex; align-items: center; gap: 4px; padding: 4px 8px 4px 12px; background: var(--fill); border-bottom: 1px solid var(--line); }
+  .cb-lang { font-size: 12px; color: var(--muted); margin-right: auto; }
+  .cb-ico { font: 12px var(--mono); height: 24px; padding: 0 8px; border-radius: 6px; color: var(--dim); gap: 4px;
+            background: transparent; border-color: transparent; }
+  .cb-ico .i { width: 14px; height: 14px; }
+  .cb-ico:hover { background: var(--fill-hi); color: var(--text); }
+  .code-bubble pre { padding: 12px; overflow-x: auto; font: 12px/1.6 var(--mono); white-space: pre; }
 
   #composer { grid-column: 2; grid-row: 2; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px;
-              padding: 10px 14px; border-top: 1px solid var(--line); }
-  #composer textarea { flex: 1; width: auto; resize: none; height: 58px; border-radius: 18px; padding: 9px 14px; background: var(--glass-hi); }
-  #composer button { height: 40px; border-radius: 999px; padding: 0 20px; }
-  #composer-hint { flex: 1 0 100%; order: 3; font-size: 11px; color: var(--dim); padding-left: 14px; }
+              padding: 12px 16px; border-top: 1px solid var(--line); }
+  #composer textarea { flex: 1; width: auto; resize: none; height: 56px; border-radius: 12px; padding: 8px 12px; background: var(--glass-hi); }
+  #composer button { height: 40px; border-radius: 10px; padding: 0 20px; }
+  #composer-hint { flex: 1 0 100%; order: 3; font-size: 12px; color: var(--muted); padding-left: 12px; }
+  #composer-hint kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); border-bottom-width: 2px;
+                       border-radius: 4px; background: var(--fill); color: var(--dim); }
 
   #details { grid-column: 3; grid-row: 1 / 3; min-width: 0; overflow: hidden; display: flex; flex-direction: column;
              border-left: 1px solid var(--line); }
   main:not(.details-open) #details { border-left: 0; visibility: hidden; }
   #details-head { margin: 8px; }
-  #details-close { flex: 0 0 28px !important; font-size: 16px !important; }
+  #details-close { flex: 0 0 28px !important; padding: 0 !important; }
   /* scoped to #details so only the chosen panel shows */
   #details .details-panel { display: none; flex: 1; min-height: 0; overflow: auto; }
   #details[data-detail="files"] #file-details, #details[data-detail="activity"] #activity,
   #details[data-detail="graph"] #graph-details, #details[data-detail="changes"] #bottom { display: flex; flex-direction: column; }
   #timeline:not(:empty) + .empty { display: none; }
-  .act { padding: 5px 12px; font: 12px var(--mono); border-bottom: 1px solid var(--line); }
-  .act .name { color: var(--accent); }
+  .act { padding: 4px 12px; font: 12px/1.5 var(--mono); border-bottom: 1px solid var(--line); }
   .act .args, .act .out { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
   .act .out { color: var(--ok); }
-  #tabs { margin: 0 10px 8px; }
-  #viewer { flex: 1; overflow: auto; margin: 0 10px 10px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; }
-  #viewer pre { padding: 10px 12px; font: 12px/1.45 var(--mono); white-space: pre; }
-  .dline.add { color: var(--ok); } .dline.del { color: var(--err); } .dline.hunk { color: var(--accent); } .dline.quiet { color: var(--dim); }
-  #graph-details { padding: 4px 12px 12px; gap: 10px; }
+  #tabs { margin: 0 8px 8px; }
+  #viewer { flex: 1; overflow: auto; margin: 0 8px 8px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 12px; }
+  #viewer pre { padding: 12px; font: 12px/1.5 var(--mono); white-space: pre; }
+  .dline.add { color: var(--ok); } .dline.del { color: var(--err); } .dline.hunk { color: var(--muted); } .dline.quiet { color: var(--dim); }
+  .dline.add { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+  .dline.del { background: color-mix(in srgb, var(--err) 10%, transparent); }
+  #graph-details { padding: 4px 12px 12px; gap: 12px; }
+  #graph-details h2 { padding: 4px 0 0; }
   .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-  .stat { background: var(--fill); border-radius: 10px; padding: 9px 11px; }
-  .stat b { display: block; font-size: 18px; }
-  .stat span { font-size: 11px; color: var(--dim); }
-  .graph-hub, .daybar, .swbar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); }
-  .bar { height: 8px; background: var(--accent); border-radius: 4px; min-width: 3px; }
-  .bar.warn { background: var(--warn); } .bar.err { background: var(--err); }
+  .stat { background: var(--fill); border-radius: 10px; padding: 8px 12px; }
+  .stat b { display: block; font-size: 20px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12px; color: var(--dim); }
+  .graph-hub, .daybar, .swbar { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dim);
+                                font-variant-numeric: tabular-nums; }
+  .bar { height: 6px; background: var(--muted); border-radius: 3px; min-width: 4px; }
+  .bar.warn { background: var(--warn); } .bar.err { background: var(--err); } .bar.ok { background: var(--ok); }
   .graph-hub .deg { margin-left: auto; }
   #graph-actions { display: flex; gap: 8px; }
-  #graph-actions a { padding: 5px 11px; border-radius: 8px; background: var(--fill); text-decoration: none; font-size: 12px; }
+  #graph-actions a { display: inline-flex; align-items: center; height: 28px; padding: 0 12px; border-radius: 8px; background: var(--fill); text-decoration: none; font-size: 12px; }
 
   .modal-bg { position: fixed; inset: 0; z-index: 10; display: none; align-items: center; justify-content: center;
-              background: rgba(0, 0, 0, .28); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+              background: rgba(0, 0, 0, .4); }
   .modal-bg.open { display: flex; }
-  .modal { width: 460px; max-width: 94vw; max-height: 88dvh; overflow: auto; padding: 18px 20px; border-radius: 14px;
+  .modal { width: 460px; max-width: 94vw; max-height: 88dvh; overflow: auto; padding: 20px; border-radius: 16px;
            background: var(--glass-hi); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
-           border: 1px solid var(--line); box-shadow: var(--shadow); }
+           border: 1px solid var(--line); box-shadow: var(--shadow); animation: rise .2s var(--ease); }
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
   .modal.wide { width: 760px; } .modal.mid { width: 600px; }
-  .modal h3 { margin-bottom: 10px; font-size: 15px; }
-  .modal h4 { font-size: 13px; margin: 16px 0 6px; }
-  .modal .prompt { font: 12.5px var(--mono); background: var(--fill); padding: 10px; border-radius: 9px; margin-bottom: 12px;
+  .modal h3 { margin-bottom: 12px; font-size: 15px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; }
+  .modal h4 { font-size: 13px; font-weight: 600; margin: 20px 0 8px; }
+  .modal .prompt { font: 12px/1.5 var(--mono); background: var(--fill); padding: 12px; border-radius: 8px; margin-bottom: 12px;
                    word-break: break-all; white-space: pre-wrap; }
-  .modal .row { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 14px; }
-  .modal label { display: block; font-size: 12px; color: var(--dim); margin: 9px 0 3px; }
-  .modal label:has(input[type=checkbox]) { display: inline-flex; gap: 5px; align-items: center; }
-  .modal input[type=checkbox] { width: auto; }
-  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+  .modal .row { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 16px; }
+  .modal .row button { height: 32px; }
+  .modal label { display: block; font-size: 12px; color: var(--dim); margin: 12px 0 4px; }
+  .modal label:has(input[type=checkbox]) { display: inline-flex; gap: 8px; align-items: center; }
+  .modal input[type=checkbox] { width: auto; accent-color: var(--accent); }
+  .modal :is(input, select) { height: 32px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
   #share-tabs, #project-tabs { margin: 8px 0; }
-  #share-draft { min-height: 230px; }
+  #share-draft { min-height: 232px; }
   #share-scan.ok { color: var(--ok); } #share-scan.warn { color: var(--warn); }
-  .project-row { display: flex; justify-content: space-between; gap: 10px; width: 100%; text-align: left; margin: 3px 0; padding: 8px 10px; }
+  .project-row { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left; margin: 4px 0; padding: 8px 12px; }
   .project-row .project-name { min-width: 0; }
-  .project-row .project-state { flex: none; color: var(--dim); font-size: 11px; }
-  .project-row.selected { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
+  .project-row .project-state { flex: none; color: var(--dim); font-size: 12px; }
+  .project-row.selected { border-color: var(--accent); background: var(--fill-hi); }
   .project-row.selected .project-state { color: var(--accent); }
-  .list { max-height: 260px; overflow: auto; margin: 6px 0; }
+  .list { max-height: 260px; overflow: auto; margin: 8px 0; }
 
-  .howto h4 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin: 18px 0 6px; }
-  .howto p, .howto ul { font-size: 13px; color: var(--dim); margin-bottom: 6px; }
-  .howto ul { padding-left: 18px; }
+  .howto h4 { font-size: 13px; font-weight: 600; color: var(--text); margin: 20px 0 8px; }
+  .howto p, .howto ul { font-size: 13px; color: var(--dim); margin-bottom: 8px; }
+  .howto ul { padding-left: 20px; }
   .howto li { margin: 4px 0; }
-  .howto b { color: var(--text); font-weight: 600; }
-  .howto code { font: 12px var(--mono); background: var(--fill); padding: 1px 5px; border-radius: 4px; color: var(--text); }
-  .cmdrow { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+  .howto b { color: var(--text); font-weight: 500; }
+  .howto code { font: 12px var(--mono); background: var(--fill); padding: 1px 4px; border-radius: 4px; color: var(--text); }
+  .cmdrow { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
   .cmdrow code { flex: 1; overflow-x: auto; white-space: nowrap; padding: 4px 8px !important; }
-  .cmdrow button { padding: 2px 9px; font-size: 11px; }
+  .cmdrow button { height: 24px; padding: 0 8px; font-size: 12px; }
 
-  table.envtable { border-collapse: collapse; width: 100%; font-size: 12.5px; table-layout: fixed; }
-  table.envtable :is(td, th) { padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
-  table.envtable th { color: var(--dim); font-weight: 500; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+  table.envtable { border-collapse: collapse; width: 100%; font-size: 12px; table-layout: fixed; }
+  table.envtable :is(td, th) { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+  table.envtable th { color: var(--muted); font-weight: 500; font-size: 12px; }
   table.envtable td.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
   table.envtable .mono { color: var(--dim); }
   .howto table.envtable { table-layout: auto; margin-top: 8px; }
@@ -254,91 +286,120 @@
   #env-credentials :is(th, td):nth-child(3), #env-credentials :is(th, td):nth-child(4) {
     width: 20%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #env-credentials :is(th, td):nth-child(5) { width: 30%; white-space: nowrap; }
-  .envtable input.keyin { width: min(150px, 55%); padding: 3px 7px; font-size: 12px; }
-  .envtable button.keybtn { padding: 3px 9px; font-size: 12px; margin-left: 4px; }
-  .pill { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); }
-  .pill.ok { color: var(--ok); border-color: var(--ok); } .pill.off { color: var(--dim); } .pill.run { color: var(--warn); border-color: var(--warn); }
-  #env-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 12px; }
+  .envtable input.keyin { width: min(152px, 55%); height: 28px; padding: 0 8px; font-size: 12px; }
+  .envtable button.keybtn { height: 28px; padding: 0 8px; font-size: 12px; margin-left: 4px; }
+  .pill { font-size: 12px; padding: 0 6px; border-radius: 4px; color: var(--dim); background: var(--fill); }
+  .pill.ok { color: var(--ok); } .pill.off { color: var(--muted); } .pill.run { color: var(--warn); }
+  #env-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0; }
   #env-updated { margin-right: auto; }
 
-  .sw-pipeline { display: flex; align-items: center; gap: 6px; overflow-x: auto; margin: 6px 0 10px; font-size: 12px; color: var(--dim); }
-  .sw-phase { padding: 2px 10px; border-radius: 999px; background: var(--fill); white-space: nowrap; }
-  .sw-phase.active { background: var(--accent); color: var(--on-accent); font-weight: 600; }
-  #swarm-chart { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
-  #swarm-log { font: 12px var(--mono); background: var(--fill); border-radius: 9px; padding: 8px; height: 170px; overflow: auto; white-space: pre-wrap; }
-  #team-board { display: none; gap: 7px; margin: 8px 0 12px; }
-  #team-board.visible { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  /* The swarm pipeline: the active phase is where the thread runs. */
+  .sw-pipeline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 8px 0 12px; font-size: 12px; color: var(--muted); }
+  .sw-phase { padding: 2px 8px; border-radius: 6px; background: var(--fill); color: var(--dim); white-space: nowrap;
+              box-shadow: inset 0 -2px transparent; transition: color .12s var(--ease), box-shadow .12s var(--ease); }
+  .sw-phase.active { color: var(--text); box-shadow: inset 0 -2px var(--thread); }
+  #swarm-chart { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+  #swarm-log { font: 12px/1.5 var(--mono); background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+               padding: 8px 12px; height: 168px; overflow: auto; white-space: pre-wrap; }
+  #team-board { display: none; gap: 8px; margin: 8px 0 12px; }
+  #team-board.visible { display: grid; grid-template-columns: repeat(auto-fit, minmax(152px, 1fr)); }
   .team-card { border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: var(--fill); min-width: 0; }
-  .team-card .role { color: var(--accent); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+  .team-card .role { color: var(--dim); font-size: 12px; font-weight: 500; }
   .team-card .task { font-size: 12px; overflow-wrap: anywhere; }
-  .team-card.done { border-color: var(--ok); }
+  .team-card.done .role { color: var(--ok); }
 
   /* The QR is drawn from a matrix the daemon sends, so no library is needed. */
-  #pair-qr { display: grid; background: #fff; padding: 12px; border-radius: 10px; width: max-content; margin: 10px auto; }
+  #pair-qr { display: grid; background: #fff; padding: 12px; border-radius: 12px; width: max-content; margin: 12px auto; }
   #pair-qr i { display: block; width: 4px; height: 4px; background: #fff; }
   #pair-qr i.on { background: #000; }
-  .pair-url { font: 11px var(--mono); word-break: break-all; background: var(--fill); border-radius: 8px; padding: 8px; margin-top: 6px; }
+  .pair-url { font: 12px var(--mono); word-break: break-all; background: var(--fill); border-radius: 8px; padding: 8px; margin-top: 8px; }
 
   #mobile-tabs { display: none; }
   /* Phones: 768px covers portrait; a phone on its side is wide but short,
      so the short viewport is the second way in. One pane at a time, picked
      by the tab bar, with the composer pinned within thumb reach. */
   @media (max-width: 768px), (max-height: 480px) {
-    header { flex-wrap: nowrap; gap: 8px; padding: calc(6px + env(safe-area-inset-top, 0px)) 10px 6px; }
+    header { flex-wrap: nowrap; gap: 8px; padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px; }
     /* a backdrop-filter would make the header the containing block of the
        fixed actions sheet below, trapping it inside the header's 52px */
     header.glass { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--glass-hi); }
-    header select, header button { min-height: 40px; }
+    header select, header button { height: 40px; }
     header > label:first-of-type { flex: 1; min-width: 0; }
     header > label:first-of-type select { width: 100%; min-width: 0; }
-    #mobile-menu { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 42px; font-size: 20px; }
-    .mobile-actions { display: none; position: fixed; inset: auto 8px 8px; max-height: calc(100dvh - 70px); overflow-y: auto;
-                      padding: 14px; border-radius: 16px; border: 1px solid var(--line); box-shadow: var(--shadow);
+    #mobile-menu { display: inline-flex; flex: 0 0 40px; width: 40px; padding: 0; }
+    #mobile-menu .i { width: 20px; height: 20px; }
+    .mobile-actions { display: none; position: fixed; inset: auto 8px 8px; max-height: calc(100dvh - 72px); overflow-y: auto;
+                      padding: 16px; border-radius: 16px; border: 1px solid var(--line); box-shadow: var(--shadow);
                       background: var(--glass-hi); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
-                      grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; z-index: 20; }
-    header.mobile-open .mobile-actions { display: grid; }
+                      grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; z-index: 20; }
+    header.mobile-open .mobile-actions { display: grid; animation: rise .2s var(--ease); }
     .mobile-actions .spacer { display: none; }
-    .mobile-actions label { flex-direction: column; align-items: stretch; min-width: 0; }
+    .mobile-actions label { flex-direction: column; align-items: stretch; gap: 4px; min-width: 0; }
     .mobile-actions :is(select, button), #model-select { width: 100%; max-width: none; }
     .mobile-actions .hgroup { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .mobile-actions .icon-btn { width: 100%; padding: 0 12px; justify-content: flex-start; }
+    .mobile-actions .icon-btn .lbl { position: static; width: auto; height: auto; clip-path: none; }
+    .mobile-actions button { justify-content: flex-start; }
     header .hgroup + .hgroup { margin-left: 0; }
-    #mobile-tabs { display: flex; margin: 6px 10px; flex-shrink: 0; }
-    #mobile-tabs button { padding: 7px 4px; font-size: 13px; }
+    #mobile-tabs { display: flex; margin: 8px 12px; flex-shrink: 0; }
+    #mobile-tabs button { height: 32px; padding: 0 4px; font-size: 13px; }
 
     main, main.details-open { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
     #files, #chat { grid-column: 1; grid-row: 1; border-right: 0; display: none; }
-    #composer { grid-column: 1; grid-row: 2; padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
+    #composer { grid-column: 1; grid-row: 2; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); }
     main[data-pane="chat"] #chat, main[data-pane="files"] #files { display: flex; flex-direction: column; }
-    #composer textarea { height: 44px; font-size: 16px; }  /* 16px: iOS zooms below it */
+    #composer textarea { height: 44px; font-size: 16px; padding: 9px 12px; }  /* 16px: iOS zooms below it */
+    #composer button { height: 44px; }
+    body.running #send { display: none; }  /* Stop takes its place, so the input keeps its width */
     #composer-hint { display: none; }
-    #messages { padding: 10px 12px; }
+    #messages { padding: 12px; }
     .msg-wrap, .code-bubble { max-width: 100%; }
     .msg-copy { display: inline-flex; width: 32px; height: 32px; }
     .chat-image { width: 100%; max-height: 55dvh; }
-    #conversation-bar { padding: 6px 9px; }
-    #conversation-bar .usage { display: none; }
+    #conversation-bar { padding: 8px 12px; }
+    #conversation-bar :is(.usage, .grow) { display: none; }
     #session-select { flex: 1; min-width: 0; max-width: none; height: 40px; }
-    #conversation-bar > button { width: 40px; height: 40px; }
-    #details { position: fixed; z-index: 15; inset: 0 0 0 auto; width: min(92vw, 390px); transform: translateX(100%);
-               transition: transform .2s ease; box-shadow: var(--shadow); background: var(--glass-hi); }
+    #conversation-bar > button { width: 40px; height: 40px; flex: none; }
+    #details-toggle { width: 40px !important; padding: 0 !important; margin-left: 0; }
+    #details-toggle .lbl { display: none; }
+    #details { position: fixed; z-index: 15; inset: 0 0 0 auto; width: min(92vw, 392px); transform: translateX(100%);
+               transition: transform .2s var(--ease); box-shadow: var(--shadow); background: var(--glass-hi); }
     main.details-open #details { visibility: visible; transform: none; }
     .modal-bg { align-items: flex-end; }
     .modal { width: 100% !important; max-width: 100vw; border-radius: 16px 16px 0 0;
-             padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+             padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
     .modal .row { flex-wrap: wrap; }
-    .modal .row button { min-height: 44px; flex: 1; }
-    #env-summary, .grid2 { grid-template-columns: 1fr 1fr; }
+    .modal .row button { height: 44px; flex: 1; }
+    #env-summary { grid-template-columns: 1fr 1fr; }
     .grid2 { grid-template-columns: 1fr; }
     table.envtable { min-width: 680px; }
   }
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <!-- lucide line icons, inlined so the page loads nothing from outside -->
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+  <symbol id="i-push" viewBox="0 0 24 24"><path d="m18 9-6-6-6 6"/><path d="M12 3v14"/><path d="M5 21h14"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect width="14" height="20" x="5" y="2" rx="2"/><path d="M12 18h.01"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></symbol>
+  <symbol id="i-swarm" viewBox="0 0 24 24"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+  <symbol id="i-fork" viewBox="0 0 24 24"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3v18l14-9z"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
+</svg>
 <header class="glass">
-  <span class="logo"><b>Silk</b> Code</span>
+  <span class="logo">Silk Code</span>
   <label class="project-header-switch">Project <select id="project-select" title="The tree this session's file tools, git commands and tests are confined to"></select></label>
   <span id="status-dot" title="agent status"></span>
-  <button id="mobile-menu" aria-label="More controls" aria-expanded="false">⋯</button>
+  <button id="mobile-menu" aria-label="More controls" aria-expanded="false"><svg class="i" aria-hidden="true"><use href="#i-more"/></svg></button>
   <span class="mobile-actions">
     <span class="spacer"></span>
     <label>Model <select id="model-select"></select></label>
@@ -346,23 +407,24 @@
       <option value="plan">plan</option><option value="ask">ask</option><option value="edit">edit</option><option value="agent">agent</option>
     </select></label>
     <span class="hgroup" role="group" aria-label="Repository actions">
-      <button id="revert" title="Undo the last turn's file changes">↩ Revert</button>
-      <button id="push-btn" class="outward" title="Push the current branch to the remote — this leaves your machine">⇧ Push</button>
+      <button id="revert" title="Undo the last turn's file changes"><svg class="i" aria-hidden="true"><use href="#i-undo"/></svg>Revert</button>
+      <button id="push-btn" class="outward" title="Push the current branch to the remote. This leaves your machine"><svg class="i" aria-hidden="true"><use href="#i-push"/></svg>Push</button>
       <button id="share-update-btn" title="Draft a public update from this branch; nothing is posted automatically">Share update</button>
     </span>
     <span class="hgroup" role="group" aria-label="Settings and tools">
-      <button id="add-model">+ Add model</button>
+      <button id="add-model" class="icon-btn" title="Add a model provider"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add model</span></button>
       <button id="github-btn">GitHub</button>
-      <button id="pair-btn" title="Show a QR to open this session on a phone">📱 Pair</button>
-      <button id="env-btn" title="Keys, token usage and running sessions">⚙ Environment</button>
-      <button id="swarm-btn" title="Run an advanced or classic multi-agent swarm in this project">🐝 Swarm</button>
-      <button id="update-btn" title="Pull the latest Silk Code from git; the daemon restarts itself with the new code">↻ Update</button>
+      <button id="pair-btn" class="icon-btn" title="Pair a phone: show a QR that opens this session"><svg class="i" aria-hidden="true"><use href="#i-phone"/></svg><span class="lbl">Pair a phone</span></button>
+      <button id="env-btn" class="icon-btn" title="Environment: keys, token usage and running sessions"><svg class="i" aria-hidden="true"><use href="#i-sliders"/></svg><span class="lbl">Environment</span></button>
+      <button id="swarm-btn" title="Run an advanced or classic multi-agent swarm in this project"><svg class="i" aria-hidden="true"><use href="#i-swarm"/></svg>Swarm</button>
+      <button id="update-btn" class="icon-btn" title="Update Silk Code: pull the latest from git and restart the daemon"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span class="lbl">Update</span></button>
     </span>
     <span class="usage" id="usage"></span>
   </span>
+  <div id="thread" aria-hidden="true"></div>
 </header>
 
-<div id="version-banner" class="banner">⚠ The Silk Code server is running an older version. Stop it (Ctrl+C in its terminal) and run <b>silkcode gui</b> again, then reload this page.</div>
+<div id="version-banner" class="banner">The Silk Code server is running an older version. Stop it (Ctrl+C in its terminal) and run <b>silkcode gui</b> again, then reload this page.</div>
 <div id="lock-banner" class="banner"></div>
 
 <nav id="mobile-tabs" class="seg" aria-label="Switch pane">
@@ -371,20 +433,20 @@
 </nav>
 <main data-pane="chat">
   <section class="pane glass" id="files">
-    <div class="drawer-head"><strong>PROJECTS</strong><button id="project-add">＋ Add</button></div>
+    <div class="drawer-head"><strong>Projects</strong><button id="project-add" title="Open or create a project"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>Add</button></div>
     <div id="project-cards" aria-label="Known projects"></div>
-    <button id="projects-help-btn" title="How projects work: create, open, switch, ship">? Project how-to</button>
+    <button id="projects-help-btn" title="How projects work: create, open, switch, ship"><svg class="i" aria-hidden="true"><use href="#i-help"/></svg>How projects work</button>
   </section>
   <section id="chat">
     <div id="conversation-bar" class="glass">
       <select id="session-select" aria-label="Conversation"></select>
-      <button id="new-session" aria-label="New conversation" title="Start a new conversation in this project">＋</button>
-      <button id="fork-session" aria-label="Fork conversation" title="Fork this conversation: a new session continues its history (in its own git worktree when possible) while this one stays as it is">⑂</button>
-      <button id="close-session" aria-label="Close conversation" title="Close this conversation and release its workspace lock">×</button>
+      <button id="new-session" aria-label="New conversation" title="Start a new conversation in this project"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+      <button id="fork-session" aria-label="Fork conversation" title="Fork this conversation: a new session continues its history (in its own git worktree when possible) while this one stays as it is"><svg class="i" aria-hidden="true"><use href="#i-fork"/></svg></button>
+      <button id="close-session" aria-label="Close conversation" title="Close this conversation and release its workspace lock"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
       <span class="grow"></span>
       <span class="usage" id="project-load-status" role="status" aria-live="polite"></span>
       <span class="usage" id="session"></span>
-      <button id="details-toggle" aria-label="Show details" aria-expanded="false">Details ›</button>
+      <button id="details-toggle" aria-label="Show details" aria-expanded="false"><svg class="i" aria-hidden="true"><use href="#i-panel"/></svg><span class="lbl">Details</span></button>
     </div>
     <div id="messages" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Conversation"></div>
   </section>
@@ -394,15 +456,15 @@
       <button data-detail="files">Files</button>
       <button data-detail="activity">Activity</button>
       <button data-detail="graph">Graph</button>
-      <button id="details-close" aria-label="Close details">×</button>
+      <button id="details-close" aria-label="Close details"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
     </div>
-    <section class="details-panel pane" id="file-details"><h2>FILES</h2><div id="tree"></div></section>
+    <section class="details-panel pane" id="file-details"><h2>Files</h2><div id="tree"></div></section>
     <section class="details-panel" id="graph-details" aria-label="Project knowledge graph">
-      <h2>PROJECT GRAPH</h2>
+      <h2>Project graph</h2>
       <div id="graph-body"><span id="graph-note" class="note">Loading…</span></div>
     </section>
     <section class="details-panel pane" id="activity" aria-label="Agent activity">
-      <h2>AGENT ACTIVITY</h2><div id="timeline"></div>
+      <h2>Agent activity</h2><div id="timeline"></div>
       <p id="timeline-empty" class="empty">Tool calls appear here as the agent works.</p>
     </section>
     <section class="details-panel" id="bottom">
@@ -412,10 +474,10 @@
   </aside>
   <div id="composer" class="glass">
     <textarea id="input" aria-label="Message Silk Code" aria-describedby="composer-hint"
-      placeholder="Ask Silk Code to build or change something…"></textarea>
+      placeholder="Ask Silk Code for a change"></textarea>
     <button id="send" class="primary" aria-label="Send message">Send</button>
     <button id="stop" style="display:none">Stop</button>
-    <span id="composer-hint">Enter to send · Shift+Enter for a new line</span>
+    <span id="composer-hint"><kbd>Enter</kbd> to send, <kbd>Shift</kbd> <kbd>Enter</kbd> for a new line</span>
   </div>
 </main>
 
@@ -463,10 +525,10 @@
     <div class="prompt" id="gh-status">checking…</div>
     <button class="primary" id="gh-signin" style="width:100%">Sign in with GitHub</button>
     <div class="prompt" id="gh-device" style="display:none;margin-top:8px"></div>
-    <label>Or paste a personal access token — stored in your Silk Code config</label>
+    <label>Or paste a personal access token, stored in your Silk Code config</label>
     <input id="gh-token" type="password" placeholder="github_pat_… (leave empty to keep current)">
-    <label>Authorize the agent for this session (no per-action prompts):</label>
-    <div style="display:flex;gap:14px">
+    <label>Authorize the agent for this session, without per-action prompts</label>
+    <div style="display:flex;gap:16px">
       <label><input type="checkbox" id="grant-pull"> pull</label>
       <label><input type="checkbox" id="grant-commit"> commit</label>
       <label><input type="checkbox" id="grant-push"> push</label>
@@ -550,7 +612,7 @@
       <label>Project name</label><input id="project-new-name" placeholder="My new app">
       <label>Parent directory (optional)</label><input id="project-new-parent" placeholder="Defaults beside the current project">
       <label>Starting template</label><select id="project-new-template">
-        <option value="blank">Blank — let Swarm build it</option><option value="python">Python package</option>
+        <option value="blank">Blank, let Swarm build it</option><option value="python">Python package</option>
         <option value="node">Node.js package</option><option value="web">Static web app</option>
       </select>
       <label>What should the Swarm build?</label>
@@ -572,13 +634,13 @@
 
 <div class="modal-bg" id="projects-help-modal">
   <div class="modal howto" style="width:820px" role="dialog" aria-modal="true" aria-labelledby="projects-help-title">
-    <h3 id="projects-help-title">Projects — how they work</h3>
+    <h3 id="projects-help-title">How projects work</h3>
     <p>A session works on exactly one <b>project</b>: the tree its file tools, git commands and test
       runs are confined to. Open as many sessions as you like, each on its own project and model.</p>
     <h4>Open or switch project</h4>
     <ul>
       <li><b>Project cards</b> switch the project this session is on; the conversation comes with you.</li>
-      <li><b>＋ Add</b> opens a GitHub repository (cloned into <code>~/.silkcode/projects/</code>), a
+      <li><b>Add</b> opens a GitHub repository (cloned into <code>~/.silkcode/projects/</code>), a
         local directory, or a recently opened project.</li>
       <li><b>Terminal</b>: <code>silkcode ~/code/app</code>, or <code>/project</code> inside a REPL session.</li>
       <li>Opening the same project twice is allowed: the second session is read-only until the
@@ -586,7 +648,7 @@
     </ul>
     <h4>Create a new project</h4>
     <p><code>silkcode new</code> scaffolds a project that already runs and tests, then makes the
-      initial commit. Open it here afterwards with ＋ Add.</p>
+      initial commit. Open it here afterwards with Add.</p>
     <div class="cmdrow"><code>silkcode new --list</code><button data-copy="silkcode new --list">copy</button></div>
     <div class="cmdrow"><code>silkcode new todo-cli --template python-cli</code><button data-copy="silkcode new todo-cli --template python-cli">copy</button></div>
     <div class="cmdrow"><code>silkcode new api --describe "Invoice API for freelancers"</code><button data-copy='silkcode new api --describe "Invoice API for freelancers"'>copy</button></div>
@@ -604,16 +666,16 @@
     <h4>Teach the agent about this project</h4>
     <ul>
       <li><code>SILKCODE.md</code> in the project root: layout, conventions, the test command, anything it
-        should never do. Read on <i>every</i> turn.</li>
+        should never do. Read on every turn.</li>
       <li><b>Repo map</b>: built automatically, so the model knows the codebase before its first tool call.</li>
       <li><b>Memory &amp; skills</b>: durable notes and playbooks (<code>/memory</code>, <code>/skills</code> in the REPL).</li>
     </ul>
     <h4>Verify and ship</h4>
     <ul>
       <li>The agent runs your suite (pytest, npm, cargo, go, flutter) instead of claiming success.</li>
-      <li><b>Changes</b> shows exactly what changed; <b>↩ Revert</b> undoes a whole turn.</li>
-      <li><b>⇧ Push</b> pushes when you say so; the <b>GitHub</b> dialog can grant pull/commit/push/merge or auto-push.</li>
-      <li><b>🐝 Swarm</b> runs product, design, developer, test and critic agents until it reaches the target.</li>
+      <li><b>Changes</b> shows exactly what changed; <b>Revert</b> undoes a whole turn.</li>
+      <li><b>Push</b> pushes when you say so; the <b>GitHub</b> dialog can grant pull/commit/push/merge or auto-push.</li>
+      <li><b>Swarm</b> runs product, design, developer, test and critic agents until it reaches the target.</li>
     </ul>
     <h4>If something is off</h4>
     <ul>
@@ -673,7 +735,7 @@
       <div>
         <label>Workflow</label><select id="sw-workflow"><option value="team">Advanced swarm</option><option value="classic">Classic 3-agent swarm</option></select>
         <label>Product objective</label><textarea id="sw-objective" rows="4" placeholder="What should the swarm build or improve?"></textarea>
-        <label>Developers</label><select id="sw-dev-count"><option value="0" selected>Auto — Head decides</option><option value="1">1 developer</option><option value="2">2 developers</option><option value="3">3 developers</option><option value="5">Up to 5 developers</option><option value="8">Up to 8 developers</option><option value="12">Up to 12 developers</option></select>
+        <label>Developers</label><select id="sw-dev-count"><option value="0" selected>Auto, the head decides</option><option value="1">1 developer</option><option value="2">2 developers</option><option value="3">3 developers</option><option value="5">Up to 5 developers</option><option value="8">Up to 8 developers</option><option value="12">Up to 12 developers</option></select>
         <label>Worker model</label><input id="sw-model" placeholder="default">
         <label>Critic model (optional)</label><input id="sw-critic-model" placeholder="default">
         <label>Tester model (optional)</label><input id="sw-tester-model" placeholder="default">
@@ -687,7 +749,7 @@
       </div>
     </div>
     <label>Live progress</label>
-    <div id="swarm-log">(not started)</div>
+    <div id="swarm-log">Not started</div>
     <div class="row">
       <button data-close="swarm-modal">Close</button>
       <button class="danger" id="sw-stop" style="display:none">Stop</button>
@@ -738,10 +800,13 @@ async function copyToClipboard(text) {
     try { document.execCommand("copy"); } finally { ta.remove(); }
   }
 }
-function flash(btn, text, ms = 1500) {
-  const was = btn.textContent;
-  btn.textContent = text; btn.classList.add("copied");
-  setTimeout(() => { btn.textContent = was; btn.classList.remove("copied"); }, ms);
+// Line icons from the sprite at the top of <body>.
+const icon = (name) => `<svg class="i" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+// `html` is always one of this file's own strings, never user content.
+function flash(btn, html, ms = 1500) {
+  const was = btn.innerHTML;
+  btn.innerHTML = html; btn.classList.add("copied");
+  setTimeout(() => { btn.innerHTML = was; btn.classList.remove("copied"); }, ms);
 }
 
 // ---- layout: phone panes, header sheet, details drawer, modals ---------------
@@ -809,7 +874,7 @@ async function loadGraph(afterBuild) {
   body.replaceChildren(
     h("div", {class: "stats"}, stat(info.nodes, "concepts"), stat(info.edges, "connections"),
       stat(info.files, "files mapped"), stat(info.extracted_pct + "%", "read directly from source")),
-    h("h2", {textContent: "WHAT EVERYTHING FLOWS THROUGH"}),
+    h("h2", {textContent: "What everything flows through"}),
     ...hubs.map(x => h("div", {class: "graph-hub"},
       h("span", {class: "bar", style: `width:${Math.round(80 * x.degree / maxDeg)}px`}),
       h("span", {textContent: x.name || ""}), h("span", {class: "deg", textContent: x.degree}))),
@@ -838,8 +903,8 @@ function scrollChat() { $("messages").scrollTop = $("messages").scrollHeight; }
 function appendChat(node) { $("messages").appendChild(node); scrollChat(); }
 function msgWrap(kind) {
   const div = h("div", {class: "msg " + kind});
-  const btn = h("button", {class: "msg-copy", title: "Copy message", "aria-label": "Copy message", textContent: "⧉"});
-  btn.onclick = () => copyToClipboard(msgText(div)).then(() => flash(btn, "✓"));
+  const btn = h("button", {class: "msg-copy", title: "Copy message", "aria-label": "Copy message", innerHTML: icon("copy")});
+  btn.onclick = () => copyToClipboard(msgText(div)).then(() => flash(btn, icon("check")));
   return [h("div", {class: "msg-wrap " + kind}, div, btn), div];
 }
 function addMsg(kind, text) {
@@ -849,7 +914,7 @@ function addMsg(kind, text) {
   appendChat(wrap);
   return div;
 }
-const addToolMsg = (name, args) => addMsg("tool", "⚙ " + name + "  " + args);
+const addToolMsg = (name, args) => addMsg("tool", name + "  " + args);
 
 // A model call failed on its API key: offer an input to fix it in place. Built
 // with textContent only; the key only ever travels in the POST to /api/keys.
@@ -905,10 +970,10 @@ const isShellLang = (lang) => !lang || /^(bash|sh|zsh|shell|console|terminal|cmd
 
 function makeCodeBubble(lang, code) {
   const shell = isShellLang(lang);
-  const copy = h("button", {class: "cb-ico cb-copy", title: "Copy code", "aria-label": "Copy code block", textContent: "⧉ copy"});
-  copy.onclick = () => copyToClipboard(code).then(() => flash(copy, "✓ copied"));
+  const copy = h("button", {class: "cb-ico cb-copy", title: "Copy code", "aria-label": "Copy code block", innerHTML: icon("copy") + "Copy"});
+  copy.onclick = () => copyToClipboard(code).then(() => flash(copy, icon("check") + "Copied"));
   const run = shell ? h("button", {class: "cb-ico cb-icorun", title: "Run this command in the workspace",
-    "aria-label": "Run this command in the workspace", textContent: "▶ run"}) : null;
+    "aria-label": "Run this command in the workspace", innerHTML: icon("play") + "Run"}) : null;
   if (run) run.onclick = () => runInstruction(code, run);
   return h("div", {class: "code-bubble"},
     h("div", {class: "cb-head"}, h("span", {class: "cb-lang", textContent: lang === "code" ? (shell ? "$ terminal" : "code") : lang}), copy, run),
@@ -1021,24 +1086,25 @@ function formatAllMessages() {
 // Routed through /api/message so the permission-gated shell tool runs it: a
 // command is never run without the user approving it.
 async function runInstruction(cmd, btn) {
-  btn.textContent = "… queued"; btn.classList.add("copied");
+  btn.textContent = "Queuing…"; btn.classList.add("copied");
   try {
     await api("/api/message", {session_id: currentSessionId, text:
       "Run this command in the workspace and report what it prints:\n```bash\n" + cmd +
       "\n```\nOnly run the command; do not modify any files."});
   } catch (err) {
-    btn.textContent = "failed"; btn.classList.remove("copied");
+    btn.textContent = "Failed"; btn.classList.remove("copied");
     addMsg("error", err.message);
     return;
   }
-  btn.textContent = "✓ queued";
-  setTimeout(() => { btn.textContent = "▶ run"; btn.classList.remove("copied"); }, 2500);
+  btn.innerHTML = icon("check") + "Queued";
+  setTimeout(() => { btn.innerHTML = icon("play") + "Run"; btn.classList.remove("copied"); }, 2500);
 }
 
 // ---- events ------------------------------------------------------------------
 
 function setRunning(running) {
   $("status-dot").classList.toggle("running", running);
+  document.body.classList.toggle("running", running);
   $("send").disabled = running;
   $("stop").style.display = running ? "" : "none";
 }
@@ -1051,7 +1117,7 @@ function renderEntry(e) {
   else if (["user", "assistant", "notice", "error"].includes(e.kind)) addMsg(e.kind, e.text);
 }
 function showRestarting(delay) {
-  $("version-banner").textContent = "↻ Update applied — restarting the daemon with the new code…";
+  $("version-banner").textContent = "Update applied. Restarting the daemon with the new code…";
   $("version-banner").style.display = "block";
   setTimeout(() => location.reload(), delay);
 }
@@ -1100,7 +1166,7 @@ function handleEvent(ev) {
     case "reload": init(); break;
     case "github_connected": $("gh-device").style.display = "none"; refreshGithubStatus().catch(() => {}); break;
     case "github_error": $("gh-device").style.display = ""; $("gh-device").textContent = "Sign-in failed: " + ev.message; break;
-    case "push_result": addMsg("tool", "⇧ " + ev.message.split("\n")[0]); break;
+    case "push_result": addMsg("tool", "push  " + ev.message.split("\n")[0]); break;
     case "swarm_progress": swarmLog(ev.line); break;
     case "swarm_score":
       swarmScores.push({iteration: ev.iteration, score: ev.score, detail: ev.detail});
@@ -1123,7 +1189,7 @@ function handleEvent(ev) {
       break;
     }
     case "swarm_error": setSwarmRunning(false); setSwarmPhase(null); swarmLog("error: " + ev.message); break;
-    case "update_progress": addMsg("tool", "↻ " + ev.line); break;
+    case "update_progress": addMsg("tool", "update  " + ev.line); break;
     case "restarting": showRestarting(1800); break;
   }
 }
@@ -1138,7 +1204,7 @@ $$("#perm-modal [data-decision]").forEach(btn => btn.onclick = async () => {
   closeModal("perm-modal");
   try { await api("/api/permission", {id: req.id, decision: btn.dataset.decision}); } catch (e) {}
   if (btn.dataset.decision === "all") {
-    addMsg("tool", "✓ Yes to all — every permission request is auto-approved for the rest of this session.");
+    addMsg("tool", "Yes to all: every permission request is approved for the rest of this session");
   }
   showNextPermission();
 });
@@ -1149,7 +1215,7 @@ async function loadTree() {
   const entries = await api("/api/tree");
   $("tree").replaceChildren(...entries.map(e => h("div", {
     class: "entry" + (e.dir ? " dir" : ""), title: e.path, style: `padding-left:${10 + e.depth * 14}px`,
-    textContent: (e.dir ? "▸ " : "") + e.path.split("/").pop(), onclick: e.dir ? null : () => openFile(e.path)})));
+    textContent: e.path.split("/").pop() + (e.dir ? "/" : ""), onclick: e.dir ? null : () => openFile(e.path)})));
 }
 
 let activeTab = "diff";
@@ -1231,7 +1297,7 @@ $("stop").onclick = () => api("/api/stop", {session_id: currentSessionId}).catch
 // Conversations are scoped to the selected project; projects have their own switcher.
 function renderSessions(sessions, currentId) {
   const opts = sessions.map(s => h("option", {value: s.id, title: s.cwd || "",
-    textContent: `${s.running ? "⏳ " : s.open ? "● " : ""}${s.title || "New conversation"}`.slice(0, 60)}));
+    textContent: `${s.title || "New conversation"}`.slice(0, 60) + (s.running ? " · running" : s.open ? "" : " · saved")}));
   if (!sessions.some(s => s.id === currentId)) opts.unshift(h("option", {value: currentId, textContent: `#${currentId} (current)`}));
   $("session-select").replaceChildren(...opts);
   $("session-select").value = currentId;
@@ -1265,11 +1331,11 @@ function renderProjects(projects, currentPath, projectless = false) {
     ...(projectless ? [h("option", {value: "", textContent: "Choose a project…"})] : []),
     ...projects.map(p => h("option", {value: p.path, title: p.path,
       textContent: (p.label || shortenPath(p.path)) + (p.sessions ? `  (${plural(p.sessions, "session")})` : "")})),
-    h("option", {value: "__open__", textContent: "⋯ Open another project…"}));
+    h("option", {value: "__open__", textContent: "Open another project…"}));
   sel.value = projectless ? "" : current.path;
   sel.title = projectless ? "" : current.path;
   const cards = projects.map(p => {
-    const close = h("button", {class: "project-close", textContent: "×", disabled: !!p.current,
+    const close = h("button", {class: "project-close", innerHTML: icon("x"), disabled: !!p.current,
       title: p.current ? "Switch to another project before closing this one" : "Close project and free its sessions from memory",
       "aria-label": `Close ${p.label || p.path}`, onclick: (event) => { event.stopPropagation(); closeProject(p); }});
     const card = h("div", {class: "project-card" + (p.current ? " current" : "") + (p.running ? " running" : ""),
@@ -1489,16 +1555,16 @@ $$("#projects-help-modal [data-copy]").forEach(b => b.onclick = async () => {
 $("revert").onclick = async () => {
   try {
     const data = await api("/api/revert", {session_id: currentSessionId});
-    addMsg("tool", data.restored.length ? "↩ reverted:\n" + data.restored.join("\n") : "nothing to revert");
+    addMsg("tool", data.restored.length ? "reverted\n" + data.restored.join("\n") : "nothing to revert");
     loadDiff(); loadTree();
   } catch (err) { fail(err); }
 };
-$("push-btn").onclick = () => api("/api/push", {}).then(d => addMsg("tool", "⇧ " + d.result.split("\n")[0])).catch(fail);
+$("push-btn").onclick = () => api("/api/push", {}).then(d => addMsg("tool", "push  " + d.result.split("\n")[0])).catch(fail);
 
 const GRANTS = ["pull", "commit", "push", "merge"];
 async function refreshGithubStatus() {
   const s = await api("/api/github/status");
-  $("gh-status").textContent = [s.connected ? `✓ connected as ${s.login}` : "✗ not connected", s.repo && `repo: ${s.repo}`,
+  $("gh-status").textContent = [s.connected ? `Connected as ${s.login}` : "Not connected", s.repo && `repo: ${s.repo}`,
     s.token_stored ? "token: stored in config" : `token: $${s.token_env} (not stored)`, s.error && `error: ${s.error}`]
     .filter(Boolean).join("\n");
   for (const g of GRANTS) $("grant-" + g).checked = s.grants.includes(g);
@@ -1506,7 +1572,7 @@ async function refreshGithubStatus() {
   $("github-btn").title = s.connected ? `Connected to GitHub as ${s.login}` : "Connect a GitHub account";
   $("gh-signin").style.display = s.connected ? "none" : "";
   $("gh-signin").disabled = !s.device_flow_available;
-  $("gh-signin").textContent = "Sign in with GitHub" + (s.device_flow_available ? "" : " (app not registered — see docs/GITHUB_APP.md)");
+  $("gh-signin").textContent = "Sign in with GitHub" + (s.device_flow_available ? "" : " (app not registered, see docs/GITHUB_APP.md)");
 }
 $("github-btn").onclick = () => {
   openModal("github-modal");
@@ -1517,8 +1583,8 @@ $("gh-signin").onclick = async () => {
     const info = await api("/api/github/device", {});
     $("gh-device").style.display = "";
     $("gh-device").innerHTML = `1. Open <a href="${esc(info.verification_uri)}" target="_blank">${esc(info.verification_uri)}</a><br>` +
-      `2. Enter code: <b style="font-size:16px;letter-spacing:2px">${esc(info.user_code)}</b><br>` +
-      `3. Click Authorize — this page updates automatically`;
+      `2. Enter code: <b style="font: 500 16px var(--mono); letter-spacing: 2px">${esc(info.user_code)}</b><br>` +
+      `3. Click Authorize. This page updates on its own`;
     window.open(info.verification_uri, "_blank");
   } catch (err) { fail(err); }
 };
@@ -1543,8 +1609,8 @@ function scanShareDraft() {
     [/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/, "email address"],
     [/\b(?:confidential|internal only|do not share)\b/i, "private-language marker"],
   ].filter(([re]) => re.test(text)).map(([, label]) => label);
-  $("share-scan").textContent = warnings.length ? "⚠ Review before sharing: " + warnings.join(", ")
-    : "✓ No obvious secrets, paths, or email addresses found";
+  $("share-scan").textContent = warnings.length ? "Review before sharing: " + warnings.join(", ")
+    : "No obvious secrets, paths or email addresses found";
   $("share-scan").className = warnings.length ? "warn" : "ok";
   $("share-count").textContent = shareFormat === "x" ? `${text.length}/280 characters` : `${text.length} characters`;
 }
@@ -1592,15 +1658,15 @@ $("share-open").onclick = async () => {
 let swarmScores = [];   // {iteration, score, detail}
 function swarmLog(line) {
   const log = $("swarm-log");
-  if (log.textContent === "(not started)") log.textContent = "";
+  if (log.textContent === "Not started") log.textContent = "";
   log.textContent += line + "\n";
   log.scrollTop = log.scrollHeight;
 }
 function setSwarmRunning(running) {
   $("sw-start").style.display = running ? "none" : "";
   $("sw-stop").style.display = running ? "" : "none";
-  $("swarm-status").textContent = running ? "● running" : "";
-  $("swarm-btn").style.borderColor = running ? "var(--warn)" : "";
+  $("swarm-status").textContent = running ? "Running" : "";
+  $("swarm-btn").style.color = running ? "var(--warn)" : "";
 }
 function setSwarmPhase(phase) {
   $$(".sw-phase").forEach(el => el.classList.toggle("active",
@@ -1629,7 +1695,7 @@ function renderSwarmChart() {
   chart.style.display = swarmScores.length ? "flex" : "none";
   chart.replaceChildren(...swarmScores.map(s => h("div", {class: "swbar"},
     h("span", {textContent: `it${s.iteration} ${s.score.toFixed(1)}`, style: "width:56px"}),
-    h("div", {class: "bar" + (s.score >= 10 ? "" : s.score >= 7 ? " warn" : " err"),
+    h("div", {class: "bar" + (s.score >= 10 ? " ok" : s.score >= 7 ? " warn" : " err"),
       style: `width:${Math.max(2, s.score * 10)}%`, title: s.detail || ""}))));
 }
 function renderSwarmStats(s) {
@@ -1640,7 +1706,7 @@ function renderSwarmStats(s) {
 function renderSwarmStatus(s) {
   setSwarmRunning(!!s.running);
   if (s.log && s.log.length) { $("swarm-log").textContent = s.log.join("\n"); $("swarm-log").scrollTop = $("swarm-log").scrollHeight; }
-  else if (!s.running && !s.result && !s.error) $("swarm-log").textContent = "(not started)";
+  else if (!s.running && !s.result && !s.error) $("swarm-log").textContent = "Not started";
   swarmScores = ((s.result && s.result.scores) || []).map((sc, i) => ({iteration: i + 1, score: sc}));
   renderSwarmChart();
   renderSwarmStats(s.result);
@@ -1680,9 +1746,9 @@ $("sw-stop").onclick = () => api("/api/swarm/stop", {session_id: currentSessionI
 $("update-btn").onclick = async () => {
   if (!confirm("Pull the latest Silk Code from git? The daemon will restart itself with the new code (~2s).")) return;
   try {
-    addMsg("tool", "↻ updating…");
+    addMsg("tool", "updating…");
     const r = await api("/api/update", {});
-    addMsg("tool", "↻ " + (r.detail || r.status));
+    addMsg("tool", "update  " + (r.detail || r.status));
     if (r.status === "updated") showRestarting(4000);  // the daemon re-execs; reload once it is back
     else if (r.status === "error") alert("Update failed: " + r.detail);
   } catch (err) { fail(err); }
@@ -1722,7 +1788,7 @@ function renderEnvironment(env) {
   $("env-config-path").textContent = "config: " + env.config_path + "  ·  default model: " + env.default_model;
   renderCredentials(env.credentials);
   const t = env.usage.totals;
-  $("env-usage-totals").innerHTML = `<b>${fmtTokens(t.total_tokens)}</b> tokens across <b>${t.sessions}</b> saved session(s) — ` +
+  $("env-usage-totals").innerHTML = `<b>${fmtTokens(t.total_tokens)}</b> tokens across <b>${t.sessions}</b> saved session(s), ` +
     `${fmtTokens(t.prompt_tokens)} in, ${fmtTokens(t.completion_tokens)} out`;
   $("env-usage").innerHTML = tableHead("Model", "Sessions", "In", "Out", "Total") + env.usage.by_model.filter(m => m.total_tokens)
     .map(m => `<tr><td class="mono">${esc(m.model)}</td><td class="num">${m.sessions}</td><td class="num">${fmtTokens(m.prompt_tokens)}</td>` +
@@ -1758,7 +1824,7 @@ function renderConnections(c) {
   // cl.agent is whatever the client chose to send: escape it
   $("env-connections").innerHTML = tableHead("Address", "Requests", "Refused", "Client", "Last seen") +
     (c.clients.length ? "" : '<tr><td colspan="5" class="empty">nothing has connected yet</td></tr>') +
-    c.clients.map(cl => `<tr><td class="mono">${esc(cl.address)}${cl.active ? " ●" : ""}</td><td class="num">${cl.requests}</td>` +
+    c.clients.map(cl => `<tr><td class="mono">${esc(cl.address)}${cl.active ? " · active" : ""}</td><td class="num">${cl.requests}</td>` +
       `<td class="num"${cl.denied ? ' style="color:var(--warn)"' : ""}>${cl.denied}</td>` +
       `<td title="${esc(cl.agent || "")}">${esc(friendlyClient(cl.agent))}</td><td>${esc(relTime(cl.idle))}</td></tr>`).join("");
   $("env-conn-denied").replaceChildren(...(c.denied_recent.length ? [h("div", {class: "note", textContent: "Most recent refusals"})] : []),
@@ -1802,17 +1868,17 @@ function renderPairing(p) {
     return;
   }
   box.replaceChildren();
-  if (p.tokenless) box.append(para("This daemon is running without an access token — anyone who can reach these addresses can drive the agent.", "color:var(--warn)"));
+  if (p.tokenless) box.append(para("This daemon is running without an access token. Anyone who can reach these addresses can drive the agent.", "color:var(--warn)"));
   if (p.qr) {
     const grid = document.createElement("div");
     grid.id = "pair-qr";
     grid.style.gridTemplateColumns = `repeat(${p.qr.length}, 4px)`;
     for (const row of p.qr) for (const on of row) grid.append(h("i", {class: on ? "on" : ""}));
-    box.append(grid, para(`Scan with a phone camera — ${p.qr_for.label}`, "text-align:center"));
+    box.append(grid, para(`Scan with a phone camera: ${p.qr_for.label}`, "text-align:center"));
   } else if (p.error) box.append(para(p.error, "color:var(--warn)"));
   for (const a of p.addresses) {
     box.append(h("div", {class: "note", style: "margin-top:10px"}, h("b", {textContent: a.label}),
-      " — " + (a.label === "Tailscale" ? "works from anywhere on your tailnet" : "same network only")),
+      ": " + (a.label === "Tailscale" ? "works from anywhere on your tailnet" : "same network only")),
       h("div", {class: "pair-url", textContent: a.url}));
   }
   box.append(para("That link carries the access token. Anyone who has it can run commands on this machine, so share it only with your own devices.", "margin-top:12px"));
@@ -1853,19 +1919,19 @@ function renderLock(state) {
   if (!conflict) return banner.replaceChildren();
   const lock = state.lock || {};
   if (lock.stale || lock.alive === false) {  // the owner is gone: offer a one-click takeover
-    banner.innerHTML = `⚠ ${esc(conflict)} — the owner is no longer running, so this lock is stale.` +
+    banner.innerHTML = `${esc(conflict)}. The owner is no longer running, so this lock is stale.` +
       `<button id="takeover-btn">Take over workspace</button>`;
     $("takeover-btn").onclick = async () => {
       try {
         if ((await api("/api/lock/takeover", {session_id: currentSessionId})).ok) {
           renderLock({lock_conflict: null});
-          addMsg("tool", "✓ Workspace lock taken over — edits are enabled.");
+          addMsg("tool", "Workspace lock taken over. Edits are enabled");
         }
       } catch (err) { fail(err); }
     };
   } else {
     const age = lock.age != null ? ` (${Math.round(lock.age / 60)}m old)` : "";
-    banner.textContent = `⚠ ${conflict} — another live session holds the lock; edits are refused until it closes${age}.`;
+    banner.textContent = `${conflict}. Another live session holds the lock, so edits are refused until it closes${age}.`;
   }
 }
 
@@ -1898,7 +1964,7 @@ async function init(initialState = null) {
   setRunning(state.running);
   $("input").disabled = !!state.projectless;
   if (state.projectless) $("send").disabled = true;
-  $("input").placeholder = state.projectless ? "Choose a project to start…" : "Ask Silk Code to build or change something…";
+  $("input").placeholder = state.projectless ? "Choose a project to start" : "Ask Silk Code for a change";
   renderUsage(state.usage);
   renderLock(state);
   await loadProviders(state.spec, isCurrent);
