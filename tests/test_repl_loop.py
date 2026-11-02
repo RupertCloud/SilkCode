@@ -197,3 +197,56 @@ def test_auto_push_runs_after_an_interactive_turn(repl_env, monkeypatch, capsys)
     run(["do a thing", "/exit"], auto_push=True)
     assert pushed, "auto-push did not run after the turn"
     assert "auto-push" in capsys.readouterr().out
+
+
+# ---- the advisory workspace lock (MEDIUM-8) ---------------------------------
+
+def test_the_repl_holds_the_workspace_lock_during_a_run(repl_env, monkeypatch):
+    """The GUI locks its project; the CLI must too, or two sessions on one
+    project silently last-writer-win. The Agent carries the owner so the file
+    tools check and refresh the lock."""
+    import os
+
+    from silkcode import lock
+    from silkcode.agent import Agent
+
+    run, workspace, _ = repl_env
+    seen = {}
+
+    def remember(self, user_input):
+        seen["owner"] = lock.owner_of(workspace)
+        self.messages.append({"role": "assistant", "content": "ok"})
+        return "ok"
+
+    monkeypatch.setattr(Agent, "run_turn", remember)
+    assert run(["do it", "/exit"]) == 0
+    assert seen["owner"] == f"cli-{os.getpid()}"
+    assert lock.owner_of(workspace) is None, "the REPL must release the lock on exit"
+
+
+def test_the_lock_is_released_when_the_run_fails(repl_env, monkeypatch):
+    from silkcode import lock
+    from silkcode.agent import Agent
+
+    run, workspace, _ = repl_env
+
+    def boom(self, user_input):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(Agent, "run_turn", boom)
+    with pytest.raises(RuntimeError):
+        run(["do it"])
+    assert lock.owner_of(workspace) is None
+
+
+def test_a_locked_project_warns_and_the_other_lock_is_not_stolen(repl_env, capsys):
+    from silkcode import lock
+
+    run, workspace, _ = repl_env
+    lock.acquire(workspace, "someone-else")
+    try:
+        assert run(["/exit"]) == 0
+        assert lock.owner_of(workspace) == "someone-else"
+    finally:
+        lock.release(workspace, "someone-else")
+    assert "already open in someone-else" in capsys.readouterr().err

@@ -15,13 +15,15 @@ are written without a check (best-effort); races across processes/machines
 are caught by git at merge time.
 
 Writes are also subject to the advisory per-workspace lock (see silkcode/lock.py):
-an agent that carries an `_owner` (a GUI session) refuses to write while another
-owner holds a fresh lock, and refreshes the lock on each successful write.
+an agent that carries an `_owner` (a GUI or CLI session) refuses to write while
+another owner holds a fresh lock, and refreshes the lock on each successful
+write.
 """
 
 from __future__ import annotations
 
 import hashlib
+import os
 import threading
 from pathlib import Path
 
@@ -40,6 +42,56 @@ def _digest(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+def _read_text(path: Path, errors: str = "replace") -> str:
+    """Read text without universal-newline translation.
+
+    Path.read_text() translates CRLF/CR to LF, so a read-then-write cycle
+    silently rewrote a CRLF file as LF. newline="" keeps the file's own line
+    endings; the file tools preserve them instead of normalising them.
+    """
+    with open(path, "r", errors=errors, newline="") as f:
+        return f.read()
+
+
+def _newline_style(text: str) -> str:
+    """The file's newline style: CRLF only when every LF is part of a CRLF."""
+    crlf = text.count("\r\n")
+    return "\r\n" if crlf and crlf == text.count("\n") else "\n"
+
+
+def _write_text(path: Path, text: str) -> None:
+    """Write beside the target, then swap it into place.
+
+    A crash, a full disk (ENOSPC) or a killed process must leave the previous
+    version of the file intact, never a truncated one. The text goes to a temp
+    file in the same directory first, is fsynced, and only then replaces the
+    target atomically. newline="" writes the text's own line endings instead
+    of translating them to the platform's.
+    """
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with open(tmp, "w", newline="") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())  # durable before the swap, not after it
+        try:
+            mode = path.stat().st_mode & 0o7777
+        except OSError:
+            mode = None
+        if mode is not None:
+            try:
+                os.chmod(tmp, mode)  # keep an executable script executable
+            except OSError:
+                pass
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
 def _record(registry: dict, ws: Workspace, path: Path, content: str) -> None:
     with _fp_lock:
         registry.setdefault(str(ws.root), {})[str(path)] = _digest(content)
@@ -52,7 +104,7 @@ def _check_stale(registry: dict, ws: Workspace, path: Path) -> None:
     with no recorded fingerprint are not checked.
     """
     try:
-        current = _digest(path.read_text(errors="replace"))
+        current = _digest(_read_text(path))
     except OSError:
         current = None  # file vanished since it was read
     with _fp_lock:
@@ -108,7 +160,7 @@ def read_file(ws: Workspace, path: str, offset: int = 1, limit: int = 1000,
     p = ws.resolve(path)
     if not p.is_file():
         raise ToolError(f"File not found: {path}")
-    text = p.read_text(errors="replace")
+    text = _read_text(p)
     _record(registry, ws, p, text)  # fingerprint the exact bytes the agent now knows
     lines = text.splitlines()
     if not lines:
@@ -139,7 +191,7 @@ def write_file(ws: Workspace, path: str, content: str,
     _check_stale(registry, ws, p)
     _check_locked(ws, _owner)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content)
+    _write_text(p, content)
     _record(registry, ws, p, content)
     if _owner:
         acquire(ws.root, _owner)  # refresh the lock: this session is active
@@ -174,8 +226,18 @@ def edit_file(ws: Workspace, path: str, old_string: str, new_string: str,
     _check_locked(ws, _owner)
     if not p.is_file():
         raise ToolError(f"File not found: {path}")
-    text = p.read_text()
+    text = _read_text(p, errors="strict")
+    newline = _newline_style(text)
     count = text.count(old_string)
+    if count == 0:
+        # read_file shows lines without their endings, so callers (and the
+        # model) naturally pass LF-separated old/new strings even for a CRLF
+        # file. Match, and insert, in the file's own style so it stays CRLF.
+        converted = old_string.replace("\r\n", "\n").replace("\n", newline)
+        if converted != old_string and text.count(converted):
+            old_string = converted
+            new_string = new_string.replace("\r\n", "\n").replace("\n", newline)
+            count = text.count(old_string)
     if count == 0:
         raise ToolError(f"old_string not found in {path}")
     if count > 1 and not replace_all:
@@ -186,7 +248,7 @@ def edit_file(ws: Workspace, path: str, old_string: str, new_string: str,
         text = text.replace(old_string, new_string)
     else:
         text = text.replace(old_string, new_string, 1)
-    p.write_text(text)
+    _write_text(p, text)
     _record(registry, ws, p, text)
     if _owner:
         acquire(ws.root, _owner)  # refresh the lock: this session is active

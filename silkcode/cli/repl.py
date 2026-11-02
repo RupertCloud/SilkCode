@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 from ..version import build_id
+from ..lock import LockError, acquire, release
 from ..agent import Agent
 from ..config import Config, ConfigError
 from ..providers import ProviderError, build_provider
@@ -142,11 +144,33 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
         print(f"{CYAN}isolated{RESET} {worktree.root}  "
               f"{DIM}(branch {worktree.branch}, forked from "
               f"{worktree.base[:10]}; your checkout is untouched){RESET}")
+    # Advisory per-workspace lock, the same one the GUI holds (silkcode/lock.py):
+    # two CLI sessions on one project must not silently last-writer-win. The
+    # owner is passed to the Agent so the file tools check it and refresh it.
+    lock_owner = f"cli-{os.getpid()}"
+    lock_root = None
+    if not remote:
+        candidate = Path(path).resolve()  # the same root Workspace() gets
+        if candidate.is_dir():  # a bad path is reported by the workspace setup
+            lock_root = candidate
+            try:
+                acquire(lock_root, lock_owner)
+            except LockError as exc:
+                print(f"{YELLOW}warning: this project is already open in "
+                      f"{exc.holder()} — edits are refused until that session "
+                      f"closes or the lock goes stale.{RESET}", file=sys.stderr)
+            except OSError:
+                lock_root = None  # cannot create the lock file: locking is off
     try:
         return _run_repl(path, model_spec, mode, resume, prompt, grants,
                          use_sandbox, auto_push, remote, trace_path,
-                         final_answer_path, check_command, config)
+                         final_answer_path, check_command, config, lock_owner)
     finally:
+        if lock_root is not None:
+            try:
+                release(lock_root, lock_owner)
+            except OSError:
+                pass  # best-effort; a stale lock is taken over automatically
         if worktree is not None:
             from ..worktree import cleanup as cleanup_worktree
             print(cleanup_worktree(worktree))
@@ -154,7 +178,7 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
 
 def _run_repl(path, model_spec, mode, resume, prompt, grants, use_sandbox,
               auto_push, remote, trace_path, final_answer_path, check_command,
-              config) -> int:
+              config, lock_owner: str | None = None) -> int:
     if remote:
         from ..remotews import RemoteWorkspace
         from ..execbackend import remote_backend_from_config
@@ -231,6 +255,7 @@ def _run_repl(path, model_spec, mode, resume, prompt, grants, use_sandbox,
                   max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS,
                   session_id=(resume or {}).get("id"),
                   attribution=config.data.get("attribution", True),
+                  lock_owner=lock_owner,
                   summarizer=checkpoint_summarizer(config))
 
     if resume:

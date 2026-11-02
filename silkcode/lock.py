@@ -1,9 +1,10 @@
 """Advisory per-workspace lock (one writer at a time).
 
-A GUI session acquires a lock on its project when it opens, so a second
-session on the same project gets a clear "already in use" instead of silently
-overlapping. The lock is advisory: writes through the file tools are refused
-while another owner holds a fresh lock; reads and everything else proceed.
+A session (the GUI, or a CLI/REPL run) acquires a lock on its project when it
+opens, so a second session on the same project gets a clear "already in use"
+instead of silently overlapping. The lock is advisory: writes through the file
+tools are refused while another owner holds a fresh lock; reads and everything
+else proceed.
 
 Locks go stale after LOCK_STALE_SECONDS without activity and are taken over
 automatically (daemon restart, crashed session, or an owner that stopped
