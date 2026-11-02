@@ -529,7 +529,7 @@ _register(Tool(
     }, ["prompt"]),
     func=github_agent_task_start,
     kind="command",
-    command_of=lambda args, ws: "github agent-task start",
+    command_of=lambda args, ws: "github agent-task start",  # high-risk: outward-facing
 ))
 
 _register(Tool(
