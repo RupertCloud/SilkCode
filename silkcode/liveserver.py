@@ -21,6 +21,7 @@ demand so pages load in the browser while the agent edits them.
 
 from __future__ import annotations
 
+import errno
 import ipaddress
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -159,12 +160,24 @@ class LiveServer:
                 pass
 
             def _send(self, code: int, body: bytes, ctype: str = "text/html; charset=utf-8"):
-                self.send_response(code)
-                self.send_header("Content-Type", ctype)
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(body)
+                # A page that reloads or closes its tab drops the long-poll
+                # before the answer is sent; writing it then raises EPIPE or
+                # ECONNRESET. That is an expected client disconnect, not a
+                # server failure: end the handler quietly instead of letting
+                # socketserver print "Exception occurred during processing".
+                try:
+                    self.send_response(code)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    self.close_connection = True
+                except OSError as exc:
+                    if exc.errno not in (errno.EPIPE, errno.ECONNRESET):
+                        raise
+                    self.close_connection = True
 
             def do_GET(self):  # noqa: N802 (http.server naming)
                 if not _host_allowed(self.headers.get("Host", ""), outer.host):
