@@ -4,6 +4,36 @@ Silk Code's history, newest first, grouped by the phase that produced it.
 Entries name what changed and why it mattered; pull requests are numbered
 where one existed. The project began 2026-08-12 with the SRS and V0.1.
 
+## Unreleased — the review that closed its own holes · 2026-11-02
+
+### Fixed
+- **Git commands can no longer hide from the approval gate.** `git -C repo push`,
+  `git -c k=v push`, `git -C repo reset --hard` and `git -C repo clean -fdx` were
+  classified as medium risk and ran unprompted in agent mode; git's global options
+  are parsed before the subcommand now, and `github create-pr` and
+  `github agent-task start` are gated as outward actions. Unknown options fail closed.
+- **A repository can no longer read outside itself through the context loaders.**
+  `SILKCODE.md`, project memory, project skills and the repo map resolve through the
+  workspace before they are read, so a symlink that escapes the repo is treated as
+  absent instead of entering the prompt unredacted.
+- **The GitHub token goes only to GitHub.** The credential helper answers password
+  prompts only for `github.com` or the configured enterprise host, so a push to any
+  other HTTPS remote no longer receives the token.
+- **The live preview server stops at its root.** Traversal into a sibling directory
+  and dotfiles (`.env`, `.git/config`) are refused, the Host header is checked, and
+  stopping the server ends its watcher instead of leaking a thread per start.
+- **Closing a GUI session mid-turn keeps the workspace lock** until the turn really
+  ends, and closing the project during a turn is refused.
+- **Session saves cannot corrupt each other**: unique temp files plus a per-session
+  lock replace the shared `<id>.tmp`.
+- **The CLI takes the workspace lock**, so two CLI sessions on one project no longer
+  silently overwrite each other's edits.
+- **File and config writes are atomic** (temp file plus rename) and keep the file's
+  line endings, so a crash mid-write no longer truncates the file or rewrites CRLF to LF.
+- **A second remote-workspace clone repoints its origin** at the live git proxy
+  instead of fetching from a dead URL, and reports a failed fetch instead of ignoring it.
+- **Bad GUI requests get an HTTP error** (400/500 JSON) instead of a dropped connection.
+
 ## Unreleased — the GUI and the site, unslopped · 2026-10-31
 
 ### Changed
