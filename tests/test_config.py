@@ -1,3 +1,7 @@
+import json
+import os
+import stat
+
 import pytest
 
 from silkcode.config import Config, ConfigError
@@ -96,3 +100,68 @@ def test_auto_uses_cloudflare_when_onboarded(monkeypatch):
 def test_default_model_setting():
     assert Config({}).default_model == "deepseek"
     assert Config({"default_model": "ollama/qwen2.5-coder"}).default_model == "ollama/qwen2.5-coder"
+
+
+# ---- atomic save (LOW-11) ----------------------------------------------------
+
+def test_save_keeps_the_old_config_when_the_swap_fails(tmp_path, monkeypatch):
+    """A crash or ENOSPC while saving must not lose every provider and key."""
+    path = tmp_path / "config.json"
+    config = Config({"providers": {"deepseek": {"api_key": "sk-old"}}}, path=path)
+    config.save()
+
+    config.set_provider("myserver", {
+        "type": "openai_compat", "base_url": "https://ai.example.com/v1",
+        "default_model": "m1", "api_key": "sk-new",
+    })
+
+    def no_space(src, dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "replace", no_space)
+    with pytest.raises(OSError, match="No space left"):
+        config.save()
+    monkeypatch.undo()
+
+    on_disk = json.loads(path.read_text())  # still valid JSON, still the old one
+    assert "myserver" not in on_disk["providers"]
+    assert on_disk["providers"]["deepseek"]["api_key"] == "sk-old"
+    # the temp file was cleaned up, not left next to the config
+    assert [p.name for p in tmp_path.iterdir()] == ["config.json"]
+
+
+def test_save_keeps_the_old_config_when_the_write_fails(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    config = Config({"providers": {"deepseek": {"api_key": "sk-old"}}}, path=path)
+    config.save()
+
+    config.set_provider("myserver", {"type": "openai_compat",
+                                     "base_url": "https://ai.example.com/v1"})
+
+    def no_space(fd):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "fsync", no_space)  # fails before the swap
+    with pytest.raises(OSError, match="No space left"):
+        config.save()
+    monkeypatch.undo()
+
+    assert json.loads(path.read_text())["providers"]["deepseek"]["api_key"] == "sk-old"
+    assert [p.name for p in tmp_path.iterdir()] == ["config.json"]
+
+
+def test_save_writes_keys_only_to_an_owner_only_temp_file(tmp_path, monkeypatch):
+    """A key must never land in a world-readable file, even briefly."""
+    path = tmp_path / "config.json"
+    config = Config({"providers": {"deepseek": {"api_key": "sk-secret"}}}, path=path)
+    seen = {}
+    real_replace = os.replace
+
+    def spy(src, dst):
+        seen["mode"] = stat.S_IMODE(os.stat(src).st_mode)
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", spy)
+    config.save()
+    assert seen["mode"] & (stat.S_IRGRP | stat.S_IROTH) == 0, oct(seen["mode"])
+    assert stat.S_IMODE(os.stat(path).st_mode) & (stat.S_IRGRP | stat.S_IROTH) == 0

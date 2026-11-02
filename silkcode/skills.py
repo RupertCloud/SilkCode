@@ -78,10 +78,17 @@ def load_skills(ws: Workspace) -> dict[str, Skill]:
                 description = meta.get("description") or _first_meaningful_line(body)
                 skills[name] = Skill(name=name, description=description, path=path)
         return skills
+    project_skills = ws.root / ".silkcode" / "skills"
     for directory in skill_dirs(ws):  # project dir last: overrides user skills
         if not directory.is_dir():
             continue
+        in_repo = directory == project_skills
         for path in sorted(directory.glob("*.md")):
+            if in_repo:
+                try:
+                    ws.resolve(path)
+                except ToolError:
+                    continue  # a link out of the repository is not a skill
             text = path.read_text(errors="replace")
             meta, body = _split_frontmatter(text)
             name = meta.get("name") or path.stem

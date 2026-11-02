@@ -17,6 +17,8 @@ class Risk(IntEnum):
 
 HIGH_RISK_PATTERNS = [
     r"\bgithub merge-pr\b",  # merging a PR is as outward-facing as a push
+    r"\bgithub create-pr\b",  # opening a PR publishes work outward too
+    r"\bgithub agent-task start\b",  # starts work on the remote repository
     r"\brm\s+-[a-zA-Z-]*[rf]",
     r"\bsudo\b",
     r"\bgit\s+push\b",
@@ -49,6 +51,32 @@ LOW_RISK_COMMANDS = {
 }
 
 GIT_READ_SUBCOMMANDS = {"status", "log", "diff", "show", "blame", "shortlog", "describe", "branch", "remote"}
+
+# Global options git accepts between `git` and the subcommand. Git skips them
+# before it picks what to run, so the gate has to skip them too: `git -C repo
+# push` is a push, while a pattern looking for "git push" cannot see it. Each
+# entry says how the option takes its value: "value" consumes the next
+# argument (or an attached "=value"), "none" stands alone.
+_GIT_GLOBAL_OPTIONS = {
+    "-C": "value", "-c": "value",
+    "--git-dir": "value", "--work-tree": "value", "--namespace": "value",
+    "--config-env": "value", "--attr-source": "value",
+    "--exec-path": "value", "--list-cmds": "value",
+    "-v": "none", "--version": "none", "-h": "none", "--help": "none",
+    "--html-path": "none", "--man-path": "none", "--info-path": "none",
+    "-p": "none", "--paginate": "none", "-P": "none", "--no-pager": "none",
+    "--bare": "none", "--no-replace-objects": "none",
+    "--no-lazy-fetch": "none", "--no-optional-locks": "none",
+    "--no-advice": "none", "--literal-pathspecs": "none",
+    "--glob-pathspecs": "none", "--noglob-pathspecs": "none",
+    "--icase-pathspecs": "none",
+}
+
+# Options that print information and exit: nothing reaches the repository.
+_GIT_INFORMATIONAL_OPTIONS = {
+    "--exec-path", "--list-cmds", "-v", "--version", "-h", "--help",
+    "--html-path", "--man-path", "--info-path",
+}
 
 
 # Where one command ends and the next begins.
@@ -100,6 +128,82 @@ def _runs_something_we_cannot_see(argv: list[str]) -> bool:
     return bool(argv) and any(ch in argv[0] for ch in ("$", "`"))
 
 
+def _git_subcommand(argv: list[str]) -> tuple[str | None, list[str]] | None:
+    """The git subcommand and its arguments, after git's global options.
+
+    Returns None when the subcommand cannot be established because of an
+    option this gate does not know: there is no safe guess about what such a
+    command will run. A (None, ...) pair means git will not run a subcommand
+    at all - no command was given, or an informational option exits first.
+    """
+    if not argv or argv[0] != "git":
+        return None
+    index = 1
+    while index < len(argv):
+        token = argv[index]
+        if not token.startswith("-") or token == "-":
+            return token, argv[index + 1:]
+        name, separator, _ = token.partition("=")
+        informational = name in _GIT_INFORMATIONAL_OPTIONS
+        # --exec-path=<path> is a value option that lets git continue; every
+        # other informational option prints and exits.
+        if informational and not (name == "--exec-path" and separator):
+            return None, argv[index + 1:]
+        spec = _GIT_GLOBAL_OPTIONS.get(name)
+        if spec is None:
+            # Short options may carry their value attached: -Cpath, -ckey=value.
+            if len(token) > 2 and token[:2] in ("-C", "-c"):
+                index += 1
+                continue
+            return None
+        index += 1 if (spec == "none" or separator) else 2
+    return None, []
+
+
+def _rm_is_destructive(args: list[str]) -> bool:
+    """Whether rm is asked to recurse or force its way (the -r/-R/-f set)."""
+    for arg in args:
+        if arg == "--":
+            return False  # everything after -- is a path, not a flag
+        if arg.startswith("--"):
+            if arg.split("=", 1)[0] in ("--recursive", "--force"):
+                return True
+        elif arg.startswith("-") and any(ch in "rRf" for ch in arg[1:]):
+            return True
+    return False
+
+
+def _checkout_discards(args: list[str]) -> bool:
+    """Whether a checkout throws away local changes or switches forcibly."""
+    for arg in args:
+        if arg in ("--", ".", "--force"):
+            return True
+        if arg.startswith("-") and not arg.startswith("--") and "f" in arg[1:]:
+            return True
+    return False
+
+
+def _classify_git(argv: list[str]) -> Risk:
+    """Risk of a git command, decided by the subcommand git will actually run."""
+    parsed = _git_subcommand(argv)
+    if parsed is None:
+        # An option this gate does not know: it cannot tell which command
+        # follows, so it asks rather than guessing.
+        return Risk.HIGH
+    subcommand, args = parsed
+    if subcommand is None:
+        return Risk.MEDIUM
+    if subcommand in ("push", "clean", "restore"):
+        return Risk.HIGH
+    if subcommand == "reset":
+        return Risk.HIGH if "--hard" in args else Risk.MEDIUM
+    if subcommand == "checkout":
+        return Risk.HIGH if _checkout_discards(args) else Risk.MEDIUM
+    if subcommand in GIT_READ_SUBCOMMANDS:
+        return Risk.LOW
+    return Risk.MEDIUM
+
+
 def classify_command(command: str) -> Risk:
     # The raw text first: deliberately over-approximate, so a dangerous string
     # is caught wherever it appears, including inside quotes.
@@ -139,9 +243,9 @@ def _classify_argv(tokens: list[str]) -> Risk:
         return Risk.MEDIUM
     head = tokens[0]
     if head == "git":
-        if len(tokens) > 1 and tokens[1] in GIT_READ_SUBCOMMANDS:
-            return Risk.LOW
-        return Risk.MEDIUM
+        return _classify_git(tokens)
+    if head == "rm":
+        return Risk.HIGH if _rm_is_destructive(tokens[1:]) else Risk.MEDIUM
     # test runners are low risk per SRS section 30
     if head in ("npm", "cargo", "go", "flutter", "yarn") and tokens[1:2] == ["test"]:
         return Risk.LOW
@@ -180,9 +284,11 @@ def git_operation(command: str) -> str | None:
     argv = segments[0]
     if argv[:2] == ["github", "merge-pr"]:
         return "merge"
-    if argv[0] == "git" and len(argv) > 1:
-        return _GIT_OP_BY_SUBCOMMAND.get(argv[1])
-    return None
+    parsed = _git_subcommand(argv)
+    if parsed is None:
+        return None
+    subcommand, _ = parsed
+    return _GIT_OP_BY_SUBCOMMAND.get(subcommand) if subcommand else None
 
 
 class PermissionManager:

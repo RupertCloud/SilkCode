@@ -112,6 +112,9 @@ class AgentSession:
         self.transcript: list[dict] = []
         self._text_buffer: list[str] = []
         self.running = False
+        # closed while a turn was still alive: _run_turn ends it once the turn
+        # returns, so the workspace lock is never released under a live turn
+        self.closing = False
 
         spec = data.get("model") or state.spec
         try:
@@ -548,8 +551,9 @@ class GuiState:
     def start_turn(self, text: str, session_id: int | None = None) -> bool:
         session = self.get_session(session_id)
         with self.lock:
-            if session.running or self._swarm_running(session.id):
-                return False  # the agent or a swarm owns this workspace right now
+            if (self.sessions.get(session.id) is not session or session.closing
+                    or session.running or self._swarm_running(session.id)):
+                return False  # the agent/swarm owns this workspace, or it is closing
             session.running = True
         if not session.data.get("title"):
             session.data["title"] = text[:60]
@@ -584,9 +588,16 @@ class GuiState:
                     self.broadcast({"type": "push_result", "message": pushed, "session": session.id})
             with self.lock:
                 session.running = False
-            self._save_session(session)
-            self.broadcast({"type": "turn_done", "usage": session.usage_dict(),
-                            "session": session.id})
+                closing = session.closing
+            try:
+                self._save_session(session)
+            finally:
+                self.broadcast({"type": "turn_done", "usage": session.usage_dict(),
+                                "session": session.id})
+                if closing:
+                    # close_session asked for this while the turn was running:
+                    # now nothing is writing to the project, so the lock can go.
+                    self._finish_close(session)
 
     def _save_session(self, session: AgentSession) -> None:
         session.data["messages"] = session.agent.messages
@@ -748,30 +759,47 @@ class GuiState:
 
     def close_session(self, session_id: int | None = None) -> dict:
         """Stop a session, release its lock and drop it from memory; the
-        conversation stays saved. The daemon always keeps a current session."""
+        conversation stays saved. The daemon always keeps a current session.
+
+        A session with a turn still running is only marked for closing: the
+        turn owns the workspace lock and the transcript until it returns, so
+        _run_turn's finally finishes the close. Releasing here after a short
+        wait left the lock free while the turn (up to ten minutes) kept
+        writing, and dropped the session's data from under it.
+        """
         sid = session_id if session_id is not None else self.default_session_id
         session = self.sessions.get(sid)
         if session is None:
             raise ToolError(f"session #{sid} is not open in this daemon")
         if self._swarm_running(sid):
             raise ToolError("a swarm is running in this session; stop it first")
-        if session.running:
-            session.agent.request_stop()
-            deadline = time.time() + 8.0
-            while time.time() < deadline and session.running:
-                time.sleep(0.05)  # let the running turn wind down
+        with self.lock:
+            if session.closing:  # already closing; the turn's finally will finish it
+                return {"ok": True, "session_id": sid, "closing": True}
+            session.closing = True
+            if session.running:
+                session.agent.request_stop()
+                return {"ok": True, "session_id": sid, "closing": True}
+        self._finish_close(session)
+        return {"ok": True, "session_id": self.default_session_id}
+
+    def _finish_close(self, session: AgentSession) -> None:
+        """Release a session that is no longer running: its workspace lock, the
+        in-memory handle, the active marker, and tell the page. Only call this
+        when the session's turn has ended (close_session's idle path or
+        _run_turn's finally)."""
+        sid = session.id
         try:
             release(session.workspace.root, session.lock_owner)
         except Exception:
             pass  # best-effort; the lock goes stale on its own
         project = str(session.workspace.root)
-        del self.sessions[sid]
+        self.sessions.pop(sid, None)
         if self.default_session_id == sid:
             same = [s.id for s in self.sessions.values() if _same_project(str(s.workspace.root), project)]
             self.default_session_id = max(same) if same else self.new_session(project=project).id
         self.store.set_active(self.instance, self.default_session_id)
         self.broadcast({"type": "session_closed", "session": sid})
-        return {"ok": True, "session_id": self.default_session_id}
 
     def close_project(self, project: str, session_id: int | None = None) -> dict:
         """Close every open session of a non-current project and hide its card."""
@@ -781,6 +809,10 @@ class GuiState:
         matches = [s.id for s in self.sessions.values() if _normalized(str(s.workspace.root)) == target]
         if any(self._swarm_running(sid) for sid in matches):
             raise ToolError("a swarm is running in this project; stop it first")
+        if any(s.running or s.closing for s in self.sessions.values() if s.id in matches):
+            # a deferred close would pop a fresh session back into the project
+            # the user just hid; require the turn to stop first instead
+            raise ToolError("a turn is running in this project; stop it first")
         for sid in matches:
             self.close_session(sid)
         self.closed_projects.add(target)
@@ -848,7 +880,7 @@ class GuiState:
         streaming swarm_progress / swarm_done / swarm_error events."""
         session = self.get_session(session_id)
         with self.lock:
-            if session.running:
+            if session.running or session.closing:
                 raise ToolError("the agent is running in this session; stop it first")
             if self._swarm_running(session.id):
                 raise ToolError("a swarm is already running in this session")
@@ -1425,6 +1457,15 @@ class GuiHandler(BaseHTTPRequestHandler):
             self._error(str(exc))
         except (BrokenPipeError, ConnectionResetError):
             pass
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            # a malformed request (a non-numeric session id, a body of the
+            # wrong shape) is the caller's fault: 400, not a dropped connection
+            self._error(f"bad request: {exc}", 400)
+        except OSError as exc:
+            self._error(f"request failed: {exc}", 500)
+        except Exception as exc:  # a handler bug must still answer the client
+            print(f"gui: {type(exc).__name__}: {exc}", file=sys.stderr)
+            self._error("internal error", 500)
 
     def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
         if not self._authorized():
@@ -1504,6 +1545,8 @@ class GuiHandler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
         except ValueError:
             return self._error("invalid JSON body")
+        if not isinstance(body, dict):
+            return self._error("invalid JSON body: expected an object")
         route = urlparse(self.path).path
         self._dispatch(lambda: self._post(route, body, self.state, self._session_of(None, body)))
 

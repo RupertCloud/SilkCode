@@ -1,6 +1,6 @@
 import pytest
 
-from silkcode.permissions import PermissionManager, Risk, classify_command
+from silkcode.permissions import GRANTABLE, PermissionManager, Risk, classify_command
 
 
 def test_low_risk_commands():
@@ -243,3 +243,159 @@ def test_a_grant_follows_the_command_that_will_run():
     assert git_operation("ls && git push") is None, \
         "a compound line claimed a grant meant for a single push"
     assert git_operation("ls -la") is None
+
+
+# ---- git global options are not a place to hide the subcommand -------------
+#
+# git skips its global options before choosing a subcommand, so `git -C repo
+# push` is a push. Matching the raw text for "git push" saw none of these,
+# which left them MEDIUM - and in agent mode MEDIUM runs with no prompt.
+
+@pytest.mark.parametrize("command", [
+    "git -C . push",
+    "git -C repo push origin main",
+    "git -Crepo push",
+    "git -c x=y push",
+    "git -cx=y push",
+    "git --git-dir .git push",
+    "git --git-dir=.git push",
+    "git --work-tree . push",
+    "git --work-tree=. push",
+    "git --namespace ns push",
+    "git --namespace=ns push",
+    "git --no-pager push",
+    "git -p push",
+    "git --paginate push",
+    "git -P push",
+    "git --bare push",
+    "git --no-optional-locks push",
+    "git -C repo -c core.sshCommand=true --no-pager push",
+])
+def test_git_global_options_cannot_hide_a_push(command):
+    assert classify_command(command) == Risk.HIGH, command
+
+
+@pytest.mark.parametrize("command", [
+    "git -C repo reset --hard",
+    "git -C repo reset --hard HEAD~1",
+    "git -C repo clean -fdx",
+    "git -C repo clean --force -d -x",
+    "git --no-pager clean -fd",
+    "git -C repo restore .",
+    "git -C repo checkout -- .",
+    "git -C repo checkout .",
+    "git -C repo checkout -f main",
+    "git -C repo checkout --force main",
+])
+def test_git_global_options_cannot_hide_a_destructive_subcommand(command):
+    assert classify_command(command) == Risk.HIGH, command
+
+
+def test_a_hidden_push_is_actually_gated_in_agent_mode():
+    """The point of the fix: MEDIUM runs unprompted, HIGH does not."""
+    asked = []
+    manager = PermissionManager("agent",
+                                asker=lambda prompt: asked.append(prompt) or "no")
+    assert manager.check_command("git -C . push") is False
+    assert asked, "a push behind a global option ran without asking anyone"
+
+
+@pytest.mark.parametrize("command", [
+    "rm -R build",
+    "rm -r build",
+    "rm -fR build",
+    "rm -Rf build",
+    "rm -r -f build",
+    "rm --recursive build",
+    "rm --force build",
+    "rm --recursive --force build",
+    "rm -R --force build",
+])
+def test_rm_recursion_and_force_variants_are_high(command):
+    assert classify_command(command) == Risk.HIGH, command
+
+
+@pytest.mark.parametrize("command", ["rm file.txt", "rm -i file.txt"])
+def test_plain_rm_is_not_dragged_up(command):
+    assert classify_command(command) != Risk.HIGH, command
+
+
+def test_an_unrecognised_git_global_option_fails_closed():
+    """An option this gate does not know could hide any subcommand."""
+    assert classify_command("git --future-option push") == Risk.HIGH
+
+
+@pytest.mark.parametrize("command", [
+    "git -C repo status",
+    "git -C repo log --oneline",
+    "git --no-pager diff",
+    "git --git-dir=.git status",
+])
+def test_a_read_stays_low_through_git_global_options(command):
+    assert classify_command(command) == Risk.LOW, command
+
+
+# ---- outward-facing github tools -------------------------------------------
+#
+# `github create-pr` publishes work and `github agent-task start` hands work to
+# a remote agent; both are as outward-facing as a push. They classified MEDIUM,
+# which agent mode runs without asking.
+
+@pytest.mark.parametrize("command", ["github create-pr", "github agent-task start"])
+def test_outward_github_commands_are_high(command):
+    assert classify_command(command) == Risk.HIGH, command
+
+
+@pytest.mark.parametrize("tool_name, literal", [
+    ("github_create_pr", "github create-pr"),
+    ("github_agent_task_start", "github agent-task start"),
+])
+def test_the_outward_tool_literals_are_high(tool_name, literal):
+    """The registry's own command string is what the gate sees."""
+    from silkcode.tools import TOOLS
+    tool = TOOLS[tool_name]
+    assert tool.command_of({}, None) == literal
+    assert classify_command(tool.command_of({}, None)) == Risk.HIGH
+
+
+def test_outward_tools_ask_in_agent_mode_and_grants_do_not_cover_them():
+    asked = []
+    manager = PermissionManager("agent",
+                                asker=lambda prompt: asked.append(prompt) or "no",
+                                grants=list(GRANTABLE))
+    assert manager.check_command("github create-pr") is False
+    assert manager.check_command("github agent-task start") is False
+    assert len(asked) == 2
+
+
+def test_the_deliberate_merge_grant_path_still_works():
+    from silkcode.permissions import git_operation
+    manager = PermissionManager("ask", asker=lambda prompt: "no", grants=["merge"])
+    assert manager.check_command("github merge-pr") is True
+    assert git_operation("git -C repo merge feature") == "merge"
+    assert manager.check_command("git -C repo merge feature") is True
+
+
+def test_a_grant_follows_a_git_command_through_its_global_options():
+    from silkcode.permissions import git_operation
+    assert git_operation("git -C repo push origin main") == "push"
+    assert git_operation("git -c x=y fetch") == "pull"
+    assert git_operation("git --no-pager merge feature") == "merge"
+    assert git_operation("git --git-dir=.git push") == "push"
+    assert git_operation("git -C repo status") is None
+    manager = PermissionManager("ask", asker=lambda prompt: "no", grants=["push"])
+    assert manager.check_command("git -C repo push origin main") is True
+
+
+def test_the_provenance_rule_sees_through_git_global_options():
+    """Outward means risk == HIGH; a hidden push must still trip the rule."""
+    class TaintedTurn:
+        active = True
+        tainted = True
+
+        def explain(self):
+            return "read README.md"
+
+    manager = PermissionManager("agent", asker=lambda prompt: "no",
+                                grants=["push"], provenance=TaintedTurn())
+    assert manager.check_command("git -C . push") is False
