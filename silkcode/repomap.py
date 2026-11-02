@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from .workspace import Workspace
+from .workspace import ToolError, Workspace
 
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".silkcode",
                 "dist", "build", ".pytest_cache", ".mypy_cache", "target", ".next"}
@@ -84,7 +84,11 @@ def repo_map(ws: Workspace, max_chars: int = 3500) -> str:
         parts = ["Repository map (remote sandbox):"]
     else:
         for name, label in MARKER_FILES.items():
-            if (ws.root / name).is_file():
+            try:
+                marker = ws.resolve(name)
+            except ToolError:
+                continue  # a link out of the repository is not a marker
+            if marker.is_file():
                 markers.append(f"{name} ({label})")
 
         def walk(directory: Path, depth: int) -> None:
@@ -103,6 +107,11 @@ def repo_map(ws: Workspace, max_chars: int = 3500) -> str:
                     return
                 if child.name in IGNORED_DIRS or child.name.startswith(".") or child.name.endswith(".egg-info"):
                     continue
+                if child.is_symlink():
+                    try:
+                        ws.resolve(child)
+                    except ToolError:
+                        continue  # a link out of the repository is not part of the map
                 scanned += 1
                 is_dir = child.is_dir()
                 if not is_dir:
