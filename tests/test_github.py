@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 
 import httpx
@@ -19,6 +20,123 @@ def repo_ws(tmp_path, monkeypatch):
     subprocess.run(["git", "init", "-q", "-b", "feature-1"], cwd=root, check=True)
     subprocess.run(["git", "remote", "add", "origin", "git@github.com:acme/widgets.git"], cwd=root, check=True)
     return Workspace(root)
+
+
+# ---------------------------------------------------------------------------
+# the credential helper: the GitHub token belongs to GitHub and nowhere else
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def credential_env(tmp_path, monkeypatch):
+    """A configured GitHub token, and the environment git_credential_env
+    builds for git."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("SILKCODE_HOME", str(home))
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secret")
+    return home
+
+
+def _run_askpass(env, prompt):
+    """Run the generated helper exactly as git does: the prompt is argv[1]."""
+    return subprocess.run(
+        [env["GIT_ASKPASS"], prompt], capture_output=True, text=True, timeout=30,
+        env={**os.environ, "SILKCODE_GIT_TOKEN": env["SILKCODE_GIT_TOKEN"]},
+    )
+
+
+def test_the_askpass_helper_answers_for_github(credential_env):
+    env = gh.git_credential_env()
+    username = _run_askpass(env, "Username for 'https://github.com': ")
+    assert username.returncode == 0
+    assert username.stdout.strip() == "x-access-token"
+    for prompt in ("Password for 'https://github.com': ",
+                   "Password for 'https://x-access-token@github.com': "):
+        answer = _run_askpass(env, prompt)
+        assert answer.returncode == 0
+        assert answer.stdout.strip() == "ghp_secret"
+
+
+def test_the_askpass_helper_refuses_every_other_host(credential_env):
+    """HIGH-3: a push to a non-GitHub origin must not receive the token.
+
+    The helper has to print nothing (and fail) for another host, for a host
+    that merely ends in github.com, for a URL that only mentions github.com
+    further along, and for a non-URL passphrase prompt.
+    """
+    env = gh.git_credential_env()
+    for prompt in ("Username for 'https://gitlab.com': ",
+                   "Password for 'https://gitlab.com': ",
+                   "Password for 'https://github.com.evil.example': ",
+                   "Password for 'https://notgithub.com': ",
+                   "Password for 'https://evil.example/path/https://github.com': ",
+                   "Enter passphrase for key '/home/u/.ssh/id_rsa': "):
+        answer = _run_askpass(env, prompt)
+        assert answer.returncode != 0, prompt
+        assert answer.stdout == "", prompt
+
+
+def test_the_askpass_helper_answers_for_the_configured_enterprise_host(credential_env):
+    (credential_env / "config.json").write_text(json.dumps(
+        {"github": {"api_url": "https://ghe.example.com/api/v3"}}))
+    env = gh.git_credential_env()
+    answer = _run_askpass(env, "Password for 'https://x-access-token@ghe.example.com': ")
+    assert answer.returncode == 0
+    assert answer.stdout.strip() == "ghp_secret"
+    assert _run_askpass(env, "Password for 'https://gitlab.com': ").returncode != 0
+
+
+def test_a_stale_askpass_helper_is_replaced(credential_env):
+    """The helper outlives the process. An earlier release's version answered
+    every prompt, so it has to be rewritten, not just created."""
+    stale = credential_env / "git-askpass.sh"
+    stale.write_text("#!/bin/sh\nprintenv SILKCODE_GIT_TOKEN\n")
+    stale.chmod(0o755)
+    env = gh.git_credential_env()
+    answer = _run_askpass(env, "Password for 'https://gitlab.com': ")
+    assert answer.returncode != 0
+    assert answer.stdout == ""
+
+
+def test_a_push_to_a_non_github_remote_never_gets_the_token(tmp_path, monkeypatch):
+    """HIGH-3 end to end: the credential env is applied to every HTTPS remote,
+    so the helper is the boundary. A push to a local git server must fail
+    without ever sending the token there; with the old helper it succeeded."""
+    from test_gitproxy import EXPECTED, TOKEN, GitHttpServer, _git
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("SILKCODE_HOME", str(home))
+    monkeypatch.setenv("GITHUB_TOKEN", TOKEN)
+    # no ambient credential helper may answer for the test server
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "no-global-gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    served = tmp_path / "served"
+    bare = served / "acme" / "widget.git"
+    bare.mkdir(parents=True)
+    _git("init", "-q", "--bare", "-b", "main", str(bare))
+    _git("-C", str(bare), "config", "http.receivepack", "true")
+
+    server = GitHttpServer(served, EXPECTED)
+    try:
+        work = tmp_path / "work"
+        work.mkdir()
+        _git("init", "-q", "-b", "main", str(work))
+        (work / "a.txt").write_text("a\n")
+        _git("-C", str(work), "add", "-A")
+        _git("-C", str(work), "commit", "-qm", "init")
+        _git("-C", str(work), "remote", "add", "origin",
+             f"{server.origin}/acme/widget.git")
+
+        from silkcode.tools.git import git_push
+        out = git_push(Workspace(work))
+        assert out.startswith("git error"), \
+            f"the push to a non-GitHub remote should not have succeeded: {out}"
+        assert EXPECTED not in server.seen_auth, \
+            "the GitHub token was sent to a non-GitHub origin"
+    finally:
+        server.close()
 
 
 def mock_github(handler, monkeypatch):

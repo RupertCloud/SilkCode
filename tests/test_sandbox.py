@@ -1,6 +1,7 @@
 """Remote sandbox: protocol server + RemoteBackend, end to end over HTTP."""
 
 from pathlib import Path
+import subprocess
 import threading
 
 import httpx
@@ -181,9 +182,11 @@ def test_a_failed_clone_leaves_nothing_behind(tmp_path, monkeypatch):
     assert not (dest / ".git").exists()
 
 
-def test_a_fetch_timeout_keeps_the_existing_clone(tmp_path, monkeypatch):
-    """Updating is best-effort: an existing checkout that is slightly stale
-    beats failing the request outright."""
+def test_a_fetch_timeout_on_an_existing_clone_is_reported(tmp_path, monkeypatch):
+    """A timeout while refreshing must not pass silently: the origin was
+    updated, so the caller has to know the update did not reach the remote -
+    otherwise the next push fails against a clone nobody was warned about.
+    The files themselves are kept."""
     import subprocess as sp
 
     from silkcode.sandbox_server import _clone_repo
@@ -192,12 +195,73 @@ def test_a_fetch_timeout_keeps_the_existing_clone(tmp_path, monkeypatch):
     (dest / ".git").mkdir(parents=True)
     (dest / "file.txt").write_text("kept\n")
 
-    def slow(*args, **kwargs):
+    calls = []
+
+    def slow(args, **kwargs):
+        calls.append(args)
+        if "set-url" in args:
+            return sp.CompletedProcess(args, 0, "", "")
         raise sp.TimeoutExpired(cmd="git fetch", timeout=1)
 
     monkeypatch.setattr("silkcode.sandbox_server.subprocess.run", slow)
-    _clone_repo("https://example.invalid/o/r.git", dest, timeout=1)
+    with pytest.raises(ValueError, match="fetch timed out after 1s"):
+        _clone_repo("https://example.invalid/o/r.git", dest, timeout=1)
     assert (dest / "file.txt").read_text() == "kept\n"
+
+
+def test_an_existing_clone_is_repointed_at_the_new_remote(tmp_path):
+    """Every session gets a fresh authenticated proxy URL. Reusing the
+    previous session's dead address silently breaks push/pull/fetch, so the
+    existing clone's origin has to follow the new URL."""
+    from silkcode.sandbox_server import _clone_repo
+
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    subprocess.run(["git", "init", "-q", str(seed)], check=True)
+    (seed / "a.txt").write_text("a\n")
+    subprocess.run(["git", "-C", str(seed), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(seed), "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "init"], check=True)
+    first = tmp_path / "first.git"
+    second = tmp_path / "second.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(first)], check=True)
+    subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(second)], check=True)
+
+    dest = tmp_path / "ws" / "w"
+    _clone_repo(str(first), dest)
+    assert subprocess.run(["git", "-C", str(dest), "remote", "get-url", "origin"],
+                          capture_output=True, text=True).stdout.strip() == str(first)
+
+    _clone_repo(str(second), dest)
+    origin = subprocess.run(["git", "-C", str(dest), "remote", "get-url", "origin"],
+                            capture_output=True, text=True).stdout.strip()
+    assert origin == str(second), "the existing clone kept its stale origin"
+    # and the update really fetched from the new remote
+    assert subprocess.run(["git", "-C", str(dest), "rev-parse", "origin/HEAD"],
+                          capture_output=True, text=True).returncode == 0
+
+
+def test_a_failed_fetch_on_an_existing_clone_is_reported(tmp_path, monkeypatch):
+    """The fetch result used to be ignored, which is why a broken clone only
+    surfaced later as a push failure. It must be reported where it happens."""
+    import subprocess as sp
+
+    from silkcode.sandbox_server import _clone_repo
+
+    dest = tmp_path / "ws" / "w"
+    (dest / ".git").mkdir(parents=True)
+    calls = []
+
+    def fail_fetch(args, **kwargs):
+        calls.append(args)
+        if "set-url" in args:
+            return sp.CompletedProcess(args, 0, "", "")
+        return sp.CompletedProcess(args, 128, "", "fatal: unable to access remote\n")
+
+    monkeypatch.setattr("silkcode.sandbox_server.subprocess.run", fail_fetch)
+    with pytest.raises(ValueError, match="git fetch failed: fatal: unable to access"):
+        _clone_repo("http://127.0.0.1:4444/acme/widget.git", dest)
+    assert any("set-url" in c for c in calls), "origin was not rewritten before fetch"
 
 
 def test_a_missing_git_binary_is_reported(tmp_path, monkeypatch):

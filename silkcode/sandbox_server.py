@@ -87,8 +87,33 @@ def _git_env() -> dict:
 CLONE_TIMEOUT = 600
 
 
+def _repoint_origin(dest: Path, url: str, timeout: int, env: dict) -> None:
+    """Point an existing clone's origin at `url`.
+
+    The URL of an authenticated workspace is a loopback proxy, and each
+    /clone gets a fresh proxy on a fresh port. Leaving the previous session's
+    dead address in origin is what makes every later push/pull/fetch fail
+    with no useful error, so origin is rewritten before the fetch.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(dest), "remote", "set-url", "origin", url],
+            capture_output=True, text=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(
+            f"git remote set-url timed out after {timeout}s; the existing "
+            "clone still points at its old remote") from exc
+    except FileNotFoundError as exc:
+        raise ValueError(f"git is not installed in the sandbox: {exc}") from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip() or "unknown git error"
+        raise ValueError(
+            f"could not point the existing clone at its new remote: "
+            f"{detail.splitlines()[0][:300]}")
+
+
 def _clone_repo(url: str, dest: Path, timeout: int = CLONE_TIMEOUT) -> None:
-    """Clone `url` into `dest`, or fetch when it is already cloned.
+    """Clone `url` into `dest`, or update it when it is already cloned.
 
     `url` is expected to be already-authenticated - the loopback proxy's
     address when a token is in play - so nothing here handles credentials.
@@ -97,17 +122,30 @@ def _clone_repo(url: str, dest: Path, timeout: int = CLONE_TIMEOUT) -> None:
     this takes minutes, and running out of time is an expected answer, not a
     crash: it is reported as a plain message naming the limit so the caller
     knows to raise it rather than guessing at a stack trace.
+
+    When the clone already exists its origin is repointed at `url` first: the
+    authenticated URL changes with every session, and a stale origin breaks
+    push/pull/fetch silently for the rest of that session. A fetch that then
+    fails is reported instead of being ignored, because the next thing the
+    user does is push.
     """
     dest.mkdir(parents=True, exist_ok=True)
     env = _git_env()
     if (dest / ".git").is_dir():
+        _repoint_origin(dest, url, timeout, env)
         try:
-            subprocess.run(["git", "-C", str(dest), "fetch", "--all", "--prune"],
-                           capture_output=True, text=True, timeout=timeout, env=env)
-        except subprocess.TimeoutExpired:
-            pass  # the clone is already here; stale is better than failing
+            proc = subprocess.run(["git", "-C", str(dest), "fetch", "--all", "--prune"],
+                                  capture_output=True, text=True, timeout=timeout, env=env)
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(
+                f"git fetch timed out after {timeout}s; the existing clone's "
+                "remote was updated but it could not be refreshed") from exc
         except FileNotFoundError as exc:
             raise ValueError(f"git is not installed in the sandbox: {exc}") from exc
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout).strip() or "unknown git error"
+            raise ValueError(
+                f"git fetch failed: {detail.splitlines()[0][:300]}")
         return
     try:
         proc = subprocess.run(["git", "clone", url, str(dest)],
