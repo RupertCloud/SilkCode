@@ -349,3 +349,42 @@ def test_live_server_stop_ends_the_watch_thread(ws):
     write_file(ws, "index.html", "<html><body>v2 changed</body></html>")
     time.sleep(srv.interval * 2 + 0.2)
     assert srv._reload_count == count
+
+
+def test_live_server_a_client_that_leaves_during_the_poll_is_quiet(ws, capfd):
+    """A page that reloads or closes its tab drops the long-poll connection
+    before the answer is sent; the write then raises BrokenPipeError and
+    socketserver printed "Exception occurred during processing of request".
+    That client disconnect is expected: the server must stay quiet and keep
+    serving."""
+    import socket
+    import struct
+    import time
+    import urllib.request
+    import silkcode.liveserver as L
+    write_file(ws, "index.html", "<html><body>ok</body></html>")
+    L.live_server(ws, "start", port=0)
+    try:
+        srv = L.REGISTRY.get(ws)
+        client = socket.create_connection(("127.0.0.1", srv.port), timeout=5)
+        client.sendall(
+            b"GET /__reload__ HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n\r\n" % srv.port)
+        time.sleep(0.2)   # let the handler park in the long poll
+        # close with an immediate RST, like a browser tearing the connection
+        # down before reading the answer (a plain close can still be accepted)
+        client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                          struct.pack("ii", 1, 0))
+        client.close()
+        capfd.readouterr()  # ignore anything from before this point
+        srv._reload_event.set()  # wake the poll: it now answers a gone client
+        time.sleep(0.4)
+
+        # the server survived and keeps serving other requests
+        body = urllib.request.urlopen(srv.url + "index.html", timeout=5).read()
+        assert b"ok" in body
+        captured = capfd.readouterr()
+        assert "Exception occurred during processing" not in captured.err
+        assert "BrokenPipeError" not in captured.err
+        assert "ConnectionResetError" not in captured.err
+    finally:
+        L.live_server(ws, "stop")
