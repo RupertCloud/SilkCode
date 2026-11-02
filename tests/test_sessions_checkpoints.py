@@ -1,4 +1,9 @@
+import json
+import os
 import threading
+from pathlib import Path
+
+import pytest
 
 from silkcode.checkpoints import Checkpoints
 from silkcode.sessions import SessionStore, new_session
@@ -121,3 +126,107 @@ def test_checkpoint_generations_are_independent(tmp_path):
     assert f.read_text() == "v2"
     cp.revert_last()
     assert f.read_text() == "v1"
+
+
+# ---- concurrent writers of one session ---------------------------------------
+
+def test_save_uses_a_unique_temp_file_per_writer(tmp_path, monkeypatch):
+    """The GUI and the CLI used to write the same <id>.tmp before swapping it
+    into place: two saves could mix their bytes in that one file and the
+    loser's os.replace installed the mixture as a session."""
+    store = SessionStore(tmp_path)
+    session = new_session(1, "shared", "m", ".", "edit")
+    store.save(session)
+
+    seen = []
+    real_replace = os.replace
+
+    def recording_replace(src, dst):
+        seen.append(Path(src).name)
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", recording_replace)
+    store.save(session | {"messages": [{"role": "user", "content": "one"}]})
+    store.save(session | {"messages": [{"role": "user", "content": "two"}]})
+
+    assert len(seen) == 2
+    assert seen[0] != seen[1], "both writers used the same temp file"
+    assert all(name.endswith(".tmp") for name in seen)
+    assert "1.tmp" not in seen  # the old shared name is gone
+    assert not [p for p in tmp_path.iterdir() if p.suffix == ".tmp"]
+    assert store.load(1)["messages"][0]["content"] == "two"
+
+
+def test_concurrent_saves_of_one_session_never_corrupt_the_json(tmp_path):
+    """Hammer one session from two stores (the GUI and the CLI shape) while a
+    reader reloads it: every version it sees must be complete, parseable JSON.
+    """
+    store_a = SessionStore(tmp_path)
+    store_b = SessionStore(tmp_path)
+    base = new_session(1, "shared", "m", ".", "edit")
+    base["messages"] = [{"role": "user", "content": "start"}]
+    store_a.save(base)
+
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def writer(store, tag):
+        try:
+            for i in range(25):
+                store.save(base | {"messages": [
+                    {"role": "user", "content": f"{tag}-{i}-" + "x" * 4096}
+                ]})
+        except BaseException as exc:  # pragma: no cover - the test reports it
+            errors.append(exc)
+
+    def reader():
+        while not stop.is_set():
+            try:
+                loaded = store_a.load(1)
+                assert loaded["messages"][0]["role"] == "user"
+            except BaseException as exc:  # pragma: no cover - the test reports it
+                errors.append(exc)
+                return
+
+    reader_thread = threading.Thread(target=reader)
+    reader_thread.start()
+    writers = [threading.Thread(target=writer, args=(store_a, "a")),
+               threading.Thread(target=writer, args=(store_b, "b"))]
+    for thread in writers:
+        thread.start()
+    for thread in writers:
+        thread.join()
+    stop.set()
+    reader_thread.join()
+
+    assert errors == []
+    final = store_a.load(1)
+    assert final["id"] == 1
+    # a whole payload from one writer, never a mixture of both
+    content = final["messages"][0]["content"]
+    assert content.startswith(("a-", "b-"))
+    assert content.count("x") == 4096
+    assert json.loads(store_a._path(1).read_text())["id"] == 1
+
+
+def test_saves_of_one_session_wait_for_its_lock(tmp_path):
+    """A per-session lock file serializes writers across processes, so two
+    replaces can never interleave even when both save at once."""
+    fcntl = pytest.importorskip("fcntl")
+    store = SessionStore(tmp_path)
+    store.save(new_session(1, "locked", "m", ".", "edit"))
+
+    held = os.open(tmp_path / "1.lock", os.O_RDWR | os.O_CREAT)
+    fcntl.flock(held, fcntl.LOCK_EX)
+    done = threading.Event()
+    thread = threading.Thread(target=lambda: (store.save(
+        new_session(1, "locked", "m", ".", "edit")), done.set()))
+    thread.daemon = True
+    thread.start()
+    try:
+        assert not done.wait(0.3), "save did not wait for the per-session lock"
+    finally:
+        fcntl.flock(held, fcntl.LOCK_UN)
+        os.close(held)
+    assert done.wait(5)
+    thread.join(5)

@@ -6,12 +6,20 @@ machine - on different addresses and in different projects - without ever
 handing out the same id or clobbering each other's session files. Each session
 also records the instance (host:port of the daemon) that created it, so
 `silkcode sessions` can tell sessions from different instances apart.
+
+Several writers (a GUI daemon, the CLI, a swarm child) may save the same
+session: each save goes to its own temp file and is serialized by a
+per-session advisory lock, so an interleaved save can never corrupt the JSON.
+Two writers that each keep a whole conversation in memory can still overwrite
+one another's new turns; preventing that needs an open-claim/release protocol
+in every writer, which this store deliberately does not impose.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -36,6 +44,22 @@ except ImportError:  # pragma: no cover - Windows has no advisory file locks
 
 
 _counter_lock = threading.Lock()  # serialize allocations within this process
+
+
+def _fsync_dir(directory: Path) -> None:
+    """Best-effort durability for the rename itself (a crash right after
+    os.replace must not lose the new session file on power failure). Windows
+    cannot open a directory for fsync, so there it is skipped."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 class SessionStore:
@@ -86,15 +110,68 @@ class SessionStore:
                 _unlock(fd)
                 os.close(fd)
 
+    def _lock_session(self, session_id: int) -> int | None:
+        """Exclusive advisory lock for one session's writers, or None when the
+        store cannot create the lock file (read-only directory).
+
+        A GUI daemon and the CLI (or two daemons) can save the same session at
+        the same time. The lock serializes their replaces; the unique temp name
+        in _write keeps their file contents from ever mixing. On Windows the
+        flock calls are no-ops, but each replace is still atomic.
+        """
+        try:
+            fd = os.open(self.dir / f"{session_id}.lock", os.O_RDWR | os.O_CREAT, 0o644)
+        except OSError:
+            return None
+        try:
+            _lock_exclusive(fd)
+        except OSError:
+            os.close(fd)
+            return None
+        return fd
+
+    @staticmethod
+    def _write_atomic(path: Path, data: dict) -> None:
+        # Unique temp file per writer: GUI and CLI used to share <id>.tmp, so
+        # two saves interleaved their bytes into one file and the loser's
+        # os.replace installed the mixture as if it were an intact session.
+        body = json.dumps(data, indent=2).encode()
+        fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}-",
+                                    suffix=".tmp")
+        tmp = Path(name)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(body)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+            _fsync_dir(path.parent)
+        finally:
+            # the replace consumed the temp file; unlink only if it did not run
+            tmp.unlink(missing_ok=True)
+
     def save(self, data: dict) -> None:
-        # Atomic: write beside, then replace. A crash mid-save must leave the
-        # previous version of the conversation intact, never a half-written
-        # JSON file - sessions are the state users would miss most.
+        """Atomic: write beside, then replace. A crash mid-save must leave the
+        previous version of the conversation intact, never a half-written
+        JSON file - sessions are the state users would miss most.
+
+        Writers of one session are serialized with a per-session lock file so
+        a GUI save and a CLI save cannot interleave. That keeps the file whole
+        and complete; it does not decide which writer owns a session open in
+        two places at once (a whole-conversation last-writer-wins is still
+        possible there, and closing that needs an open-claim protocol in every
+        writer, not just in this store)."""
         data["updated"] = time.time()
         path = self._path(data["id"])
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        os.replace(tmp, path)
+        lock_fd = self._lock_session(data["id"])
+        try:
+            self._write_atomic(path, data)
+        finally:
+            if lock_fd is not None:
+                try:
+                    _unlock(lock_fd)
+                finally:
+                    os.close(lock_fd)
 
     def load(self, session_id: int) -> dict:
         path = self._path(session_id)
