@@ -34,7 +34,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from .workspace import Workspace
+from .workspace import ToolError, Workspace
 
 MEMORY_RELPATH = ".silkcode/memory.md"
 DB_RELPATH = ".silkcode/memory.db"
@@ -82,7 +82,7 @@ def _overlap(a: str, b: str) -> float:
 def _connect(ws: Workspace) -> sqlite3.Connection:
     from .statedir import ensure_ignored
 
-    path = db_path(ws)
+    path = ws.resolve(DB_RELPATH)  # a link out of the workspace is refused
     path.parent.mkdir(parents=True, exist_ok=True)
     ensure_ignored(path.parent)  # memory is ours, not part of their project
     conn = sqlite3.connect(path)
@@ -107,7 +107,10 @@ def _import_legacy(ws: Workspace, conn: sqlite3.Connection) -> None:
     """
     if conn.execute("SELECT COUNT(*) FROM memory").fetchone()[0]:
         return
-    path = memory_path(ws)
+    try:
+        path = ws.resolve(MEMORY_RELPATH)
+    except ToolError:
+        return  # a link out of the workspace is not project memory
     if not path.is_file():
         return
     text = path.read_text(errors="replace")
@@ -160,8 +163,12 @@ def _render(records: list[tuple[int, str, str, str]]) -> str:
 
 def _write_mirror(ws: Workspace, conn: sqlite3.Connection) -> None:
     try:
+        path = ws.resolve(MEMORY_RELPATH)
+    except ToolError:
+        return  # never write through a link out of the workspace
+    try:
         body = _render(_active(conn))
-        memory_path(ws).write_text(MIRROR_HEADER + ("\n" + body + "\n" if body else ""))
+        path.write_text(MIRROR_HEADER + ("\n" + body + "\n" if body else ""))
     except OSError:
         pass  # a read-only checkout still gets the database write
 
@@ -182,7 +189,15 @@ def load_memory(ws: Workspace) -> str:
             text = "... [older memory truncated]\n" + text
         return text
 
-    if not db_path(ws).is_file() and not memory_path(ws).is_file():
+    try:
+        db = ws.resolve(DB_RELPATH)
+    except ToolError:
+        return ""  # a link out of the workspace is not the memory store
+    try:
+        mirror = ws.resolve(MEMORY_RELPATH)
+    except ToolError:
+        mirror = None  # a link out of the workspace is not project memory
+    if not db.is_file() and not (mirror is not None and mirror.is_file()):
         return ""
     with _connect(ws) as conn:
         _import_legacy(ws, conn)

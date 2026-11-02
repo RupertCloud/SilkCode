@@ -20,6 +20,7 @@ MAX_STEPS = 40
 # budget and never touches the most recent turns.
 DEFAULT_CONTEXT_TOKENS = 100_000
 KEEP_RECENT_TOOL_RESULTS = 6
+CHECKPOINT_MARKER = "[Checkpoint of earlier work, written after context trimming]\n"
 TRUNCATED_TOOL_CHARS = 500
 
 # on_event(kind, data): kind in {"text", "tool_start", "tool_result"}
@@ -42,7 +43,13 @@ class Agent:
         attribution: bool = True,
         lock_owner: str | None = None,
         redact_output: bool = True,
+        summarizer=None,
     ):
+        # `summarizer` (optional): transcript -> checkpoint text, run on a
+        # configured light model (lightmodel.py). When present, turns that
+        # compaction is about to drop are summarized into a checkpoint
+        # instead of vanishing.
+        self.summarizer = summarizer
         self.provider = provider
         self.model = model
         self.workspace = workspace
@@ -192,20 +199,57 @@ class Agent:
             if len(content) > TRUNCATED_TOOL_CHARS:
                 m["content"] = content[:TRUNCATED_TOOL_CHARS] + "\n...[old output truncated to save context]"
         # Stage 2: drop the oldest turns, always cutting at a user-message
-        # boundary so assistant/tool pairs stay intact.
+        # boundary so assistant/tool pairs stay intact. What is dropped is
+        # collected first: with a light model configured it becomes a
+        # checkpoint instead of vanishing.
+        dropped: list[dict] = []
         while self.context_tokens() > self.max_context_tokens:
             user_indices = [i for i, m in enumerate(self.messages) if m.get("role") == "user"]
             if len(user_indices) < 2:
                 break  # only the current turn remains; nothing left to drop
             start, end = user_indices[0], user_indices[1]
             self.trimmed_messages += end - start
+            dropped.extend(self.messages[start:end])
             del self.messages[start:end]
+        if dropped:
+            self._write_checkpoint(dropped)
         if self.trimmed_messages:
             self.messages[0]["content"] = (
                 self._base_system
                 + f"\n[Context note: {self.trimmed_messages} earlier messages were trimmed to fit "
                 "the context window. Re-read files or re-run searches if you need that information.]"
             )
+
+    def _write_checkpoint(self, dropped: list[dict]) -> None:
+        """Summarize dropped turns into one checkpoint message, replacing any
+        earlier checkpoint (its text joins the input, so nothing stacks).
+
+        The checkpoint is history the agent wrote about itself, so it is
+        inserted as an assistant message: it must never read as the user
+        speaking, and never carry a user message's authority.
+        """
+        if self.summarizer is None:
+            return
+        parts = []
+        for i, m in enumerate(self.messages):
+            content = str(m.get("content", ""))
+            if m.get("role") == "assistant" and content.startswith(CHECKPOINT_MARKER):
+                parts.append(content[len(CHECKPOINT_MARKER):])
+                del self.messages[i]
+                break
+        for m in dropped:
+            content = str(m.get("content") or "")
+            calls = " ".join(tc["function"]["name"] for tc in m.get("tool_calls") or [])
+            if content or calls:
+                parts.append(f"{m.get('role', '?')}: {calls + ' ' if calls else ''}{content}")
+        try:
+            checkpoint = self.summarizer("\n".join(parts))
+        except Exception:
+            return  # compaction must never break the turn; the trim stands
+        if not checkpoint:
+            return
+        self.messages.insert(1, {"role": "assistant",
+                                 "content": CHECKPOINT_MARKER + checkpoint})
 
     def _call_model(self) -> ChatResult:
         self._compact()

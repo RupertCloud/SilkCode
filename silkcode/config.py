@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from pathlib import Path
 
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -132,16 +133,34 @@ class Config:
 
     def save(self) -> None:
         # The config holds API keys and GitHub tokens: keep it owner-only.
-        # Written before the content so a key never lands in a world-readable
-        # file, even briefly.
+        # Write beside the target and swap it in atomically, so a crash or a
+        # full disk leaves the previous config (all providers and keys) intact
+        # instead of a torn file. The temp file is created 0o600 *before* any
+        # content, so a key never lands in a world-readable file, even briefly.
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.path.exists():
-            self.path.touch(mode=0o600)
+        tmp = self.path.with_name(
+            f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.chmod(tmp, 0o600)  # os.open's mode is filtered by the umask
+            except OSError:
+                pass  # exotic filesystems (e.g. some mounts) may refuse chmod
+            with os.fdopen(fd, "w", newline="") as f:
+                f.write(json.dumps(self.data, indent=2) + "\n")
+                f.flush()
+                os.fsync(f.fileno())  # durable before the swap, not after it
+            os.replace(tmp, self.path)
+        except BaseException:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
         try:
             os.chmod(self.path, 0o600)
         except OSError:
             pass  # exotic filesystems (e.g. some mounts) may refuse chmod
-        self.path.write_text(json.dumps(self.data, indent=2) + "\n")
 
     @property
     def default_model(self) -> str:

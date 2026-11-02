@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from .memory import load_memory
 from .repomap import repo_map
 from .skills import load_skills
-from .workspace import Workspace
+from .workspace import ToolError, Workspace
 
 INSTRUCTIONS_FILE = "SILKCODE.md"
 MEMORY_LABEL = ".silkcode/memory.md"
@@ -46,7 +46,10 @@ def load_project_instructions(ws: Workspace) -> str:
         if len(text) > MAX_INSTRUCTIONS_CHARS:
             text = text[:MAX_INSTRUCTIONS_CHARS] + "\n... [truncated]"
         return text
-    path = ws.root / INSTRUCTIONS_FILE
+    try:
+        path = ws.resolve(INSTRUCTIONS_FILE)
+    except ToolError:
+        return ""  # a link out of the repository is not project instructions
     if not path.is_file():
         return ""
     text = path.read_text(errors="replace").strip()
@@ -90,10 +93,14 @@ class ProjectContext:
 
 
 def assemble(ws: Workspace) -> ProjectContext:
+    from .inflight import report as inflight_report
     from .provenance import scan
 
     parts = [repo_map(ws)]
-    warnings: list[str] = []
+    # Commands that were in flight when a previous session died: report each
+    # once (the report consumes the records), with whatever output was
+    # captured. See silkcode/inflight.py.
+    warnings: list[str] = inflight_report(ws.root)
     withheld: list[str] = []
 
     for label, text in project_sources(ws):

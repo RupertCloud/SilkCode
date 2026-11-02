@@ -206,3 +206,59 @@ def test_plan_risk_classification_is_the_ordinary_one():
     from silkcode.permissions import classify_command
     assert classify_command("cat README.md") == Risk.LOW
     assert classify_command("python setup.py install") != Risk.LOW
+
+
+# ---- acceptance criteria (the half a checklist forgets) ----------------------
+
+def test_a_step_can_say_how_anyone_will_know_it_is_done(ws):
+    propose_plan(ws, "Add JSON output",
+                 "add the flag => silkcode --json emits valid JSON\nupdate docs")
+    text = plan_path(ws).read_text()
+    assert "- [ ] add the flag" in text
+    assert "(done when: silkcode --json emits valid JSON)" in text
+    assert "- [ ] update docs" in text
+    assert "=>" not in text, "the separator is syntax, not content"
+
+
+def test_marking_done_echoes_the_acceptance_criterion(ws):
+    propose_plan(ws, "Add JSON output",
+                 "add the flag => silkcode --json emits valid JSON")
+    message = update_plan(ws, 1, "done")
+    assert "silkcode --json emits valid JSON" in message
+    assert "confirm this actually holds" in message
+
+
+def test_a_step_without_acceptance_is_not_nagged(ws):
+    propose_plan(ws, "Small", "tidy the imports")
+    message = update_plan(ws, 1, "done")
+    assert "confirm this actually holds" not in message
+
+
+def test_the_plan_can_carry_an_end_to_end_check(ws):
+    propose_plan(ws, "Ship", "one\ntwo", verify="pytest -q passes on 3.10 and 3.12")
+    assert "Verify: pytest -q passes on 3.10 and 3.12" in plan_path(ws).read_text()
+
+
+def test_finishing_the_last_step_surfaces_the_end_to_end_check(ws):
+    propose_plan(ws, "Ship", "one\ntwo", verify="pytest -q passes")
+    update_plan(ws, 1, "done")
+    message = update_plan(ws, 2, "done")
+    assert "Every step is done" in message
+    assert "pytest -q passes" in message
+
+
+def test_a_skipped_final_step_still_counts_as_finished(ws):
+    propose_plan(ws, "Ship", "one\ntwo", verify="pytest -q passes")
+    update_plan(ws, 2, "skipped", note="not needed here")
+    message = update_plan(ws, 1, "done")
+    assert "Every step is done" in message
+
+
+def test_acceptance_lines_survive_step_updates_and_counting(ws):
+    propose_plan(ws, "Mixed", "a => check a\nb\nc => check c")
+    update_plan(ws, 2, "in_progress")
+    assert "1 steps done" not in progress(ws)   # sanity: three steps, none done
+    update_plan(ws, 3, "done")
+    text = plan_path(ws).read_text()
+    assert "(done when: check a)" in text and "(done when: check c)" in text
+    assert "1/3 steps done" in progress(ws)

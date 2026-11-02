@@ -1,0 +1,4 @@
+# created by prepack from ../install.py; the repository root copy is canonical
+install.py
+node_modules/
+*.tgz

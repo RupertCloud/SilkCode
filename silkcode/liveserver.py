@@ -21,9 +21,9 @@ demand so pages load in the browser while the agent edits them.
 
 from __future__ import annotations
 
-import io
+import errno
+import ipaddress
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -74,6 +74,55 @@ class _Registry:
 REGISTRY = _Registry()
 
 
+def _hostname_of(host_header: str) -> str:
+    """The hostname part of a Host header ('[::1]:8080' -> '::1')."""
+    host = host_header.strip()
+    if host.startswith("["):
+        return host[1:].partition("]")[0]
+    return host.rpartition(":")[0] if ":" in host else host
+
+
+def _is_loopback_name(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _host_allowed(host_header: str, bound_host: str) -> bool:
+    """Whether the request's Host header names this machine.
+
+    A page served from some other site can reach a loopback server by DNS
+    rebinding; its Host then names that site, not this machine. So the preview
+    server only answers loopback names, plus the address it was explicitly
+    bound to. An absent Host (HTTP/1.0 clients) is allowed: a browser cannot
+    omit it, so it cannot be the rebinding case.
+    """
+    if not host_header.strip():
+        return True
+    name = _hostname_of(host_header).lower()
+    if _is_loopback_name(name):
+        return True
+    return bool(bound_host) and name == bound_host.strip("[]").lower()
+
+
+def _inside(target: Path, root: Path) -> bool:
+    """Containment on resolved paths: '/ws-backup' is not inside '/ws'."""
+    return target == root or root in target.parents
+
+
+def _servable(target: Path, root: Path) -> bool:
+    """No dotfiles or dot-directories: .env, .git/config, .silkcode/... are
+    private to the workspace and never part of a preview."""
+    try:
+        relative = target.relative_to(root)
+    except ValueError:
+        return False
+    return all(not part.startswith(".") for part in relative.parts)
+
+
 def _snapshot(root: Path) -> dict:
     """Map of relative path -> (mtime_ns, size) for every non-ignored file."""
     files = {}
@@ -100,6 +149,8 @@ class LiveServer:
         self.interval = interval
         self._reload_count = 0
         self._reload_event = threading.Event()
+        self._stop_event = threading.Event()
+        self._root = ws.root
         self._stale = _snapshot(ws.root)
 
         outer = self
@@ -109,14 +160,28 @@ class LiveServer:
                 pass
 
             def _send(self, code: int, body: bytes, ctype: str = "text/html; charset=utf-8"):
-                self.send_response(code)
-                self.send_header("Content-Type", ctype)
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(body)
+                # A page that reloads or closes its tab drops the long-poll
+                # before the answer is sent; writing it then raises EPIPE or
+                # ECONNRESET. That is an expected client disconnect, not a
+                # server failure: end the handler quietly instead of letting
+                # socketserver print "Exception occurred during processing".
+                try:
+                    self.send_response(code)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    self.close_connection = True
+                except OSError as exc:
+                    if exc.errno not in (errno.EPIPE, errno.ECONNRESET):
+                        raise
+                    self.close_connection = True
 
             def do_GET(self):  # noqa: N802 (http.server naming)
+                if not _host_allowed(self.headers.get("Host", ""), outer.host):
+                    return self._send(403, b"forbidden host", "text/plain; charset=utf-8")
                 path = urlparse(self.path).path
                 if path == "/__reload__":
                     return self._reload()
@@ -138,12 +203,20 @@ class LiveServer:
 
             def _serve(self, path: str):
                 rel = path.lstrip("/") or "index.html"
-                target = (outer.ws.root / rel).resolve()
-                if not str(target).startswith(str(outer.ws.root)):
+                root = outer._root
+                try:
+                    target = (root / rel).resolve()
+                    if target.is_dir():
+                        target = (target / "index.html").resolve()
+                except (OSError, RuntimeError):
+                    # unreadable path or a symlink loop: not servable, not a crash
+                    return self._send(400, b"bad path", "text/plain; charset=utf-8")
+                # Resolved containment, so /../<root>-backup/ cannot pass by
+                # sharing a string prefix with the workspace root; and no
+                # dotfiles (.env, .git/config, .silkcode/...) leave the machine.
+                if not (_inside(target, root) and _servable(target, root)):
                     return self._send(403, b"forbidden", "text/plain; charset=utf-8")
-                if target.is_dir():
-                    target = target / "index.html"
-                if not target.exists() or not target.is_file():
+                if not target.is_file():
                     return self._send(404, b"not found", "text/plain; charset=utf-8")
                 body = target.read_bytes()
                 if target.suffix.lower() in (".html", ".htm"):
@@ -174,8 +247,10 @@ class LiveServer:
         return f"http://{self.host}:{self.port}/"
 
     def _watch_loop(self) -> None:
-        while True:
-            time.sleep(self.interval)
+        # wait() doubles as the sleep, so stop() ends the loop at once instead
+        # of leaving a daemon thread polling this workspace for the process
+        # lifetime (it would keep serving reloads for a server that is gone).
+        while not self._stop_event.wait(self.interval):
             fresh = _snapshot(self.ws.root)
             if fresh != self._stale:
                 self._stale = fresh
@@ -183,8 +258,12 @@ class LiveServer:
                 self._reload_event.set()
 
     def stop(self) -> None:
+        self._stop_event.set()
+        self._reload_event.set()  # wake long-polling pages; the server is going away
         self._server.shutdown()
         self._server.server_close()
+        self._watch.join(timeout=2 * self.interval + 1)
+        self._thread.join(timeout=2)
 
 
 def _guess_type(path: Path) -> str:

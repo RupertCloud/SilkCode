@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 from ..version import build_id
+from ..lock import LockError, acquire, release
 from ..agent import Agent
 from ..config import Config, ConfigError
 from ..providers import ProviderError, build_provider
@@ -71,6 +73,38 @@ def _ask_user(prompt: str) -> str:
             return "always"
 
 
+def _offer_key_fix(config: "Config", agent: "Agent", provider_name: str) -> bool:
+    """A model call just failed on its API key: ask for the key right here.
+
+    The key is read without echo (getpass), stored in config.json - written
+    owner-only, where keys already live - and the agent's provider is rebuilt
+    so the very next prompt uses it. Enter skips; a non-tty never prompts
+    (the adapter and piped runs get the actionable message, not a hang).
+    """
+    if not sys.stdin.isatty():
+        return False
+    import getpass
+    try:
+        entered = getpass.getpass(
+            f"Paste an API key for '{provider_name}' (Enter to skip): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    if not entered:
+        return False
+    from ..environment import set_key
+    try:
+        set_key(config, provider_name, entered)  # one storage path, shared
+    except ValueError as exc:                    # with the GUI's key flows
+        print(f"{RED}{exc}{RESET}")
+        return False
+    cfg = config.providers[provider_name]
+    agent.provider = build_provider(provider_name, cfg,
+                                    api_key=config.api_key_for(cfg))
+    print(f"{CYAN}Key saved to {config.path} (owner-only). Ask again.{RESET}")
+    return True
+
+
 def _summarize_args(args: dict) -> str:
     text = json.dumps(args, ensure_ascii=False)
     return text if len(text) <= 140 else text[:140] + "..."
@@ -92,8 +126,59 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
              use_sandbox: bool = False, auto_push: bool = False,
              remote: str | None = None, trace_path: str | None = None,
              final_answer_path: str | None = None,
-             check_command: str | None = None) -> int:
+             check_command: str | None = None, isolated: bool = False) -> int:
     config = Config.load()
+    worktree = None
+    if isolated:
+        if remote:
+            print("error: --isolated is for local checkouts; a remote workspace "
+                  "already lives in the sandbox", file=sys.stderr)
+            return 1
+        from ..worktree import create as create_worktree
+        try:
+            worktree = create_worktree(path)
+        except ToolError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        path = str(worktree.root)
+        print(f"{CYAN}isolated{RESET} {worktree.root}  "
+              f"{DIM}(branch {worktree.branch}, forked from "
+              f"{worktree.base[:10]}; your checkout is untouched){RESET}")
+    # Advisory per-workspace lock, the same one the GUI holds (silkcode/lock.py):
+    # two CLI sessions on one project must not silently last-writer-win. The
+    # owner is passed to the Agent so the file tools check it and refresh it.
+    lock_owner = f"cli-{os.getpid()}"
+    lock_root = None
+    if not remote:
+        candidate = Path(path).resolve()  # the same root Workspace() gets
+        if candidate.is_dir():  # a bad path is reported by the workspace setup
+            lock_root = candidate
+            try:
+                acquire(lock_root, lock_owner)
+            except LockError as exc:
+                print(f"{YELLOW}warning: this project is already open in "
+                      f"{exc.holder()} — edits are refused until that session "
+                      f"closes or the lock goes stale.{RESET}", file=sys.stderr)
+            except OSError:
+                lock_root = None  # cannot create the lock file: locking is off
+    try:
+        return _run_repl(path, model_spec, mode, resume, prompt, grants,
+                         use_sandbox, auto_push, remote, trace_path,
+                         final_answer_path, check_command, config, lock_owner)
+    finally:
+        if lock_root is not None:
+            try:
+                release(lock_root, lock_owner)
+            except OSError:
+                pass  # best-effort; a stale lock is taken over automatically
+        if worktree is not None:
+            from ..worktree import cleanup as cleanup_worktree
+            print(cleanup_worktree(worktree))
+
+
+def _run_repl(path, model_spec, mode, resume, prompt, grants, use_sandbox,
+              auto_push, remote, trace_path, final_answer_path, check_command,
+              config, lock_owner: str | None = None) -> int:
     if remote:
         from ..remotews import RemoteWorkspace
         from ..execbackend import remote_backend_from_config
@@ -164,11 +249,14 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
     # be skipped just because this run is non-interactive.
     for warning in project.warnings:
         print(f"{YELLOW}{warning}{RESET}\n", file=sys.stderr)
+    from ..lightmodel import checkpoint_summarizer
     agent = Agent(provider, model, workspace, permissions, on_event=_on_event,
                   context=project.text, mcp=mcp,
                   max_context_tokens=provider_cfg.get("context_tokens") or DEFAULT_CONTEXT_TOKENS,
                   session_id=(resume or {}).get("id"),
-                  attribution=config.data.get("attribution", True))
+                  attribution=config.data.get("attribution", True),
+                  lock_owner=lock_owner,
+                  summarizer=checkpoint_summarizer(config))
 
     if resume:
         session = resume
@@ -269,6 +357,9 @@ def run_repl(path: str, model_spec: str | None, mode: str, resume: dict | None =
                     print(f"{DIM}auto-push: {pushed.splitlines()[0]}{RESET}")
         except ProviderError as exc:
             print(f"\n{RED}provider error: {exc}{RESET}")
+            from ..providers.base import AuthError
+            if isinstance(exc, AuthError):
+                _offer_key_fix(config, agent, exc.provider_name)
         except KeyboardInterrupt:
             agent.repair_dangling_tool_calls()
             print(f"\n{YELLOW}[interrupted]{RESET}")
@@ -476,7 +567,6 @@ def _new_command(agent: Agent, session: dict, arg: str) -> None:
     """
     from pathlib import Path
 
-    from ..context import build_context
     from ..project import record_recent_project
     from ..remotews import RemoteWorkspace
     from ..scaffold import (DEFAULT_TEMPLATE, create_project, format_result,
@@ -515,7 +605,6 @@ def _project_command(agent: Agent, config: Config, session: dict, arg: str) -> N
     """Open a new project in this session: switch the agent to another
     workspace chosen from GitHub or a local path (SRS: new sessions ask for
     a project)."""
-    from ..context import build_context
     from ..project import record_recent_project, resolve_project
     from ..workspace import ToolError
 

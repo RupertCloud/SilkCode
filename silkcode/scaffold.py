@@ -316,8 +316,8 @@ def _build_python_cli(meta: ProjectMeta) -> dict[str, str]:
                          f'    return 0\n\n\n'
                          f'if __name__ == "__main__":\n'
                          f'    sys.exit(main())\n',
-        f"{pkg}/__main__.py": f'import sys\n\nfrom .cli import main\n\n'
-                              f'sys.exit(main())\n',
+        f"{pkg}/__main__.py": 'import sys\n\nfrom .cli import main\n\n'
+                              'sys.exit(main())\n',
         "tests/test_cli.py": f'import pytest\n\n'
                              f'from {pkg}.cli import main\n\n\n'
                              f'def test_greets(capsys):\n'
@@ -682,7 +682,7 @@ def prompt_for_new_project(asker=None, parent: str | Path = ".") -> ScaffoldResu
             raw_name = _ask("\nProject name (q to cancel): ")
         except (EOFError, KeyboardInterrupt):
             print()
-            raise ToolError("cancelled")
+            raise ToolError("cancelled") from None
         if raw_name in ("q", "quit", "cancel"):
             raise ToolError("cancelled")
         if not raw_name:
@@ -699,7 +699,7 @@ def prompt_for_new_project(asker=None, parent: str | Path = ".") -> ScaffoldResu
             choice = _ask(f"Template [{DEFAULT_TEMPLATE}]: ")
         except (EOFError, KeyboardInterrupt):
             print()
-            raise ToolError("cancelled")
+            raise ToolError("cancelled") from None
         if not choice:
             template = DEFAULT_TEMPLATE
             break

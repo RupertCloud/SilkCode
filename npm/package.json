@@ -1,0 +1,35 @@
+{
+  "name": "silkcode",
+  "version": "0.1.0",
+  "description": "npx launcher for Silk Code, the model-agnostic AI coding agent: phone-first GUI, permission gates, provenance-scanned tools. Bootstraps the Python app and its Chromium into an isolated environment on first run.",
+  "bin": {
+    "silkcode": "bin/silkcode.js"
+  },
+  "files": [
+    "bin/",
+    "install.py"
+  ],
+  "scripts": {
+    "prepack": "node -e \"require('node:fs').copyFileSync(require('node:path').join('..','install.py'),'install.py')\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RupertCloud/SilkCode.git"
+  },
+  "homepage": "https://github.com/RupertCloud/SilkCode#readme",
+  "bugs": {
+    "url": "https://github.com/RupertCloud/SilkCode/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "ai",
+    "agent",
+    "coding-agent",
+    "cli",
+    "llm",
+    "model-agnostic"
+  ]
+}

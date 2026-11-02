@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from urllib.parse import urlparse
 
 import httpx
 
@@ -29,7 +30,9 @@ REMOTE_PATTERN = re.compile(
     r"(?:^|//|@)github\.com[:/](?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?/?$")
 
 # Test hook: replaced to inject a mock transport.
-_make_client = lambda: httpx.Client(timeout=30.0)  # noqa: E731
+# No redirects: every call carries the GitHub token, and the REST API
+# has no redirect this code needs to follow.
+_make_client = lambda: httpx.Client(timeout=30.0, follow_redirects=False)  # noqa: E731
 
 
 def token_from_env(config_data: dict | None = None) -> str | None:
@@ -67,27 +70,102 @@ def get_token(config) -> str | None:
     return token
 
 
+# A host the askpass helper may answer for. Generated into a shell `case`
+# pattern, so nothing else may appear in it.
+_HOST_PATTERN = re.compile(r"[a-z0-9.-]+")
+
+
+def credential_hosts(github_cfg: dict | None = None) -> list[str]:
+    """The hosts the configured GitHub token may be sent to.
+
+    github.com, plus the GitHub Enterprise host when `github.api_url` names
+    one (an Enterprise install serves both REST and git from that host):
+    https://ghe.example.com/api/v3 means git pushes to ghe.example.com.
+    """
+    hosts = ["github.com"]
+    api_url = str((github_cfg or {}).get("api_url") or "").strip()
+    if not api_url:
+        return hosts
+    host = (urlparse(api_url).hostname or "").lower()
+    # api.github.com is the default REST endpoint and never a git remote; a
+    # value that is not a plain DNS name is not something to match against.
+    if host and host != "api.github.com" and _HOST_PATTERN.fullmatch(host):
+        if host not in hosts:
+            hosts.append(host)
+    return hosts
+
+
+def askpass_script(hosts: list[str]) -> str:
+    """The shell helper git runs for HTTPS prompts.
+
+    Git passes the prompt as $1 (`Password for 'https://github.com': `). The
+    helper answers only when that prompt names a host the token belongs to.
+    Any other remote - a GitLab origin, a self-hosted server, an unknown
+    host that merely contains "github.com" - gets no answer and a non-zero
+    exit, so git fails its own way instead of handing this token to a
+    third-party server. Passphrase prompts carry no URL and are refused too.
+    """
+    allowed = "\n".join(f"  {host}) ;;" for host in hosts)
+    return (
+        "#!/bin/sh\n"
+        "# Silk Code git askpass helper: answers only for the configured\n"
+        "# GitHub hosts. Git passes the prompt as $1.\n"
+        'prompt="$1"\n'
+        'url=${prompt#*://}\n'
+        '[ "$url" = "$prompt" ] && exit 1\n'
+        'authority=${url%%/*}\n'
+        'host=${authority##*@}\n'
+        'host=${host%%:*}\n'
+        'host=${host%%[!A-Za-z0-9.-]*}\n'
+        "host=$(printf %s \"$host\" | tr '[:upper:]' '[:lower:]')\n"
+        'case "$host" in\n'
+        f"{allowed}\n"
+        "  *) exit 1 ;;\n"
+        "esac\n"
+        'case "$prompt" in\n'
+        "  Username*) echo x-access-token ;;\n"
+        "  *) printenv SILKCODE_GIT_TOKEN ;;\n"
+        "esac\n"
+    )
+
+
+def _write_askpass(path, content: str) -> None:
+    """Install the helper atomically, replacing any older version.
+
+    The file outlives the process, so a helper written by an earlier release
+    would otherwise keep answering for every host forever. Rewriting also
+    picks up a changed Enterprise host without a manual cleanup.
+    """
+    try:
+        if path.read_text() == content:
+            return
+    except OSError:
+        pass
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(content)
+    tmp.chmod(0o755)
+    tmp.replace(path)
+
+
 def git_credential_env() -> dict | None:
-    """Environment that lets git push/pull authenticate to github.com over
-    HTTPS with the configured token. Returns None when no token is set (git
-    then uses the developer's own ambient credentials, e.g. SSH keys)."""
+    """Environment that lets git push/pull authenticate to GitHub over HTTPS
+    with the configured token. Returns None when no token is set (git then
+    uses the developer's own ambient credentials, e.g. SSH keys).
+
+    The credential is scoped by the askpass helper: it is released only for a
+    prompt naming github.com or the configured Enterprise host, so pushing to
+    any other HTTPS remote fails instead of receiving the GitHub token.
+    """
     from .config import Config, config_dir
 
     config = Config.load()
     token = get_token(config)
     if not token:
         return None
+    github_cfg = config.data.get("github") or {}
     askpass = config_dir() / "git-askpass.sh"
-    if not askpass.exists():
-        config_dir().mkdir(parents=True, exist_ok=True)
-        askpass.write_text(
-            "#!/bin/sh\n"
-            'case "$1" in\n'
-            "  Username*) echo x-access-token ;;\n"
-            "  *) printenv SILKCODE_GIT_TOKEN ;;\n"
-            "esac\n"
-        )
-        askpass.chmod(0o755)
+    config_dir().mkdir(parents=True, exist_ok=True)
+    _write_askpass(askpass, askpass_script(credential_hosts(github_cfg)))
     return {
         "GIT_ASKPASS": str(askpass),
         "SILKCODE_GIT_TOKEN": token,
@@ -129,7 +207,13 @@ class GitHubClient:
             resp = self._client.request(method, f"{self.api_url}{path}", headers=headers, **kwargs)
         except httpx.HTTPError as exc:
             raise ToolError(f"GitHub request failed: {exc}") from exc
-        if resp.status_code >= 400:
+        if resp.is_redirect:
+            # Redirects are not followed (the token must not be replayed to
+            # an address the server chose), and a 3xx treated as success
+            # would return {} and read as an empty result.
+            raise ToolError(f"GitHub API redirected ({resp.status_code}) - "
+                            "the repository may have moved; use its new name.")
+        if not resp.is_success:
             detail = ""
             try:
                 detail = resp.json().get("message", "")

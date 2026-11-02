@@ -17,7 +17,7 @@ _FALLBACK_VERSION = "0.2.0"
 
 def _installed_version() -> str:
     try:
-        from importlib.metadata import PackageNotFoundError, version
+        from importlib.metadata import version
         return version("silkcode")
     except Exception:
         return _FALLBACK_VERSION

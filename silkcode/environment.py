@@ -65,7 +65,13 @@ def set_key(config: Config, provider: str, key: str) -> dict:
         raise ValueError(f"unknown provider '{provider}'")
     if not key:
         raise ValueError("empty key")
-    config.set_provider(provider, {"api_key": key})
+    if any(c.isspace() for c in key):
+        raise ValueError("that does not look like an API key (it contains whitespace)")
+    # merge into the stored entry, never replace it: a user-defined provider's
+    # base_url lives in the same dict, and set_provider would drop it from
+    # the file (fine in memory, broken on the next load)
+    config.data.setdefault("providers", {}).setdefault(provider, {})["api_key"] = key
+    config.providers.setdefault(provider, {})["api_key"] = key
     config.save()
     return {"provider": provider, "set": True, "masked": mask(key)}
 

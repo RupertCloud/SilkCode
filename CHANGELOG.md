@@ -1,0 +1,347 @@
+# Changelog
+
+Silk Code's history, newest first, grouped by the phase that produced it.
+Entries name what changed and why it mattered; pull requests are numbered
+where one existed. The project began 2026-08-12 with the SRS and V0.1.
+
+## Unreleased — the review that closed its own holes · 2026-11-02
+
+### Fixed
+- **Git commands can no longer hide from the approval gate.** `git -C repo push`,
+  `git -c k=v push`, `git -C repo reset --hard` and `git -C repo clean -fdx` were
+  classified as medium risk and ran unprompted in agent mode; git's global options
+  are parsed before the subcommand now, and `github create-pr` and
+  `github agent-task start` are gated as outward actions. Unknown options fail closed.
+- **A repository can no longer read outside itself through the context loaders.**
+  `SILKCODE.md`, project memory, project skills and the repo map resolve through the
+  workspace before they are read, so a symlink that escapes the repo is treated as
+  absent instead of entering the prompt unredacted.
+- **The GitHub token goes only to GitHub.** The credential helper answers password
+  prompts only for `github.com` or the configured enterprise host, so a push to any
+  other HTTPS remote no longer receives the token.
+- **The live preview server stops at its root.** Traversal into a sibling directory
+  and dotfiles (`.env`, `.git/config`) are refused, the Host header is checked, and
+  stopping the server ends its watcher instead of leaking a thread per start.
+- **Closing a GUI session mid-turn keeps the workspace lock** until the turn really
+  ends, and closing the project during a turn is refused.
+- **Session saves cannot corrupt each other**: unique temp files plus a per-session
+  lock replace the shared `<id>.tmp`.
+- **The CLI takes the workspace lock**, so two CLI sessions on one project no longer
+  silently overwrite each other's edits.
+- **File and config writes are atomic** (temp file plus rename) and keep the file's
+  line endings, so a crash mid-write no longer truncates the file or rewrites CRLF to LF.
+- **A second remote-workspace clone repoints its origin** at the live git proxy
+  instead of fetching from a dead URL, and reports a failed fetch instead of ignoring it.
+- **Bad GUI requests get an HTTP error** (400/500 JSON) instead of a dropped connection.
+
+## Unreleased — the GUI and the site, unslopped · 2026-10-31
+
+### Changed
+- **The GUI keeps its glass, on a graphite backdrop.** The violet and teal
+  wallpaper is gone; surfaces, borders and text come from one neutral ramp.
+  Cyan (the site's accent) marks the primary action, the selection and links,
+  and nothing else. Apple blue is gone.
+- **A gold "silk thread" shows work in progress.** A thin line runs along the
+  header while the agent works, and marks the active phase in the Swarm
+  pipeline. It replaces the blinking status and project dots.
+- **Line icons replace emoji and symbols** (📱 🐝 ⚙ ↻ ↩ ⇧ ＋ ⑂ ⧉). They are inlined
+  lucide icons, one size and stroke, so the page still loads nothing from outside.
+  Add model, Pair a phone, Environment and Update are icon buttons with tooltips
+  on desktop and keep their labels in the phone sheet. The header fits on one
+  row at 1440px; before, it wrapped onto two.
+- **Labels are sentence case** (Projects, Files, Agent activity, table headers)
+  instead of tracked capitals, spacing sits on a 4px grid, type uses three
+  sizes and weights 400 to 600, and status pills are quiet tags.
+- **Interface copy is plainer.** Tool lines, banners and buttons drop their
+  glyphs; "(not started)" is "Not started"; italics for emphasis are gone.
+- **The Changes diff shades added and removed lines.**
+- **The site:** the gold to cyan gradient thread is now solid gold, section
+  labels are no longer tracked capitals, the hero has two actions instead of
+  five (the rest moved into a new top bar), cards no longer jump on hover,
+  and the workspace screenshot shows the current GUI.
+
+### Fixed
+- On a phone, the conversation picker was cut to three letters ("Nev") and the
+  composer placeholder wrapped and was clipped. Both fit now, and Send gives
+  its place to Stop while a turn runs.
+
+## Unreleased — a glass GUI at a fraction of the size · 2026-10-16
+
+### Changed
+- **The GUI has a macOS-style glass look.** Sidebars, toolbar, drawer and
+  dialogs are translucent and blurred over a soft backdrop. Text uses the
+  system font, chat is drawn as bubbles, and tabs are segmented controls.
+  The GUI follows the system light or dark appearance; before, it was dark
+  only, with about 30 colours hard-coded outside the theme.
+- **The GUI code is 27% smaller (5,050 → 3,682 lines)** with no feature removed.
+  `app.html` went from 2,824 to 1,925 lines and `server.py` from 2,226 to 1,757.
+  The page shares one element builder, one copy-button helper and one modal
+  close handler, and the server shares one response writer, one re-exec path
+  and route tables.
+
+### Fixed
+- On a phone, the ⋯ actions sheet no longer overflows the screen sideways.
+  A wide markdown table no longer pushes its copy button off-screen.
+- The `/api/checkout` route is removed. It called a method that does not
+  exist, so every request to it crashed the handler thread.
+
+## Unreleased — a review pass, and key errors that fix themselves · 2026-09-28/29
+
+### Added
+- **Key-error management** — a model call that fails on its API key (missing,
+  rejected, expired) now raises a typed `AuthError` naming exactly which key
+  and where it comes from (`$ENV_VAR`, or the api_key in config.json), and
+  every surface asks for the key instead of printing an HTTP status: the GUI
+  shows a password input right in the conversation (`POST /api/keys` stores
+  it owner-only and rebuilds live sessions, so the next message just works),
+  the interactive REPL asks via a hidden prompt, and non-interactive runs get
+  the actionable message without hanging. A provider whose configured key env
+  is empty fails before any request, with the fix; keyless local endpoints
+  (Ollama & co.) are untouched; 401/403 are never retried; the key is never
+  echoed, broadcast, or logged.
+- **Timeouts show what the command printed** — a timed-out `run_command` now
+  includes the output captured before the kill (it often says *why* it hung:
+  a prompt it was waiting on, a connection it kept retrying).
+- The README wears its npm badge: `silkcode` 0.1.0 is
+  [live on npm](https://www.npmjs.com/package/silkcode), so `npx silkcode gui`
+  works everywhere now.
+
+### Fixed
+- A lint sweep (pyflakes + bugbear): 21 dead/shadowed imports and leftover
+  test locals removed; user-facing errors raised from `except` clauses now
+  use `from None`, so a cancelled prompt or a bad config value reads as one
+  clean message instead of a chained traceback.
+
+## PR #40 (with graphify below) — npx, forks, and crash honesty · 2026-09-23/28
+
+Reading [unreallabsai/unreal-agent](https://github.com/unreallabsai/unreal-agent)
+— a Go harness whose whole first act is durability plumbing (append-only
+forkable history, durable operations, fuzzed crash recovery) — surfaced three
+of its disciplines worth having without its machinery.
+
+### Added
+- **`npx silkcode`** — an npm launcher (`npm/`): one dependency-free JS file
+  that finds a Python 3.10+, runs the bundled `install.py` into the isolated
+  runtime on first use, and execs the real CLI ever after. A doorway, not a
+  second implementation; the name is unclaimed on npm and the package is one
+  `cd npm && npm publish` away.
+- **Session forking** — the ⑂ button (and `POST /api/session/fork`): a new
+  session continues this conversation's history while the original stays as
+  it is, so two approaches can be tried from the same point and the winner
+  kept. Cuts land on complete turns (never inside a tool exchange), the fork
+  records its parent (`forked_from`, versioned), and — paired with the
+  existing `--isolated` machinery — the fork gets its own git worktree on a
+  `silk/<stamp>` branch where the project allows one, so the two lines
+  diverge on disk as well as in conversation.
+- **Honest states for interrupted commands** (`silkcode/inflight.py`) — the
+  local backend records every command in `.silkcode/inflight/` before it
+  starts and clears the record on an outcome; a record with no live process
+  behind it is reported by the next session in that workspace with
+  unreal-agent's taxonomy — "its start was never recorded, so it may not
+  have run at all" vs. "interrupted before an exit status was recorded" —
+  plus the tail of whatever output was captured. Reported once, then
+  consumed; records are versioned.
+- **Crash-recovery tests** (`tests/test_crash_recovery.py`) — kill Silk Code
+  at the worst moments and look: a real SIGKILL mid-command is reported with
+  its output next session; a torn session file never poisons the store.
+
+### Fixed
+- **Session saves are atomic** (write-beside then `os.replace`): a crash
+  mid-save now keeps the previous version of the conversation instead of
+  leaving a half-written JSON file.
+
+## PR #40 — the project as a knowledge graph (graphify) · 2026-09-02
+
+Full adoption of [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify):
+local tree-sitter parsing, no model call, verified on this repository first.
+
+### Added
+- **Four agent tools** — `graph_build` (writes `graphify-out/`, so it passes
+  the permission gate like the command it runs), `graph_query`,
+  `graph_explain`, and `graph_impact` (the blast radius of a change, with
+  file:line anchors, before a refactor instead of after). Query tools never
+  auto-build; remote workspaces are refused with the reason.
+- **The Graph tab** — the GUI shows users the platform they built: concepts,
+  connections, files, communities, extracted-vs-inferred share, ranked hubs,
+  and the interactive map served at `/graph-view`.
+- Installed by `install.py` alongside Chromium; not a wheel dependency —
+  without it every entry point explains the one command instead of failing.
+
+## PR #39 — retrieval, and six lessons from nac · 2026-08-29/30
+
+Reading [arcee-ai/nac](https://github.com/arcee-ai/nac) and Firecrawl's
+developer-index launch produced one new tool and six harness improvements.
+
+### Added
+- **`search_docs`** — retrieval of current developer documentation (READMEs,
+  docs sites, issues, API specs) with the vendor replaceable: Firecrawl's
+  index is the first backend (`FIRECRAWL_API_KEY` alone enables it), and any
+  endpoint speaking `POST {query, limit}` → `{results: [...]}` is an equal
+  one. Private by default — configure nothing and no query ever leaves the
+  machine. Classified like `curl`; refused in plan mode; results go through
+  the provenance scan like any other tool output.
+- **Retained episodes in the swarm** — each role's final message ends with a
+  structured work record (goal / done / verification evidence / blocker /
+  next), kept across iterations and fed forward, so iteration N+1 stops
+  rediscovering what N established. The critic is exempt (its JSON already
+  is its record); episodes are bounded; traces store them.
+- **Acceptance criteria in plans** — a step may carry
+  `=> how you know it's done` (rendered `(done when: …)`), plans may carry a
+  `Verify:` recipe; marking a step done echoes its criterion back, and
+  finishing the last step surfaces the end-to-end check.
+- **Compaction checkpoints on a light model** — with `"light_model"`
+  configured, turns that compaction would drop are summarized into one
+  checkpoint: constraints marked active/satisfied/superseded, unverified
+  outcomes labeled *reported, not verified*. Inserted as an assistant
+  message, folds instead of stacking, never breaks the turn on failure;
+  unconfigured means exactly the old behavior.
+- **`--isolated`** — the session runs in a git worktree forked from `HEAD`
+  on a `silk/<stamp>` branch; the checkout (including uncommitted changes,
+  which the fork does not see) stays untouched. Cleanup keeps commits and
+  uncommitted work, removes only clean unused forks, and refuses outside a
+  git repository rather than silently running unisolated.
+
+### Security
+- **No client replays a prompt or credential to a redirect destination.**
+  Redirects are off for every client carrying a key, token, or prompt
+  (provider, inference probe, docsearch, GitHub clients, sandbox backend);
+  every `httpx.Client` must state its choice, test-enforced. The git auth
+  proxy deliberately still follows (renamed repositories) and rests on
+  httpx stripping `Authorization` cross-origin — now pinned by a test.
+  Turning redirects off exposed a real bug: the GitHub client treated 3xx
+  as success and returned `{}`.
+
+## PR #38 — closing the gaps a comparison with Metis found · 2026-08-29
+
+### Added
+- **Structured project memory** — SQLite store (stdlib) with typed records
+  (preference / fact / procedure / failure); repeating a note refreshes it,
+  restating one supersedes it (the old record kept and marked, not
+  destroyed). `memory.md` survives as a generated human-readable mirror; a
+  hand-written one from an older install is imported once, dates intact.
+- **Plan → Build** — the plan is a file (`.silkcode/plan.md`, markdown
+  checkboxes), written by `propose_plan`, executed step-by-checked-off-step
+  via `update_plan`, shown by `read_plan` and `/plan`. The **`plan`
+  permission mode** is read-only and refuses (not prompts) writes and
+  non-read commands; "Yes to all" and git grants deliberately do not
+  override it; the one write allowed is `.silkcode/` state, because
+  proposing is the point.
+- **Swarm roles as files** — markdown definitions in `~/.silkcode/agents/`
+  or `<project>/.silkcode/agents/` override the built-in tester / critic /
+  worker / team prompts, may pin a role to a model, and new names add
+  read-only specialists. A repository file cannot introduce a new writer,
+  and every definition body passes the provenance scan before it may write
+  a system prompt.
+- **Harness adapter** — `silkcode -p` gained `--trace` (flushed JSONL event
+  log with a final token/wall-time record), `--final-answer`, and `--check`,
+  with an exit-code contract: 0 completed, 1 check failed, 2 provider/config
+  fault — so a benchmark never counts a provider outage as a failed task.
+
+### Fixed
+- Checkpoints snapshot **bytes** instead of text — reverting an edit to a
+  non-UTF-8 file (an image, a database) used to write back a mangled copy.
+- Five newly-added GUI tests repaired, two of which had never executed their
+  own setup (a JS-syntax-error `evaluate`, a property called as a method).
+
+## PR #37 — the agent can look at the page · 2026-08-23/25
+
+### Added
+- **`review_url`** unified (this branch's diagnostics + main's inline
+  screenshot): headless Chromium reports status, title, visible text,
+  console errors, uncaught exceptions, failed requests, and horizontal
+  overflow — the faults invisible in source. One missing file is one
+  problem; favicons are not problems; local pages need no permission while
+  outward URLs gate like `curl`; only http(s) opens (`javascript:`/`data:`/
+  `file:` refused, with the quoting bypass tested).
+
+### Fixed
+- The GUI details drawer showed two panels at once (CSS specificity), and
+  the phone layout scrolled sideways (`min-width: auto` on a grid item).
+- CI had been executing **zero tests**: a collection error (`import
+  install` under bare `pytest`) failed every job before any test ran, and
+  a publish test borrowed the machine's git identity. Both fixed; the GUI
+  suite went from 15 timeouts to green in a third of the time.
+
+## GUI as a product: Swarm teams, projects, sharing · 2026-08-23 (main)
+
+- Swarm can create, staff (elastic dev1..devN "mission control"), start,
+  and publish new projects to GitHub.
+- Friendly multi-project switcher: project cards with close/open, per-
+  project conversation lists, a project chooser when no path is given,
+  and recovery from transient fetch failures when switching or adding.
+- Secondary panels collapsed into a details drawer; rich Markdown rendering
+  in chat; Environment panel modernized; permission dialogs synced across
+  GUI clients; development-update sharing workflow (X/LinkedIn/changelog
+  drafts from the branch).
+- GitHub device-flow client ID shipped; repository picker fixes; fetch
+  progress; agent screenshots shown in conversations (`capture_screenshot`,
+  `show_image`, headless link review).
+- Cross-platform installer (`install.py`) that sets up Silk Code plus its
+  Chromium together; **Playwright became a runtime dependency**.
+
+## Reaching the machine from anywhere · 2026-08-23 (main)
+
+- **Phone-first**: run models on the laptop, drive the agent from a phone —
+  `silkcode inference host/link/ping/discover`, connection monitor, QR
+  pairing.
+- **Tailscale integration** — `tailnet.py` reads Tailscale's state and gives
+  situation-specific advice; setup page treats it as part of installing.
+  Silk Code never runs `tailscale up` itself: joining a network is the
+  user's call.
+- GUI access token persists across restarts; DNS-rebinding and CSRF guards;
+  a daemon reachable beyond loopback requires its token.
+- **Versioning that moves**: setuptools_scm derives the version from git
+  tags (`0.2.1.devN+g<sha>` between releases) so `pip install -U` has
+  something to compare; release workflow refuses a tag that does not move
+  the version and smoke-tests the wheel; `silkcode version` reports the
+  build identity, commit, and how to update.
+
+## The trust boundary · 2026-08-19/23 (PRs #24, #28)
+
+- **A file cannot authorize a push** (`provenance.py`): every tool result is
+  scanned for text written to steer an agent; a turn that consumed such
+  content is *tainted*, and outward actions (push, merge) then stop and ask
+  even under standing grants. Detection is deliberately narrow — five
+  patterns tuned against this repository's own 13 false positives — because
+  a warning that fires on a normal README teaches people to ignore it.
+- **Classify the command that will run**: permission decisions moved from
+  regex-over-text to shlex-parsed argv (`"git" push` and `gi""t push` are
+  `git push`), failing closed on unparseable input; repository instruction
+  files (`SILKCODE.md`, memory, skills) are read as untrusted and withheld
+  from the system prompt when they read as injection.
+- Push weighted by consequence; porcelain no longer printed in the diff
+  panel; sessions scoped to their project.
+
+## Quality machinery · 2026-08-14/16 (main + PRs #16, #25–27)
+
+- **Multi-agent improvement swarm** (tester / critic / worker) with 0–10
+  scoring, stall detection, token budgets, per-role token accounting, GUI
+  visualization, and permission prompts routed to the user ("Yes to all").
+- **Benchmarks mined from the repository's own history**: private tasks
+  rebuilt from merged changes, kept only if the tests fail before and pass
+  after the original implementation; test files protected at benchmark
+  time. Plus an A/B protocol isolating the harness's contribution.
+- Full test-and-security pass: 7 vulnerabilities and 9 bugs fixed, suite
+  grown 267 → 500 tests (#16); documented installs verified against
+  reality (#25); wheel smoke-tested before release.
+- Self-update (`silkcode update`): pull from git and hot-apply via daemon
+  re-exec, restoring the active session. `/reload` for config hot-reload.
+- Advisory per-workspace lock (one writer at a time), stale-base optimistic
+  concurrency on the file tools, provider retry with exponential backoff,
+  bounded filesystem walks, multiple GUI daemons per machine.
+
+## Foundation: V0.1 · 2026-08-12/13 (PRs #1–#13)
+
+- **SRS first, code second**: SRS.md, then the V0.1 implementation — the
+  agent loop (streaming, tool dispatch, permissions ask/edit/agent,
+  checkpoints/revert), CLI REPL, and the local web GUI, model-agnostic
+  across DeepSeek, Qwen, Kimi, GLM, MiniMax, OpenRouter, Ollama, vLLM,
+  LM Studio, plus Cloudflare Workers AI and AI Gateway.
+- Repository map, skills, project instructions, memory, symbol index, MCP
+  client, auto model router, context compaction, benchmark engine,
+  test-framework detection, one-shot mode.
+- GitHub integration: device-flow sign-in, PR/issue tools, push/pull/merge,
+  Agent Tasks; remote sandbox execution (self-hosted server + Cloudflare
+  Worker); remote workspaces that live entirely in the sandbox.
+- Landing page, MIT license, release wheels, co-author attribution on
+  agent-made commits.

@@ -51,7 +51,7 @@ from ..sessions import SessionStore
 # `--version` printing the one-line build id rather than the full report.
 REPL_FLAGS = frozenset({
     "-h", "--help", "-V", "--version", "-m", "--model", "--mode", "--allow",
-    "--sandbox", "--remote", "--auto-push", "-p", "--prompt",
+    "--sandbox", "--isolated", "--remote", "--auto-push", "-p", "--prompt",
 })
 
 
@@ -119,6 +119,9 @@ def _repl_parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument("--sandbox", action="store_true",
                         help="run commands in the configured remote sandbox "
                              "(silkcode sandbox connect <url>)")
+    parser.add_argument("--isolated", action="store_true",
+                        help="run in a throwaway git worktree forked from HEAD "
+                             "(silk/<stamp> branch); your checkout stays untouched")
     parser.add_argument("--remote", metavar="REPO",
                         help="work on a GitHub repo that lives entirely in the sandbox "
                              "(e.g. 'github:owner/repo'); the repo never touches this "
@@ -160,7 +163,7 @@ def cmd_repl(argv: list[str]) -> int:
                     grants=_parse_grants(args.allow), use_sandbox=args.sandbox,
                     auto_push=args.auto_push, remote=args.remote,
                     trace_path=args.trace, final_answer_path=args.final_answer,
-                    check_command=args.check)
+                    check_command=args.check, isolated=args.isolated)
 
 
 def cmd_new(argv: list[str]) -> int:
@@ -648,7 +651,7 @@ def cmd_connect(argv: list[str]) -> int:
             try:
                 flow = DeviceFlow(client_id)
                 info = flow.start()
-                print(f"\nSign in with GitHub:")
+                print("\nSign in with GitHub:")
                 print(f"  1. Open {info['verification_uri']}")
                 print(f"  2. Enter code: {info['user_code']}")
                 print("  3. Click Authorize\n")
@@ -877,8 +880,6 @@ def cmd_sync(argv: list[str]) -> int:
 
 
 def cmd_sandbox(argv: list[str]) -> int:
-    from ..execbackend import remote_backend_from_config
-    from ..workspace import ToolError
 
     if argv and argv[0] == "connect":
         parser = argparse.ArgumentParser(prog="silkcode sandbox connect")
@@ -1214,7 +1215,7 @@ def _inference_link(argv: list[str]) -> int:
 
 
 def _inference_unlink(argv: list[str]) -> int:
-    from ..inference import DEFAULT_LINK_NAME, linked_providers, unlink
+    from ..inference import linked_providers, unlink
 
     parser = argparse.ArgumentParser(prog="silkcode inference unlink")
     parser.add_argument("name", nargs="?", default=None,

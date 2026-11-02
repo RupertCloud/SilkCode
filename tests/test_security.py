@@ -11,14 +11,12 @@ import os
 import stat
 import subprocess
 import threading
-from http.server import ThreadingHTTPServer
-from pathlib import Path
 
 import httpx
 import pytest
 
 from silkcode.config import Config
-from silkcode.tools.files import edit_file, read_file, write_file
+from silkcode.tools.files import read_file, write_file
 from silkcode.workspace import ToolError, Workspace
 
 

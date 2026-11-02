@@ -13,11 +13,9 @@ import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import httpx
 import pytest
 
 from silkcode.github import (
-    REMOTE_PATTERN,
     GitHubClient,
     detect_repo,
     token_from_env,

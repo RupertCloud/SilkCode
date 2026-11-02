@@ -221,6 +221,12 @@ class GitAuthProxy:
     def __init__(self, target: ProxyTarget, host: str = "127.0.0.1",
                  timeout: httpx.Timeout | None = None):
         self.target = target
+        # The one client that keeps following redirects: git hosts genuinely
+        # redirect (renamed repositories, trailing slashes), and refusing
+        # would surface a bare 301 to the local git client, which cannot act
+        # on it - it only knows this proxy's address. The credential is safe
+        # to keep here because httpx drops the Authorization header on any
+        # cross-origin hop, a behavior test_redirects.py pins.
         self._client = httpx.Client(timeout=timeout or DEFAULT_TIMEOUT,
                                     follow_redirects=True)
 

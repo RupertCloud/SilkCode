@@ -14,7 +14,7 @@
     --bg: #14161a; --panel: #1b1e24; --panel-2: #20242c; --border: #2b303a;
     --text: #d7dae0; --dim: #8d95a3; --accent: #5cc8ff; --gold: #e6c07b;
     --ok: #7ad48a; --err: #e06c75;
-    --thread: linear-gradient(180deg, var(--gold), var(--accent));
+    --thread: var(--gold);
     --code-bg: #101216;
     --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -48,10 +48,9 @@
   h1, h2, h3, h4 { font-family: var(--mono); text-wrap: balance; }
   h2 { font-size: 26px; margin-bottom: 6px; letter-spacing: -.01em; }
   h3 { font-size: 17px; margin-bottom: 6px; }
-  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .22em;
-             text-transform: uppercase; color: var(--gold); display: flex;
+  .eyebrow { font-family: var(--mono); font-size: 13px; color: var(--gold); display: flex;
              align-items: center; gap: 10px; }
-  .eyebrow::before { content: ""; width: 26px; height: 2px; background: var(--thread); display: inline-block; }
+  .eyebrow::before { content: ""; width: 24px; height: 2px; background: var(--thread); display: inline-block; }
   section { padding: 52px 0 8px; scroll-margin-top: 70px; }
   section > p.lede { color: var(--dim); max-width: 64ch; margin: 6px 0 20px; }
   p { max-width: 72ch; }
@@ -62,8 +61,7 @@
             border-bottom: 1px solid var(--border); }
   .topbar .wrap { display: flex; align-items: center; gap: 18px; padding-top: 12px;
                   padding-bottom: 12px; flex-wrap: wrap; }
-  .topbar .home { font-family: var(--mono); font-weight: 700; color: var(--text); }
-  .topbar .home .silk { color: var(--accent); }
+  .topbar .home { font-family: var(--mono); font-weight: 600; color: var(--text); }
   .topbar nav { display: flex; gap: 16px; font-size: 14px; flex-wrap: wrap; }
 
   header.page { padding: 56px 0 12px; }
@@ -76,15 +74,15 @@
              border-radius: 10px; padding: 14px 18px; font: 13.5px/1.7 var(--mono);
              overflow-x: auto; margin-top: 12px; }
   pre.code .cm { color: #8d95a3; }
-  pre.code .p { color: #5cc8ff; font-weight: 700; }
+  pre.code .p { color: #5cc8ff; font-weight: 600; }
   pre.code .g { color: #7ad48a; }
   code { font-family: var(--mono); font-size: .92em; background: var(--panel-2);
          padding: 1.5px 6px; border-radius: 5px; }
   pre.code code { background: none; padding: 0; }
 
   table.cmds { border-collapse: collapse; width: 100%; font-size: 14.5px; margin-top: 16px; }
-  .cmds th { text-align: left; font-family: var(--mono); font-size: 12px; letter-spacing: .1em;
-             text-transform: uppercase; color: var(--gold); padding: 0 12px 6px 0;
+  .cmds th { text-align: left; font-family: var(--mono); font-size: 12px;
+             color: var(--dim); font-weight: 500; padding: 0 12px 6px 0;
              border-bottom: 1px solid var(--border); }
   .cmds td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
   .cmds td:first-child { font-family: var(--mono); white-space: nowrap; color: var(--accent); }
@@ -106,7 +104,7 @@
           gap: 14px; margin-top: 22px; }
   .cell { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
           padding: 18px 18px 16px; }
-  .cell h3 { font-size: 15px; color: var(--accent); margin-bottom: 8px; }
+  .cell h3 { font-size: 15px; color: var(--text); margin-bottom: 8px; }
   .cell p { font-size: 14px; color: var(--dim); }
 
   .note { border-left: 2px solid var(--accent); background: var(--panel);
@@ -124,8 +122,8 @@
   footer .spacer { flex: 1; }
 
   @media (prefers-reduced-motion: no-preference) {
-    .cell { transition: border-color .15s ease, transform .15s ease; }
-    .cell:hover { border-color: var(--accent); transform: translateY(-2px); }
+    .cell { transition: border-color .15s ease; }
+    .cell:hover { border-color: var(--dim); }
   }
 </style>
 <style>
@@ -143,7 +141,7 @@
      this the heading it lands on sits underneath the bar */
   .os { border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px 20px;
         margin-top: 18px; background: var(--panel); scroll-margin-top: 70px; }
-  .os h3 { color: var(--accent); font-size: 16px; margin-bottom: 10px; }
+  .os h3 { color: var(--text); font-size: 16px; margin-bottom: 10px; }
   .os p { font-size: 15px; color: var(--dim); }
   .os .note { margin-top: 14px; }
   /* Eight links wrapped onto three rows, and the bar is sticky - a fifth of a
@@ -173,7 +171,7 @@
 
 <div class="topbar">
   <div class="wrap">
-    <a class="home" href="./"><span class="silk">Silk</span> Code</a>
+    <a class="home" href="./">Silk Code</a>
     <nav aria-label="On this page">
       <a href="#install">Install</a>
       <a href="#os-windows">Windows</a>
@@ -390,7 +388,7 @@ Tailscale tailnet (https://tailscale.com) and use the 100.x address it gives you
       <div>
         <h3>Pair the next device without restarting</h3>
         <p>That banner prints once, at startup. Terminals scroll, and a second device turns up
-        later. The <b>📱 Pair</b> button in the GUI header asks for the same facts on demand and
+        later. The <b>Pair a phone</b> button (the phone icon) in the GUI header asks for the same facts on demand and
         draws the same QR — so getting a tablet on does not cost you the sessions running in the
         daemon you would otherwise have to restart.</p>
         <p>On a daemon still bound to loopback, that button tells you so and names the flag that

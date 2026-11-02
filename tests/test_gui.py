@@ -1003,7 +1003,7 @@ def test_gui_takeover_of_dead_owners_lock(gui, tmp_path):
 
 def test_gui_takeover_refused_while_live_owner_holds_lock(gui):
     base, state, ws = gui
-    sid = state.default_session_id  # this live test process owns the workspace
+    # the default session of this live test process owns the workspace lock
     session = state.new_session(project=str(ws))  # second session -> conflict
     assert session.lock_conflict is not None
     resp = httpx.post(f"{base}/api/lock/takeover", json={"session_id": session.id})
@@ -1507,3 +1507,104 @@ def test_a_corrupt_token_file_is_ignored_rather_than_trusted(tmp_path, monkeypat
     path.write_text("   \n")
     assert remembered_token("0.0.0.0", 8377) is None, \
         "an empty file became an empty token, which would disable the check"
+
+
+def test_gui_close_session_while_a_turn_runs_keeps_lock_until_it_ends(gui):
+    """Closing a session mid-turn must not release the workspace lock or drop
+    the session after 8 seconds: the turn can run for ten minutes and keeps
+    writing to the project. The close is finished by the turn itself."""
+    base, state, ws = gui
+    sid = state.default_session_id
+    session = state.get_session(sid)
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_turn(_text):
+        started.set()
+        release.wait(10)
+
+    session.agent.run_turn = slow_turn
+    try:
+        assert httpx.post(f"{base}/api/message", json={"text": "slow"}).status_code == 200
+        assert started.wait(5)
+        assert owner_of(ws) == f"session-{sid}"
+
+        resp = httpx.post(f"{base}/api/session/close", json={"session_id": sid})
+        assert resp.status_code == 200
+        assert resp.json()["closing"] is True
+
+        # the turn is still alive and still owns the project: nothing released
+        assert sid in state.sessions
+        assert state.get_session(sid).running is True
+        assert owner_of(ws) == f"session-{sid}"
+        assert session.agent.stop_requested is True
+    finally:
+        release.set()
+
+    assert wait_until(lambda: sid not in state.sessions), "the session never closed"
+    # now the turn is over the session is gone and its lock is not held any more
+    assert owner_of(ws) != f"session-{sid}"
+    assert state.default_session_id != sid
+    assert state.default_session_id in state.sessions
+
+
+def test_gui_bad_session_id_answers_400_instead_of_dropping_the_connection(gui):
+    """A non-numeric session id raised ValueError out of the handler, which
+    socketserver turned into a closed connection with no answer."""
+    base, _state, _ws = gui
+    resp = httpx.post(f"{base}/api/session", json={"id": "not-a-number"})
+    assert resp.status_code == 400
+    assert "error" in resp.json()
+    # the handler is still healthy: the request that used to kill it did not
+    assert httpx.get(f"{base}/api/state").status_code == 200
+
+
+def test_gui_json_body_must_be_an_object(gui):
+    base, _state, _ws = gui
+    resp = httpx.post(f"{base}/api/message", json=["not", "an", "object"])
+    assert resp.status_code == 400
+    assert "error" in resp.json()
+
+
+def test_gui_handler_bug_is_reported_as_500_json(gui, monkeypatch):
+    """An unexpected handler error answers 500 JSON instead of taking the
+    connection (and the traceback) down with it."""
+    base, state, _ws = gui
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("handler exploded")
+
+    monkeypatch.setattr(state, "sessions_summary", boom)
+    resp = httpx.get(f"{base}/api/sessions")
+    assert resp.status_code == 500
+    assert resp.json()["error"] == "internal error"
+
+
+def test_gui_close_project_refuses_while_a_turn_runs(gui, tmp_path):
+    """A project close is synchronous; a turn still running in one of its
+    sessions must not be dropped (a deferred close would recreate a session in
+    the project the user just hid)."""
+    base, state, _ws = gui
+    current = state.default_session_id
+    busy_project = tmp_path / "busy-project"
+    busy_project.mkdir()
+    busy = state.new_session(project=str(busy_project))
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_turn(_text):
+        started.set()
+        release.wait(10)
+
+    busy.agent.run_turn = slow_turn
+    try:
+        assert state.start_turn("slow", busy.id) is True
+        assert started.wait(5)
+        resp = httpx.post(f"{base}/api/project/close",
+                          json={"session_id": current, "project": str(busy_project)})
+        assert resp.status_code == 400
+        assert "turn is running" in resp.json()["error"]
+        assert busy.id in state.sessions
+    finally:
+        release.set()
+    assert wait_until(lambda: not state.get_session(busy.id).running)
