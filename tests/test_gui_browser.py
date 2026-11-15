@@ -1099,3 +1099,41 @@ def test_sidebar_lists_conversations_with_rename_and_delete(browser, gui_url, mo
     page.wait_for_function(
         "() => ![...document.querySelectorAll('#session-list .session-title')]"
         ".some(t => t.textContent === 'Renamed chat')")
+
+
+def test_tool_calls_fold_into_a_steps_block(browser, gui_url):
+    """A turn's tool calls sit in one collapsible steps block, closed once the
+    turn is done, so the reply is what the conversation shows first."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    wait_for_switcher(page)
+    send_and_wait(page, "first request", "Reply in session one.")
+    page.wait_for_function("() => !document.body.classList.contains('running')")
+
+    steps = page.locator("#messages details.steps")
+    assert steps.count() == 1
+    assert steps.locator(".msg.tool").count() == 1
+    assert "1 step: write_file" in steps.locator("summary").text_content()
+    assert steps.evaluate("el => el.open") is False
+    steps.locator("summary").click()
+    assert steps.locator(".msg.tool").first.is_visible()
+
+
+def test_code_is_highlighted_without_changing_its_text(browser, gui_url):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    page.wait_for_selector("#tree div", state="attached", timeout=15000)
+    code = 'def f(x):\n    return "<b>" + str(42)  # note'
+    page.evaluate("""(code) => {
+        const raw = '```python\\n' + code + '\\n```';
+        const el = addMsg('assistant', raw);
+        el.__raw = raw;
+        formatAllMessages();
+    }""", code)
+    block = page.locator("#messages .code-bubble pre code").last
+    assert block.text_content() == code
+    assert block.locator(".hl-kw", has_text="def").count() == 1
+    assert block.locator(".hl-str").first.text_content() == '"<b>"'
+    assert block.locator(".hl-num").first.text_content() == "42"
+    assert block.locator(".hl-com").first.text_content() == "# note"
+    assert block.locator("b").count() == 0  # the string stayed text
