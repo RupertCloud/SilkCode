@@ -15,6 +15,12 @@ where one existed. The project began 2026-08-12 with the SRS and V0.1.
   sidebar opens with a **New chat** button. The layout follows the patterns of
   [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) (MIT); no code
   was copied from it.
+- **Conversations are listed in the sidebar, and you can rename or delete them.**
+  The current project's conversations are grouped as Today, Yesterday, Previous 7
+  days, Previous 30 days, then by month. Each row has Rename and Delete. Delete asks
+  first, closes the conversation if it is open, and is refused while its agent or
+  swarm is running. It removes the saved conversation only: project files and git
+  history stay. New endpoints: `POST /api/session/rename` and `POST /api/session/delete`.
 
 ### Fixed
 - **Git commands can no longer hide from the approval gate.** `git -C repo push`,

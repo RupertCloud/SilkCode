@@ -521,7 +521,8 @@ the system's light or dark appearance automatically. It is one self-contained
 page with no external assets, so it still works offline.
 
 **Multiple sessions:** open as many conversations as you like (the plus button) and
-switch between them with the session picker — each has its own agent, model choice,
+switch between them with the session picker or the Conversations list in the sidebar
+(where each one can also be renamed or deleted) — each has its own agent, model choice,
 workspace (project), transcript, and checkpoints, and turns can run concurrently
 (the picker marks a busy session "running"; permission prompts from any session reach you wherever you
 are). **Project** is a control in the header (Model and Mode sit in the composer, beside

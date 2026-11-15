@@ -138,6 +138,22 @@
   #projects-help-btn { margin: 8px 0; height: 32px; padding: 0 8px; font-size: 12px; color: var(--dim);
                        background: transparent; border-color: transparent; }
   #projects-help-btn:hover { background: var(--fill); color: var(--text); }
+  /* Conversations of the current project, grouped by when they were last used. */
+  #project-cards + .drawer-head { margin-top: 16px; }
+  .session-group { font-size: 12px; color: var(--muted); padding: 12px 8px 4px; }
+  .session-row { display: flex; align-items: center; gap: 4px; min-height: 36px; padding: 0 4px 0 8px; border-radius: 8px;
+                 cursor: pointer; transition: background-color .12s var(--ease); }
+  .session-row:hover { background: var(--fill); }
+  .session-row.current { background: var(--fill-hi); }
+  .session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .session-row.running .session-title::after { content: " ·"; color: var(--thread); font-weight: 700; }
+  .session-row button { width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--muted);
+                        visibility: hidden; flex: none; }
+  .session-row:hover button, .session-row:focus-within button { visibility: visible; }
+  .session-row button .i { width: 14px; height: 14px; }
+  .session-row button:hover { background: var(--fill-hi); color: var(--text); }
+  .session-row button.session-delete:hover { background: var(--err-bg); color: var(--err); }
+  .session-row input { height: 28px; padding: 0 8px; }
   #tree .entry { padding: 2px 12px; cursor: pointer; white-space: nowrap; font: 12px/20px var(--mono); border-radius: 4px; }
   #tree .entry.dir { color: var(--dim); }
   #tree .entry:hover { background: var(--fill); }
@@ -380,6 +396,8 @@
     #messages { padding: 12px; }
     .msg-wrap, .code-bubble { max-width: 100%; }
     .msg-copy { display: inline-flex; width: 32px; height: 32px; }
+    .session-row { min-height: 44px; }
+    .session-row button { visibility: visible; width: 36px; height: 36px; }
     .chat-image { width: 100%; max-height: 55dvh; }
     #conversation-bar { padding: 8px 12px; }
     #conversation-bar :is(.usage, .grow) { display: none; }
@@ -421,6 +439,8 @@
   <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></symbol>
   <symbol id="i-square" viewBox="0 0 24 24"><rect width="12" height="12" x="6" y="6" rx="2"/></symbol>
   <symbol id="i-message-plus" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M8 12h8"/><path d="M12 8v8"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></symbol>
   <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
 </svg>
 <header class="glass">
@@ -460,6 +480,8 @@
     <button id="sidebar-new-chat" title="Start a new conversation in this project"><svg class="i" aria-hidden="true"><use href="#i-message-plus"/></svg>New chat</button>
     <div class="drawer-head"><strong>Projects</strong><button id="project-add" title="Open or create a project"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>Add</button></div>
     <div id="project-cards" aria-label="Known projects"></div>
+    <div class="drawer-head"><strong>Conversations</strong></div>
+    <div id="session-list" aria-label="Conversations in this project"></div>
     <button id="projects-help-btn" title="How projects work: create, open, switch, ship"><svg class="i" aria-hidden="true"><use href="#i-help"/></svg>How projects work</button>
   </section>
   <section id="chat">
@@ -1195,6 +1217,7 @@ function handleEvent(ev) {
     case "error": streamEl = null; addMsg("error", ev.message); break;
     case "key_needed": streamEl = null; showKeyPrompt(ev); break;
     case "notice": addMsg("notice", ev.text); refreshSessionList(); break;
+    case "sessions": refreshSessionList(); break;
     case "turn_done":
       streamEl = null; setRunning(false); renderUsage(ev.usage); loadDiff(); loadTree();
       refreshSessionList(); formatAllMessages();
@@ -1337,6 +1360,71 @@ function renderSessions(sessions, currentId) {
   if (!sessions.some(s => s.id === currentId)) opts.unshift(h("option", {value: currentId, textContent: `#${currentId} (current)`}));
   $("session-select").replaceChildren(...opts);
   $("session-select").value = currentId;
+  renderSessionList(sessions, currentId);
+}
+
+// Today / Yesterday / Previous 7 days / Previous 30 days / then by month.
+function sessionGroup(updated) {
+  if (!updated) return "Older";
+  const day = 86400000, start = new Date().setHours(0, 0, 0, 0), t = updated * 1000;
+  if (t >= start) return "Today";
+  if (t >= start - day) return "Yesterday";
+  if (t >= start - 7 * day) return "Previous 7 days";
+  if (t >= start - 30 * day) return "Previous 30 days";
+  return new Date(t).toLocaleDateString(undefined, {year: "numeric", month: "long"});
+}
+function renderSessionList(sessions, currentId) {
+  const rows = [];
+  let group = null;
+  for (const s of [...sessions].sort((a, b) => (b.updated || 0) - (a.updated || 0))) {
+    const label = sessionGroup(s.updated);
+    if (label !== group) { group = label; rows.push(h("div", {class: "session-group", textContent: label})); }
+    const title = s.title || "New conversation";
+    const row = h("div", {class: "session-row" + (s.id === currentId ? " current" : "") + (s.running ? " running" : ""),
+      tabIndex: 0, role: "button", title: `${title} (#${s.id})`, "aria-current": s.id === currentId ? "true" : "false",
+      "data-id": s.id,
+      onclick: () => openSession(s.id),
+      onkeydown: (event) => { if (event.target === row && (event.key === "Enter" || event.key === " ")) openSession(s.id); }},
+      h("span", {class: "session-title", textContent: title}),
+      h("button", {class: "session-rename", innerHTML: icon("pencil"), title: "Rename", "aria-label": `Rename ${title}`,
+        onclick: (event) => { event.stopPropagation(); startRename(row, s); }}),
+      h("button", {class: "session-delete", innerHTML: icon("trash"), title: "Delete", "aria-label": `Delete ${title}`,
+        disabled: !!s.running, onclick: (event) => { event.stopPropagation(); deleteSession(s, title); }}));
+    rows.push(row);
+  }
+  $("session-list").replaceChildren(...rows);
+}
+function openSession(id) {
+  document.querySelector("#mobile-tabs [data-pane=chat]").click();
+  if (id === currentSessionId) return;
+  api("/api/session", {id}).then(showSession).catch(err => { fail(err); init(); });
+}
+function startRename(row, s) {
+  const input = h("input", {value: s.title || "", "aria-label": "Conversation title", maxLength: 80});
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    const title = input.value.trim();
+    if (save && title && title !== s.title) api("/api/session/rename", {id: s.id, title}).then(refreshSessionList).catch(fail);
+    else refreshSessionList();
+  };
+  input.onclick = (event) => event.stopPropagation();
+  input.onkeydown = (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter" && !event.isComposing) finish(true);
+    else if (event.key === "Escape") finish(false);
+  };
+  input.onblur = () => finish(true);
+  row.replaceChildren(input);
+  input.focus(); input.select();
+}
+async function deleteSession(s, title) {
+  if (!confirm(`Delete "${title}"? The conversation is removed for good. Project files and git history are not touched.`)) return;
+  try {
+    const result = await api("/api/session/delete", {id: s.id, session_id: currentSessionId});
+    if (result.session_id !== currentSessionId) showSession(result); else refreshSessionList();
+  } catch (err) { fail(err); }
 }
 async function refreshSessionList() {
   try { renderSessions((await api("/api/state?session=" + currentSessionId)).sessions, currentSessionId); } catch (e) {}

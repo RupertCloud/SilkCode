@@ -201,6 +201,24 @@ class SessionStore:
             })
         return sorted(sessions, key=lambda s: s["updated"], reverse=True)
 
+    def rename(self, session_id: int, title: str) -> None:
+        data = self.load(session_id)
+        data["title"] = title
+        self.save(data)
+
+    def delete(self, session_id: int) -> None:
+        """Remove a saved conversation. Its files and git history are untouched."""
+        lock_fd = self._lock_session(session_id)
+        try:
+            self._path(session_id).unlink(missing_ok=True)
+        finally:
+            if lock_fd is not None:
+                try:
+                    _unlock(lock_fd)
+                finally:
+                    os.close(lock_fd)
+        (self.dir / f"{session_id}.lock").unlink(missing_ok=True)
+
     # ---- active-session marker (per daemon instance) ------------------------
 
     def _active_path(self, instance: str) -> Path:

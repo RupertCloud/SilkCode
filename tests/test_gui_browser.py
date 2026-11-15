@@ -1072,3 +1072,30 @@ def test_sidebar_new_chat_starts_a_conversation(browser, gui_url):
     page.wait_for_function(
         "sel => document.querySelector('#session-select').value !== sel", arg=first)
     assert page.locator("#chat").is_visible(), "a new chat should bring the chat pane back"
+
+
+def test_sidebar_lists_conversations_with_rename_and_delete(browser, gui_url, monkeypatch):
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    wait_for_switcher(page)
+    send_and_wait(page, "first request", "Reply in session one.")
+
+    row = page.locator("#session-list .session-row.current")
+    page.wait_for_function("() => document.querySelector('#session-list .session-row.current')")
+    assert page.locator("#session-list .session-group").first.text_content() == "Today"
+    assert row.locator(".session-title").text_content() == "first request"
+
+    row.hover()
+    row.locator(".session-rename").click()
+    page.fill("#session-list input", "Renamed chat")
+    page.keyboard.press("Enter")
+    page.wait_for_function(
+        "() => document.querySelector('#session-list .session-row.current .session-title')"
+        "?.textContent === 'Renamed chat'")
+
+    page.on("dialog", lambda d: d.accept())
+    page.locator("#session-list .session-row.current").hover()
+    page.locator("#session-list .session-row.current .session-delete").click()
+    page.wait_for_function(
+        "() => ![...document.querySelectorAll('#session-list .session-title')]"
+        ".some(t => t.textContent === 'Renamed chat')")

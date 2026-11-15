@@ -1608,3 +1608,37 @@ def test_gui_close_project_refuses_while_a_turn_runs(gui, tmp_path):
     finally:
         release.set()
     assert wait_until(lambda: not state.get_session(busy.id).running)
+
+
+def test_gui_rename_and_delete_conversations(gui):
+    """Conversations can be renamed and deleted from the sidebar, open or saved.
+    A running one cannot be deleted, and deleting never touches project files."""
+    base, state, ws = gui
+    httpx.post(f"{base}/api/message", json={"text": "create hello.txt"})
+    assert wait_until(lambda: not state.running and (ws / "hello.txt").exists())
+    first = state.default_session_id
+
+    resp = httpx.post(f"{base}/api/session/rename", json={"id": first, "title": "  Hello   file  "})
+    assert resp.status_code == 200 and resp.json()["title"] == "Hello file"
+    assert state.store.load(first)["title"] == "Hello file"
+    rows = httpx.get(f"{base}/api/sessions").json()
+    row = next(s for s in rows if s["id"] == first)
+    assert row["title"] == "Hello file" and row["updated"] > 0
+    assert httpx.post(f"{base}/api/session/rename", json={"id": first, "title": "  "}).status_code == 400
+
+    # a running conversation is refused
+    state.sessions[first].running = True
+    try:
+        busy = httpx.post(f"{base}/api/session/delete", json={"id": first})
+        assert busy.status_code == 400 and "stop it first" in busy.json()["error"]
+    finally:
+        state.sessions[first].running = False
+
+    # deleting the open one closes it, removes its file and moves to another session
+    resp = httpx.post(f"{base}/api/session/delete", json={"id": first, "session_id": first})
+    assert resp.status_code == 200
+    assert first not in state.sessions
+    assert resp.json()["session_id"] == state.default_session_id != first
+    assert not any(s["id"] == first for s in httpx.get(f"{base}/api/sessions?all=1").json())
+    assert (ws / "hello.txt").exists()
+    assert httpx.post(f"{base}/api/session/delete", json={"id": first}).status_code == 400
