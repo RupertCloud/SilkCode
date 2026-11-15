@@ -15,6 +15,10 @@ where one existed. The project began 2026-08-12 with the SRS and V0.1.
   sidebar opens with a **New chat** button. The layout follows the patterns of
   [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) (MIT); no code
   was copied from it.
+- **Settings is one dialog with tabs.** Models and keys (the old Environment page),
+  Add model, GitHub and Phone pairing are tabs of one dialog, opened from a single
+  **Settings** button in the header. The header loses three buttons and the phone's
+  More sheet gets shorter. Escape closes the dialog from any tab.
 - **Replies read like a chat app.** The agent's replies sit as text on the page,
   not in bubbles, while your own messages keep one. A turn's tool calls fold into one
   "N steps" block that stays open while the agent works and closes when the turn
