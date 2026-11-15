@@ -6,6 +6,16 @@ where one existed. The project began 2026-08-12 with the SRS and V0.1.
 
 ## Unreleased — the review that closed its own holes · 2026-11-02
 
+### Changed
+- **The GUI composer is one chat card.** The text box, the Model and Mode pickers
+  and a round send button now sit together in a centred card, with Stop in the send
+  button's place while the agent works. Model and Mode left the header, so on a phone
+  they are in reach without opening the More sheet. An empty conversation shows a
+  centred "What should we build?" prompt, the transcript is a centred column, and the
+  sidebar opens with a **New chat** button. The layout follows the patterns of
+  [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) (MIT); no code
+  was copied from it.
+
 ### Fixed
 - **Git commands can no longer hide from the approval gate.** `git -C repo push`,
   `git -c k=v push`, `git -C repo reset --hard` and `git -C repo clean -fdx` were

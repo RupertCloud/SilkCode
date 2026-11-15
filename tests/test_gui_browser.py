@@ -1040,3 +1040,35 @@ def test_the_graph_panel_explains_when_graphify_is_missing(browser, gui_url):
     page.wait_for_function(
         "() => document.getElementById('graph-body').textContent.includes('graphifyy')")
     assert "pip install graphifyy" in page.text_content("#graph-details")
+
+
+def test_composer_is_one_card_with_model_and_mode_chips(browser, gui_url):
+    """Model and mode sit in the composer, beside the send button, so on a
+    phone they are in reach without opening the More sheet. An empty
+    conversation shows a centred prompt instead of a blank pane."""
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    page.goto(gui_url)
+    wait_for_switcher(page)
+
+    for sel in ("#model-select", "#mode-select", "#send"):
+        assert page.locator(f"#composer .composer-card {sel}").is_visible(), sel
+    assert page.locator("#model-select").get_attribute("aria-label") == "Model"
+    assert page.locator("#mode-select").get_attribute("aria-label") == "Mode"
+    assert page.locator("header #model-select").count() == 0
+    assert page.locator("#empty-state").is_visible()
+
+    send_and_wait(page, "first request", "Reply in session one.")
+    assert not page.locator("#empty-state").is_visible()
+
+
+def test_sidebar_new_chat_starts_a_conversation(browser, gui_url):
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    page.goto(gui_url)
+    wait_for_switcher(page)
+    first = page.input_value("#session-select")
+
+    page.click("#mobile-tabs button[data-pane='files']")
+    page.click("#sidebar-new-chat")
+    page.wait_for_function(
+        "sel => document.querySelector('#session-select').value !== sel", arg=first)
+    assert page.locator("#chat").is_visible(), "a new chat should bring the chat pane back"

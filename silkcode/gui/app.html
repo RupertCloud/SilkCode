@@ -80,7 +80,6 @@
   header button, header select { height: 32px; }
   header button { padding: 0 12px; }
   header button.icon-btn { padding: 0; }
-  #model-select { max-width: 220px; }
   header .hgroup { display: inline-flex; align-items: center; gap: 4px; }
   header .hgroup + .hgroup { margin-left: 8px; }
   /* Push is the only header control that leaves this machine. */
@@ -111,6 +110,8 @@
                                 padding: 12px 12px 4px; display: flex; align-items: center; gap: 8px; }
 
   #files { grid-column: 1; grid-row: 1 / 3; border-right: 1px solid var(--line); padding: 8px; }
+  #sidebar-new-chat { width: 100%; height: 36px; margin-bottom: 12px; border-radius: 999px; background: var(--glass-hi);
+                      box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
   .drawer-head { display: flex; align-items: center; padding: 4px 4px 8px 8px; }
   .drawer-head strong { font-size: 12px; font-weight: 500; color: var(--dim); }
   #project-add { margin-left: auto; height: 28px; padding: 0 8px; border-color: transparent; background: transparent; color: var(--dim); font-size: 12px; gap: 4px; }
@@ -149,7 +150,14 @@
   #conversation-bar > button { width: 32px; height: 32px; padding: 0; }
   #conversation-bar .grow { flex: 1; }
   #details-toggle { width: auto !important; padding: 0 12px !important; margin-left: 8px; }
-  #messages { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
+  /* The transcript is a centred column, as wide as the composer. */
+  #messages { flex: 1; min-height: 0; overflow: auto; padding: 16px max(20px, calc((100% - 784px) / 2));
+              display: flex; flex-direction: column; gap: 8px; }
+  #empty-state { display: none; text-align: center; padding: 0 24px; }
+  #empty-state h1 { font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+  #empty-state p { color: var(--dim); }
+  #chat:has(#messages:empty) #messages { flex: 0; padding: 0; }
+  #chat:has(#messages:empty) #empty-state { display: flex; flex: 1; flex-direction: column; justify-content: center; }
   .msg-wrap { display: flex; align-items: center; gap: 8px; max-width: 86%; flex-shrink: 0; align-self: flex-start; }
   .msg-wrap.user { align-self: flex-end; flex-direction: row-reverse; }
   .msg { max-width: 100%; min-width: 0; padding: 8px 12px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; }
@@ -195,11 +203,26 @@
   .cb-ico:hover { background: var(--fill-hi); color: var(--text); }
   .code-bubble pre { padding: 12px; overflow-x: auto; font: 12px/1.6 var(--mono); white-space: pre; }
 
-  #composer { grid-column: 2; grid-row: 2; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px;
-              padding: 12px 16px; border-top: 1px solid var(--line); }
-  #composer textarea { flex: 1; width: auto; resize: none; height: 56px; border-radius: 12px; padding: 8px 12px; background: var(--glass-hi); }
-  #composer button { height: 40px; border-radius: 10px; padding: 0 20px; }
-  #composer-hint { flex: 1 0 100%; order: 3; font-size: 12px; color: var(--muted); padding-left: 12px; }
+  /* The composer is one card, as in a chat app: the text on top, then a row
+     with the model and mode chips and a round send button. */
+  #composer { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; gap: 4px;
+              width: 100%; max-width: 816px; justify-self: center; padding: 8px 16px 12px; }
+  .composer-card { display: flex; flex-direction: column; gap: 4px; padding: 8px; border-radius: 20px;
+                   background: var(--glass-hi); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+                   border: 1px solid var(--line); box-shadow: var(--shadow); }
+  .composer-card:focus-within { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+  #composer textarea { resize: none; height: 56px; border: 0; background: transparent; padding: 4px 8px; }
+  #composer textarea:focus-visible { outline: none; }
+  .composer-tools { display: flex; align-items: center; gap: 8px; }
+  .composer-tools .grow { flex: 1; }
+  select.chip { height: 32px; border-radius: 999px; padding: 0 12px; font-size: 12px; color: var(--dim); min-width: 0; }
+  select.chip:hover { color: var(--text); background: var(--fill-hi); }
+  #model-select { max-width: 260px; }
+  #composer button.round { width: 36px; height: 36px; padding: 0; border-radius: 50%; flex: none; }
+  #composer button.round .i { width: 18px; height: 18px; stroke-width: 2; }
+  #composer #stop .i { fill: currentColor; }
+  body.running #send { display: none; }  /* Stop takes its place */
+  #composer-hint { font-size: 12px; color: var(--muted); padding-left: 16px; }
   #composer-hint kbd { font: 11px var(--mono); padding: 0 4px; border: 1px solid var(--line); border-bottom-width: 2px;
                        border-radius: 4px; background: var(--fill); color: var(--dim); }
 
@@ -335,7 +358,7 @@
     header.mobile-open .mobile-actions { display: grid; animation: rise .2s var(--ease); }
     .mobile-actions .spacer { display: none; }
     .mobile-actions label { flex-direction: column; align-items: stretch; gap: 4px; min-width: 0; }
-    .mobile-actions :is(select, button), #model-select { width: 100%; max-width: none; }
+    .mobile-actions :is(select, button) { width: 100%; max-width: none; }
     .mobile-actions .hgroup { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .mobile-actions .icon-btn { width: 100%; padding: 0 12px; justify-content: flex-start; }
     .mobile-actions .icon-btn .lbl { position: static; width: auto; height: auto; clip-path: none; }
@@ -348,9 +371,11 @@
     #files, #chat { grid-column: 1; grid-row: 1; border-right: 0; display: none; }
     #composer { grid-column: 1; grid-row: 2; padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); }
     main[data-pane="chat"] #chat, main[data-pane="files"] #files { display: flex; flex-direction: column; }
-    #composer textarea { height: 44px; font-size: 16px; padding: 9px 12px; }  /* 16px: iOS zooms below it */
-    #composer button { height: 44px; }
-    body.running #send { display: none; }  /* Stop takes its place, so the input keeps its width */
+    #composer { max-width: none; }
+    #composer textarea { height: 44px; font-size: 16px; padding: 6px 8px; }  /* 16px: iOS zooms below it */
+    #composer button.round { width: 40px; height: 40px; }
+    select.chip { height: 36px; }
+    #model-select { flex: 0 1 auto; max-width: 52vw; }
     #composer-hint { display: none; }
     #messages { padding: 12px; }
     .msg-wrap, .code-bubble { max-width: 100%; }
@@ -393,6 +418,9 @@
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3v18l14-9z"/></symbol>
   <symbol id="i-panel" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/></symbol>
   <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></symbol>
+  <symbol id="i-square" viewBox="0 0 24 24"><rect width="12" height="12" x="6" y="6" rx="2"/></symbol>
+  <symbol id="i-message-plus" viewBox="0 0 24 24"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/><path d="M8 12h8"/><path d="M12 8v8"/></symbol>
   <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></symbol>
 </svg>
 <header class="glass">
@@ -402,10 +430,6 @@
   <button id="mobile-menu" aria-label="More controls" aria-expanded="false"><svg class="i" aria-hidden="true"><use href="#i-more"/></svg></button>
   <span class="mobile-actions">
     <span class="spacer"></span>
-    <label>Model <select id="model-select"></select></label>
-    <label>Mode <select id="mode-select">
-      <option value="plan">plan</option><option value="ask">ask</option><option value="edit">edit</option><option value="agent">agent</option>
-    </select></label>
     <span class="hgroup" role="group" aria-label="Repository actions">
       <button id="revert" title="Undo the last turn's file changes"><svg class="i" aria-hidden="true"><use href="#i-undo"/></svg>Revert</button>
       <button id="push-btn" class="outward" title="Push the current branch to the remote. This leaves your machine"><svg class="i" aria-hidden="true"><use href="#i-push"/></svg>Push</button>
@@ -433,6 +457,7 @@
 </nav>
 <main data-pane="chat">
   <section class="pane glass" id="files">
+    <button id="sidebar-new-chat" title="Start a new conversation in this project"><svg class="i" aria-hidden="true"><use href="#i-message-plus"/></svg>New chat</button>
     <div class="drawer-head"><strong>Projects</strong><button id="project-add" title="Open or create a project"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>Add</button></div>
     <div id="project-cards" aria-label="Known projects"></div>
     <button id="projects-help-btn" title="How projects work: create, open, switch, ship"><svg class="i" aria-hidden="true"><use href="#i-help"/></svg>How projects work</button>
@@ -449,6 +474,8 @@
       <button id="details-toggle" aria-label="Show details" aria-expanded="false"><svg class="i" aria-hidden="true"><use href="#i-panel"/></svg><span class="lbl">Details</span></button>
     </div>
     <div id="messages" role="log" aria-live="polite" aria-relevant="additions text" aria-label="Conversation"></div>
+    <div id="empty-state" aria-hidden="true"><h1>What should we build?</h1>
+      <p>Ask for a change, a fix or a review. Pick the model and mode below.</p></div>
   </section>
   <aside id="details" class="glass" data-detail="changes" aria-label="Project details">
     <div id="details-head" class="seg">
@@ -472,11 +499,20 @@
       <div id="viewer"><pre id="viewer-pre">(no changes yet)</pre></div>
     </section>
   </aside>
-  <div id="composer" class="glass">
-    <textarea id="input" aria-label="Message Silk Code" aria-describedby="composer-hint"
-      placeholder="Ask Silk Code for a change"></textarea>
-    <button id="send" class="primary" aria-label="Send message">Send</button>
-    <button id="stop" style="display:none">Stop</button>
+  <div id="composer">
+    <div class="composer-card">
+      <textarea id="input" aria-label="Message Silk Code" aria-describedby="composer-hint"
+        placeholder="Ask Silk Code for a change"></textarea>
+      <div class="composer-tools">
+        <select id="model-select" class="chip" aria-label="Model" title="Model for this session"></select>
+        <select id="mode-select" class="chip" aria-label="Mode" title="plan: propose only. ask: approve each change. edit: write files. agent: write and run">
+          <option value="plan">plan</option><option value="ask">ask</option><option value="edit">edit</option><option value="agent">agent</option>
+        </select>
+        <span class="grow"></span>
+        <button id="send" class="primary round" aria-label="Send message" title="Send"><svg class="i" aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+        <button id="stop" class="round" aria-label="Stop the agent" title="Stop" style="display:none"><svg class="i" aria-hidden="true"><use href="#i-square"/></svg></button>
+      </div>
+    </div>
     <span id="composer-hint"><kbd>Enter</kbd> to send, <kbd>Shift</kbd> <kbd>Enter</kbd> for a new line</span>
   </div>
 </main>
@@ -1908,6 +1944,10 @@ async function send() {
   try { await api("/api/message", {text, session_id: currentSessionId}); } catch (err) { addMsg("error", err.message); }
 }
 $("send").onclick = send;
+$("sidebar-new-chat").onclick = () => {
+  $("new-session").click();
+  document.querySelector("#mobile-tabs [data-pane=chat]").click();  // on a phone, back to the chat
+};
 $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
 
 // ---- workspace lock ------------------------------------------------------------
