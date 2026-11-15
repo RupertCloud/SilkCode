@@ -124,7 +124,7 @@ silkcode --model myserver
 Model specs are `provider` (uses its default model) or `provider/model`, e.g.
 `deepseek`, `ollama/qwen2.5-coder:32b`, `openrouter/deepseek/deepseek-chat`. Switch
 mid-session with `/model <spec>` in the CLI or the model selector in the GUI.
-Providers can also be onboarded from the GUI (the **Add model** button, a plus in the header).
+Providers can also be onboarded from the GUI (**Settings → Add model**).
 
 `--model auto` picks the first available model: a running local server first
 (Ollama, preferring coder models), then cloud providers with an API key configured.
@@ -336,7 +336,7 @@ same git diff, with the agent still running on the laptop.
 
 **Pairing another device later.** That banner prints once, at startup. When the
 terminal has scrolled, or a second phone turns up, the **Pair a phone** button in
-the GUI header shows the same QR and addresses on demand — no restart. If the daemon is on
+**Settings → Phone** in the GUI shows the same QR and addresses on demand — no restart. If the daemon is on
 loopback it says so, and tells you to restart with `--host 0.0.0.0`, because
 there is nothing to pair with until then.
 
@@ -942,7 +942,7 @@ state and every task would look already-solved.
 
 ## Environment: keys, usage, sessions
 
-The GUI's **⚙ Environment** page (and `silkcode env` in the terminal) answers what this
+The GUI's **Settings → Models and keys** tab (and `silkcode env` in the terminal) answers what this
 install is holding, spending, and running:
 
 - **Credentials** — every provider, whether its key is set, and where the value in use

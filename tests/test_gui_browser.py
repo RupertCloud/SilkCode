@@ -1137,3 +1137,29 @@ def test_code_is_highlighted_without_changing_its_text(browser, gui_url):
     assert block.locator(".hl-num").first.text_content() == "42"
     assert block.locator(".hl-com").first.text_content() == "# note"
     assert block.locator("b").count() == 0  # the string stayed text
+
+
+def test_settings_is_one_dialog_with_tabs(browser, gui_url):
+    """Models and keys, Add model, GitHub and Phone are tabs of one Settings
+    dialog opened from one header button, not four separate buttons."""
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.goto(gui_url)
+    wait_for_switcher(page)
+    for hidden in ("#add-model", "#github-btn", "#pair-btn"):
+        assert not page.locator(hidden).is_visible(), hidden
+    assert page.locator("#env-btn").text_content().strip() == "Settings"
+
+    page.click("#env-btn")
+    page.wait_for_selector("#env-modal.open")
+    tabs = page.locator("#env-modal .settings-tabs [role=tab]")
+    assert tabs.all_text_contents() == ["Models and keys", "Add model", "GitHub", "Phone"]
+
+    page.click("#env-modal .settings-tabs [role=tab]:has-text('GitHub')")
+    page.wait_for_selector("#github-modal.open")
+    assert not page.locator("#env-modal.open").count()
+    assert page.locator("#github-modal [role=tab][aria-selected=true]").text_content() == "GitHub"
+
+    page.click("#github-modal .settings-tabs [role=tab]:has-text('Phone')")
+    page.wait_for_selector("#pair-modal.open")
+    page.keyboard.press("Escape")
+    assert page.locator(".settings-modal.open").count() == 0

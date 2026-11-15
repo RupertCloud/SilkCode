@@ -59,6 +59,7 @@
   button.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; font-weight: 500; }
   button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
   button.danger, #stop { background: var(--err-bg); color: var(--err); border-color: transparent; }
+  [hidden] { display: none !important; }
   .icon-btn { width: 32px; height: 32px; padding: 0; }
   input, textarea { width: 100%; }
   textarea { resize: vertical; }
@@ -295,7 +296,11 @@
            background: var(--glass-hi); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
            border: 1px solid var(--line); box-shadow: var(--shadow); animation: rise .2s var(--ease); }
   @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
-  .modal.wide { width: 760px; } .modal.mid { width: 600px; }
+  .modal.wide { width: 760px; }
+  /* Settings is one dialog: each section is a tab across the top. */
+  .settings-modal .modal { width: 760px !important; }
+  .settings-tabs { margin: -4px 0 16px; overflow-x: auto; }
+  .settings-tabs button { white-space: nowrap; } .modal.mid { width: 600px; }
   .modal h3 { margin-bottom: 12px; font-size: 15px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; }
   .modal h4 { font-size: 13px; font-weight: 600; margin: 20px 0 8px; }
   .modal .prompt { font: 12px/1.5 var(--mono); background: var(--fill); padding: 12px; border-radius: 8px; margin-bottom: 12px;
@@ -469,10 +474,11 @@
       <button id="share-update-btn" title="Draft a public update from this branch; nothing is posted automatically">Share update</button>
     </span>
     <span class="hgroup" role="group" aria-label="Settings and tools">
-      <button id="add-model" class="icon-btn" title="Add a model provider"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg><span class="lbl">Add model</span></button>
-      <button id="github-btn">GitHub</button>
-      <button id="pair-btn" class="icon-btn" title="Pair a phone: show a QR that opens this session"><svg class="i" aria-hidden="true"><use href="#i-phone"/></svg><span class="lbl">Pair a phone</span></button>
-      <button id="env-btn" class="icon-btn" title="Environment: keys, token usage and running sessions"><svg class="i" aria-hidden="true"><use href="#i-sliders"/></svg><span class="lbl">Environment</span></button>
+      <!-- one Settings dialog with tabs; these stay as the tabs' openers -->
+      <button id="add-model" hidden>Add model</button>
+      <button id="github-btn" hidden>GitHub</button>
+      <button id="pair-btn" hidden>Pair a phone</button>
+      <button id="env-btn" title="Settings: models and keys, GitHub, phone pairing, usage and sessions"><svg class="i" aria-hidden="true"><use href="#i-sliders"/></svg>Settings</button>
       <button id="swarm-btn" title="Run an advanced or classic multi-agent swarm in this project"><svg class="i" aria-hidden="true"><use href="#i-swarm"/></svg>Swarm</button>
       <button id="update-btn" class="icon-btn" title="Update Silk Code: pull the latest from git and restart the daemon"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg><span class="lbl">Update</span></button>
     </span>
@@ -590,7 +596,7 @@
   </div>
 </div>
 
-<div class="modal-bg" id="github-modal">
+<div class="modal-bg settings-modal" id="github-modal">
   <div class="modal">
     <h3>GitHub authorization</h3>
     <div class="prompt" id="gh-status">checking…</div>
@@ -614,7 +620,7 @@
   </div>
 </div>
 
-<div class="modal-bg" id="pair-modal">
+<div class="modal-bg settings-modal" id="pair-modal">
   <div class="modal" style="width:520px">
     <h3>Pair a device</h3>
     <div id="pair-body"></div>
@@ -622,7 +628,7 @@
   </div>
 </div>
 
-<div class="modal-bg" id="env-modal">
+<div class="modal-bg settings-modal" id="env-modal">
   <div class="modal wide">
     <h3>Environment</h3>
     <div class="note" id="env-config-path"></div>
@@ -764,7 +770,7 @@
   </div>
 </div>
 
-<div class="modal-bg" id="provider-modal">
+<div class="modal-bg settings-modal" id="provider-modal">
   <div class="modal">
     <h3>Add a model provider</h3>
     <label>Name</label><input id="p-name" placeholder="myserver">
@@ -2074,6 +2080,24 @@ $("pair-btn").onclick = async () => {
 };
 
 $("add-model").onclick = () => openModal("provider-modal");
+
+// The four settings sections share a tab strip, so they read as one dialog.
+const SETTINGS_TABS = [["env-modal", "env-btn", "Models and keys"], ["provider-modal", "add-model", "Add model"],
+                       ["github-modal", "github-btn", "GitHub"], ["pair-modal", "pair-btn", "Phone"]];
+function closeSettings() {
+  for (const [modal] of SETTINGS_TABS) closeModal(modal);
+  clearInterval(environmentTimer); environmentTimer = null;
+}
+for (const [modal] of SETTINGS_TABS) {
+  const tabs = h("div", {class: "seg settings-tabs", role: "tablist", "aria-label": "Settings sections"},
+    ...SETTINGS_TABS.map(([target, opener, label]) => h("button", {role: "tab", textContent: label,
+      class: target === modal ? "active" : "", "aria-selected": String(target === modal),
+      onclick: () => { if (target === modal) return; closeSettings(); $(opener).click(); }})));
+  $(modal).querySelector(".modal").prepend(tabs);
+}
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && SETTINGS_TABS.some(([m]) => isOpen(m))) closeSettings();
+});
 $("p-save").onclick = async () => {
   try {
     await api("/api/providers", {name: $("p-name").value, type: $("p-type").value, base_url: $("p-url").value,
