@@ -15,6 +15,11 @@ where one existed. The project began 2026-08-12 with the SRS and V0.1.
   sidebar opens with a **New chat** button. The layout follows the patterns of
   [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo) (MIT); no code
   was copied from it.
+- **Replies read like a chat app.** The agent's replies sit as text on the page,
+  not in bubbles, while your own messages keep one. A turn's tool calls fold into one
+  "N steps" block that stays open while the agent works and closes when the turn
+  ends. Code blocks get light highlighting of keywords, strings, numbers and
+  comments, built from text nodes so code can never turn into markup.
 - **Conversations are listed in the sidebar, and you can rename or delete them.**
   The current project's conversations are grouped as Today, Yesterday, Previous 7
   days, Previous 30 days, then by month. Each row has Rename and Delete. Delete asks
