@@ -378,6 +378,7 @@ class GuiState:
         rows = {
             s.id: {"id": s.id, "title": s.data.get("title", ""), "model": s.spec,
                    "cwd": str(s.workspace.root), "running": s.running, "open": True,
+                   "updated": s.data.get("updated", 0),
                    "instance": s.data.get("instance"), "lock_conflict": s.lock_conflict,
                    "lock": lock_state(s.workspace.root)}
             for s in self.sessions.values()
@@ -386,7 +387,7 @@ class GuiState:
             rows.setdefault(saved["id"], {
                 "id": saved["id"], "title": saved["title"], "model": saved["model"],
                 "cwd": saved.get("cwd", ""), "running": False, "open": False,
-                "instance": saved.get("instance")})
+                "updated": saved.get("updated", 0), "instance": saved.get("instance")})
         ordered = sorted(rows.values(), key=lambda s: s["id"], reverse=True)
         if all_projects:
             return ordered
@@ -800,6 +801,40 @@ class GuiState:
             self.default_session_id = max(same) if same else self.new_session(project=project).id
         self.store.set_active(self.instance, self.default_session_id)
         self.broadcast({"type": "session_closed", "session": sid})
+
+    def rename_session(self, target: int, title: str) -> dict:
+        """Give a conversation a title of your own, open or saved."""
+        title = " ".join(str(title).split())[:80]
+        if not title:
+            raise ToolError("a title cannot be empty")
+        session = self.sessions.get(target)
+        if session is not None:
+            session.data["title"] = title
+            self._save_session(session)
+        else:
+            try:
+                self.store.rename(target, title)
+            except FileNotFoundError:
+                raise ToolError(f"no saved conversation #{target}") from None
+        self.broadcast({"type": "sessions"})
+        return {"ok": True, "id": target, "title": title}
+
+    def delete_session(self, target: int, session_id: int | None = None) -> dict:
+        """Delete a conversation for good. An open one is closed first; one with
+        a turn or a swarm running is refused, since that work still writes to
+        it. Project files and git history are not touched."""
+        session = self.sessions.get(target)
+        if session is not None:
+            if session.running or session.closing or self._swarm_running(target):
+                raise ToolError("this conversation is still working; stop it first")
+            self.close_session(target)
+        elif not self.store._path(target).exists():
+            raise ToolError(f"no saved conversation #{target}")
+        self.store.delete(target)
+        self.broadcast({"type": "sessions"})
+        return {"ok": True, "deleted": target,
+                "session_id": self.default_session_id if session_id == target or session_id is None
+                else session_id}
 
     def close_project(self, project: str, session_id: int | None = None) -> dict:
         """Close every open session of a non-current project and hide its card."""
@@ -1624,6 +1659,8 @@ class GuiHandler(BaseHTTPRequestHandler):
             "/api/project/open": lambda: st.open_project(_required(body, "project")),
             "/api/project/create": lambda: st.create_project(body),
             "/api/session/close": lambda: st.close_session(sid),
+            "/api/session/rename": lambda: st.rename_session(int(body.get("id", 0)), _required(body, "title")),
+            "/api/session/delete": lambda: st.delete_session(int(body.get("id", 0)), sid),
             "/api/project/close": lambda: st.close_project(_required(body, "project"), sid),
             "/api/lock/takeover": lambda: st.takeover_lock(sid),
             "/api/swarm/start": lambda: st.start_swarm(body, sid),

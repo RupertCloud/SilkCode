@@ -124,7 +124,7 @@ silkcode --model myserver
 Model specs are `provider` (uses its default model) or `provider/model`, e.g.
 `deepseek`, `ollama/qwen2.5-coder:32b`, `openrouter/deepseek/deepseek-chat`. Switch
 mid-session with `/model <spec>` in the CLI or the model selector in the GUI.
-Providers can also be onboarded from the GUI (the **Add model** button, a plus beside the model selector).
+Providers can also be onboarded from the GUI (the **Add model** button, a plus in the header).
 
 `--model auto` picks the first available model: a running local server first
 (Ollama, preferring coder models), then cloud providers with an API key configured.
@@ -373,7 +373,7 @@ way — the check is on the range, not on Tailscale.
 
 **The phone layout.** Below 768px wide (or 480px tall, for a phone on its side)
 the GUI shows one pane at a time with a Chat / Project switcher, the header
-controls move into a More sheet, the details drawer (changes, files, activity,
+controls move into a More sheet (Model and Mode stay in the composer), the details drawer (changes, files, activity,
 graph) slides over from the right, and the composer stays within thumb reach.
 
 ### What guards it
@@ -521,10 +521,12 @@ the system's light or dark appearance automatically. It is one self-contained
 page with no external assets, so it still works offline.
 
 **Multiple sessions:** open as many conversations as you like (the plus button) and
-switch between them with the session picker — each has its own agent, model choice,
+switch between them with the session picker or the Conversations list in the sidebar
+(where each one can also be renamed or deleted) — each has its own agent, model choice,
 workspace (project), transcript, and checkpoints, and turns can run concurrently
 (the picker marks a busy session "running"; permission prompts from any session reach you wherever you
-are). **Project** is a control in the header, beside Session, Model and Mode: it lists the
+are). **Project** is a control in the header (Model and Mode sit in the composer, beside
+the send button): it lists the
 project you are on, every project you have sessions in, and the ones you opened
 before. Choosing one **moves this session** — the conversation, checkpoints and usage
 come with you, and the workspace lock moves too. That is what `/project` has always
