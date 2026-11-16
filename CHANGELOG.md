@@ -7,6 +7,12 @@ where one existed. The project began 2026-08-12 with the SRS and V0.1.
 ## Unreleased — the review that closed its own holes · 2026-11-02
 
 ### Changed
+- **The website shows the GUI as it is now.** silkcode.web.app has fresh desktop and
+  phone screenshots of the chat-style GUI (folded tool steps, Model and Mode in the
+  message box, the conversation list), `npx silkcode gui` as the first install line,
+  and the setup and Projects pages name Settings → Phone, Settings → GitHub,
+  Settings → Models and keys → Connections, Add and New chat instead of buttons
+  that moved.
 - **The GUI composer is one chat card.** The text box, the Model and Mode pickers
   and a round send button now sit together in a centred card, with Stop in the send
   button's place while the agent works. Model and Mode left the header, so on a phone
